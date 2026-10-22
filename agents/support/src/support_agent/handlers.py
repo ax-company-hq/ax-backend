@@ -23,7 +23,7 @@ from ax_agent_template.client import call_agent
 from ax_agent_template.execute import execute
 from ax_agent_template.server import error_result
 from ax_contracts.schemas import AgentRequest, AgentResult, Evidence, TaskStatus
-from support_agent import compensation, drafting, guard, notices
+from support_agent import compensation, drafting, events, guard, notices
 from support_agent.schemas import (
     AddCustomerMessageInput,
     CheckReplyInput,
@@ -196,6 +196,7 @@ async def create_inquiry(request: AgentRequest) -> AgentResult:
             first_message=message,
             analysis=analysis,
         )
+        await events.emit_inquiry_received(request, conversation)
         return conversation.model_dump(mode="json"), fallback
 
     return await _write(
@@ -218,9 +219,9 @@ async def add_customer_message(request: AgentRequest) -> AgentResult:
 
     async def apply() -> tuple[dict[str, Any], bool]:
         analysis, fallback = await drafting.analyze(message, conversation.subject, extra)
-        return STORE.add_customer_message(parsed.inquiry_id, message, analysis).model_dump(
-            mode="json"
-        ), fallback
+        updated = STORE.add_customer_message(parsed.inquiry_id, message, analysis)
+        await events.emit_inquiry_received(request, updated)
+        return updated.model_dump(mode="json"), fallback
 
     return await _write(
         request,
