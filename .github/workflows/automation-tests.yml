@@ -1,0 +1,59 @@
+name: automation-tests
+
+# 자동화 자체의 테스트: .github/scripts(team.py·guards.py), scripts/(compat-check), .claude/hooks, 워크플로 문법.
+on:
+  pull_request:
+    branches: [dev]
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: automation-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  automation-tests:
+    # 브랜치 보호의 필수 체크 이름. 바꾸지 않는다.
+    name: automation-tests
+    runs-on: ubuntu-latest
+    env:
+      ACTIONLINT_VERSION: "1.7.12"
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Python 의존성 (해시 고정)
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet --require-hashes -r .github/scripts/requirements-dev.txt
+
+      - name: team.json 동기화 검사
+        run: '"$RUNNER_TEMP/venv/bin/python" -I .github/scripts/team.py export-json --check'
+
+      - name: team.py · guards.py · compat-check 테스트
+        run: '"$RUNNER_TEMP/venv/bin/python" -m pytest .github/scripts/tests scripts/tests -q -p no:cacheprovider'
+
+      - name: 훅 테스트
+        run: node --test ".claude/hooks/__tests__/*.test.mjs"
+
+      - name: actionlint
+        run: |
+          set -euo pipefail
+          url="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -sSL -o "$RUNNER_TEMP/actionlint.tgz" "$url"
+          echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/actionlint.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/actionlint.tgz" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color

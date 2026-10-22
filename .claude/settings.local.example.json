@@ -1,0 +1,5 @@
+{
+  "env": {
+    "AX_DEPTS": "data,memory"
+  }
+}

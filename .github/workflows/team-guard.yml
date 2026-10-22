@@ -1,0 +1,35 @@
+name: team-guard
+
+# 팀원(.github/team.yml members)도 bot_login도 아닌 사람의 이슈·PR에 external 라벨. checkout 없음, 스위치 무관.
+on:
+  issues:
+    types: [opened, reopened]
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions: {}
+
+jobs:
+  team-guard:
+    name: team-guard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Label external
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          AUTHOR: ${{ github.event.issue.user.login || github.event.pull_request.user.login }}
+          NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPO/contents/.github/team.json?ref=dev" --jq .content | base64 -d > "$RUNNER_TEMP/team.json"
+          if jq -e --arg a "$AUTHOR" '(.members | has($a)) or .bot_login == $a' "$RUNNER_TEMP/team.json" >/dev/null; then
+            echo "팀원: $AUTHOR"
+            exit 0
+          fi
+          gh api -X POST "repos/$REPO/issues/$NUMBER/labels" -f "labels[]=external" >/dev/null
+          echo "external: $AUTHOR"

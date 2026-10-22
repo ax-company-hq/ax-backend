@@ -1,0 +1,73 @@
+# 자동화 설정 원본 (docs/automation-spec.md 0장). 모든 규칙 판단은 .github/scripts/team.py로만 한다.
+# 이 파일을 바꾸면 `python .github/scripts/team.py export-json`으로 .github/team.json을 다시 만든다 (훅이 읽음, CI가 동기화 검사).
+
+members:
+  JangJaehyeonn: { name: 재현, token: CLAUDE_TOKEN_JAEHYEON, daily_cap: 20 }
+  2taeyoon: { name: 태윤, token: CLAUDE_TOKEN_TAEYOON, daily_cap: 20 }
+  haakim7: { name: 준하, token: CLAUDE_TOKEN_JUNHA, daily_cap: 20 }
+  NYejin: { name: 예진, token: CLAUDE_TOKEN_YEJIN, daily_cap: 20 }
+  bxbae: { name: 병환, token: CLAUDE_TOKEN_BYUNGHWAN, daily_cap: 20 }
+  areatmadm: { name: 재헌, token: CLAUDE_TOKEN_JAEHEON, daily_cap: 20 }
+
+bot_login: ax-company-hq-bot[bot]
+
+# id: { folder, aliases, owners(첫 번째가 실행 토큰), env_prefix }
+depts:
+  data: { folder: agents/data, owners: [JangJaehyeonn], env_prefix: DATA }
+  memory: { folder: memory, owners: [JangJaehyeonn], env_prefix: MEMORY }
+  finance: { folder: agents/finance, owners: [2taeyoon], env_prefix: FINANCE }
+  safety: { folder: safety, owners: [2taeyoon], env_prefix: SAFETY }
+  hr: { folder: agents/hr, owners: [haakim7], env_prefix: HR }
+  orchestrator: { folder: orchestrator, owners: [haakim7], env_prefix: ORCHESTRATOR }
+  agent-template: { folder: agent-template, owners: [haakim7], env_prefix: AGENT_TEMPLATE }
+  infra: { folder: infra, owners: [haakim7], env_prefix: COMPOSE }
+  planning: { folder: agents/planning, owners: [NYejin], env_prefix: PLANNING }
+  dejafix: { folder: agents/infra-dejafix, aliases: [infra-dejafix], owners: [NYejin], env_prefix: INFRA }
+  support: { folder: agents/support, owners: [bxbae], env_prefix: SUPPORT }
+  dashboard-api: { folder: dashboard-api, owners: [bxbae], env_prefix: DASHBOARD }
+  marketing: { folder: agents/marketing, owners: [areatmadm], env_prefix: MARKETING }
+  shop-api: { folder: shop-api, owners: [areatmadm], env_prefix: SHOP }
+  contracts: { folder: contracts, owners: [haakim7, 2taeyoon] } # env_prefix 없음 → MOCK 변수 안 씀
+
+# ax-frontend 부서의 실행 토큰 주인 (cap-ok가 두 레포 잡을 같은 사람에게 합산)
+frontend_depts: { shop-web: areatmadm, dashboard-web: bxbae }
+
+# 바뀐 부서 → 리뷰 부서 (docs/automation-spec.md "리뷰어 배정")
+reviewers:
+  data: [finance]
+  memory: [support]
+  finance: [data]
+  safety: [agent-template]
+  hr: [memory]
+  orchestrator: [dejafix]
+  agent-template: [finance, planning]
+  infra: [finance, planning]
+  planning: [orchestrator]
+  dejafix: [orchestrator]
+  support: [marketing]
+  dashboard-api: [safety]
+  marketing: [support]
+  shop-api: [data]
+  contracts: [agent-template, safety]
+
+# 리뷰 부서 담당이 작성자와 같으면 이 순서에서 겹치지 않는 첫 부서로 바꾼다
+fallback_order: [orchestrator, data, finance, planning, support, marketing]
+# contracts 리뷰 자리가 작성자 본인이면 그 자리는 이 부서가 맡는다
+contracts_fallback: data
+
+# human_paths = 부서 폴더, docs/notes/<부서>/, shared_rules 파일을 뺀 레포 전체 (CODEOWNERS와 같은 정의)
+human_path_exceptions: docs/notes/ # docs/notes/<부서>/ → 그 부서
+hotfix_labelers: [JangJaehyeonn, haakim7] # code owner. 이 사람이 붙인 hotfix 라벨만 인정
+
+shared_rules:
+  # 같은 PR에서 그 부서 폴더의 pyproject.toml이 바뀌었을 때만 허용 (lock 갱신은 build 잡이 함)
+  uv.lock: requires_pyproject
+
+# 작성자가 bot_login일 때만 인정
+bot_branches:
+  revert/: { review: skip, compat: skip, paths: reverted }
+  openapi/sync-: { review: skip, compat: skip, paths: [contracts/openapi/] }
+
+# 깊이와 상관없이 부서 폴더 안에 생기면 안 되는 이름
+# (대소문자·끝의 점/공백 무시. .gitattributes는 export-ignore로 safe-test 사본을 바꿀 수 있어 막음)
+forbidden_in_dept: [CLAUDE.md, CLAUDE.local.md, .claude, .mcp.json, .gitattributes, .gitmodules]
