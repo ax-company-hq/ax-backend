@@ -439,3 +439,15 @@ def test_dashboard_can_read_but_not_post(client: TestClient) -> None:
         headers={"Origin": "http://localhost:3001", "Access-Control-Request-Method": "POST"},
     )
     assert preflight.status_code == 400
+
+
+def test_loss_reports_are_listed_for_dashboard(client: TestClient) -> None:
+    _call(
+        client,
+        "loss_aggregation",
+        WINDOW | {"context_id": "ctx_inc_0002"},
+        token="mock:orchestrator",
+    )
+    rows = client.get("/api/finance/loss-reports").json()["data"]
+    assert (rows[0]["context_id"], rows[0]["lost_amount"]) == ("ctx_inc_0002", 214_500)
+    assert rows[0]["total_loss"] == 214_500  # 보상 지급 기록이 없으면 피해 금액만

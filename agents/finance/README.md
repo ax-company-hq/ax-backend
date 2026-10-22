@@ -28,9 +28,12 @@ uv run ax-test-call --agent http://localhost:8105 --skill loss_aggregation --inp
   --context-id ctx_inc_0001
 ```
 
+### 가짜 데이터로 돌려 보기 (목 모드)
+safety·finance를 목 모드로 띄운 뒤 `uv run python agents/finance/demo/seed_demo.py`를 실행하면 마케팅·고객지원·통합 에이전트인 척 15건을 보낸다(보상 쿠폰, 환불, 손실 리포트, 판매자 심사, 정산 보류). 결과는 대시보드 `http://localhost:3001/finance`에서 본다. 가짜 데이터는 `src/finance_agent/mock_seed.json`이다.
+
 ## 3. 입출력 계약
 - 입출력 모델: `src/finance_agent/schemas.py` (Agent Card의 `input_schema`·`output_schema`). safety와 함께 쓰는 `VerifyAmountInput`·`VerifyAmountOutput`은 contracts로 옮길 예정
-- 대시보드 조회 API (GET만, `{data, meta}`): `/api/finance/verifications?context_id=`(교차검증 판정 기록), `/api/finance/ledger`(사건별 보상 지급·주문별 환불 누적), `/api/finance/market-ops`(판매자 심사·정산 보류 결과). 출처는 `FINANCE_CORS_ORIGINS`
+- 대시보드 조회 API (GET만, `{data, meta}`): `/api/finance/verifications?context_id=`(교차검증 판정 기록), `/api/finance/ledger`(사건별 보상 지급·주문별 환불 누적), `/api/finance/market-ops`(판매자 심사·정산 보류 결과), `/api/finance/loss-reports`(사건별 마지막 손실 리포트). 출처는 `FINANCE_CORS_ORIGINS`
 - 구독 이벤트: `coupon.issued`(보상 쿠폰 지급 누적), `payment.refunded`(환불 누적)
 - 부르는 것: data `impact_analysis`(`failed_order_count`·`affected_customer_count`·`damage_amount` + 영향 고객 ID `affected_customer_ids`), data `fraud_score`(`risk_score` 0~100), safety `execute()`(판매자 승인·정산 보류)
 
