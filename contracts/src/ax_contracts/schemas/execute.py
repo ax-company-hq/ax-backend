@@ -25,7 +25,6 @@ class HoldReason(StrEnum):
     VERIFY_TIMEOUT = "verify_timeout"
     SCHEMA_INVALID = "schema_invalid"
     REVIEW_TIMEOUT = "review_timeout"
-    POLICY_ALWAYS_C = "policy_always_c"  # 정책상 항상 C인 액션 (예: confirm_settlement)
 
 
 class ExecuteRequest(AxModel):

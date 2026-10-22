@@ -4,7 +4,6 @@ from pydantic import ValidationError
 from ax_contracts.schemas import (
     EVENT_DATA_MODELS,
     EventType,
-    HoldReason,
     SafetyActionExecutedData,
     SafetyActionHeldData,
     SafetyReviewDecidedData,
@@ -28,7 +27,7 @@ SAFETY_EVENT_SAMPLES: dict[EventType, dict] = {
         "grade": "C",
         "computed_amount": None,
         "threshold_version": 1,
-        "hold_reason": "policy_always_c",
+        "hold_reason": "over_threshold",
         "review_id": "rev_1",
     },
     EventType.SAFETY_REVIEW_DECIDED: {
@@ -69,10 +68,6 @@ def test_safety_event_models_reject_bad_values() -> None:
     decided = SAFETY_EVENT_SAMPLES[EventType.SAFETY_REVIEW_DECIDED]
     with pytest.raises(ValidationError):
         SafetyReviewDecidedData.model_validate({**decided, "decision": "held"})
-
-
-def test_hold_reason_policy_always_c() -> None:
-    assert HoldReason("policy_always_c") is HoldReason.POLICY_ALWAYS_C
 
 
 def test_verify_amount_models() -> None:
