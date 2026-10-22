@@ -421,6 +421,31 @@ def gh_api(path: str, *extra: str):
     return json.loads(out) if out.strip() else None
 
 
+PR_EVENTS = ("pull_request", "pull_request_target")
+
+
+def event_pull_request(number: int) -> dict | None:
+    """이번 실행을 일으킨 이벤트의 PR 페이로드 (GitHub API 호출 없음).
+
+    PR 이벤트이고 번호가 같을 때만 쓴다. workflow_dispatch처럼 페이로드가 없으면 None
+    → 호출한 쪽이 API로 읽는다.
+    값은 이벤트 시점 기준이다 (그 뒤에 새 커밋이 오면 새 이벤트가 새 실행을 만든다).
+    """
+    if os.environ.get("GITHUB_EVENT_NAME") not in PR_EVENTS:
+        return None
+    path = os.environ.get("GITHUB_EVENT_PATH")
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            pr = json.load(fh).get("pull_request")
+    except (OSError, ValueError):
+        return None
+    if not isinstance(pr, dict) or pr.get("number") != number:
+        return None
+    return pr
+
+
 def post_comment(repo: str, issue: int, body: str) -> None:
     """잠긴 이슈·PR에는 봇도 코멘트를 못 쓴다 → 잠금 해제 → 코멘트 → 같은 이유로 다시 잠금."""
     info = gh_api(f"repos/{repo}/issues/{issue}")

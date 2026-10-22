@@ -1,6 +1,7 @@
 """team.py 단위 테스트 (docs/automation-spec.md 완료 기준)."""
 
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -487,3 +488,35 @@ def test_gh_api_logs_github_error_without_body(monkeypatch, capsys) -> None:
     err = capsys.readouterr().err
     assert "POST repos/o/r/issues/5/comments" in err and "HTTP 403" in err and "locked" in err
     assert "SECRET-ish" not in err
+
+
+# ── 이벤트 페이로드 ───────────────────────────────────────
+def _event(tmp_path, monkeypatch, name, payload):
+    f = tmp_path / "event.json"
+    f.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", name)
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(f))
+
+
+def test_event_pull_request_from_payload(tmp_path, monkeypatch) -> None:
+    pr = {"number": 7, "head": {"sha": "a", "ref": "data/x"}, "title": "$(rm -rf /)"}
+    _event(tmp_path, monkeypatch, "pull_request_target", {"pull_request": pr})
+    assert team_mod.event_pull_request(7) == pr  # 값은 그대로 데이터로만 돌려준다
+
+
+@pytest.mark.parametrize(
+    ("name", "payload", "number"),
+    [("workflow_dispatch", {"inputs": {"pr": "7"}}, 7),
+     ("pull_request_target", {"pull_request": {"number": 8}}, 7),
+     ("pull_request_target", {}, 7),
+     ("issues", {"pull_request": {"number": 7}}, 7)],
+)
+def test_event_pull_request_none(tmp_path, monkeypatch, name, payload, number) -> None:
+    _event(tmp_path, monkeypatch, name, payload)
+    assert team_mod.event_pull_request(number) is None
+
+
+def test_event_pull_request_bad_file(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(tmp_path / "missing.json"))
+    assert team_mod.event_pull_request(1) is None
