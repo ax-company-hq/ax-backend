@@ -22,6 +22,7 @@ START = datetime(2026, 10, 22, 5, 40, tzinfo=UTC)
 def _mock_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_TEMPLATE_MOCK", "1")
     monkeypatch.delenv("SAFETY_HUMAN_TOKENS", raising=False)
+    monkeypatch.delenv("SAFETY_MOCK", raising=False)  # CI는 SAFETY_MOCK=1이라 테스트마다 정한다
     events.reset_mock_bus()
 
 
