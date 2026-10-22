@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -45,6 +46,11 @@ class SequenceLedger:
     def __init__(self) -> None:
         self._next: dict[str, int] = defaultdict(lambda: 1)
         self.results: dict[str, dict] = {}
+        self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+    def lock(self, context_id: str) -> asyncio.Lock:
+        """같은 사건의 `sequence` 요청을 한 건씩 처리하기 위한 잠금."""
+        return self._locks[context_id]
 
     def peek(self, context_id: str) -> int:
         return self._next[context_id]

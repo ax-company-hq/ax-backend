@@ -131,14 +131,83 @@ def test_unknown_inquiry_is_not_found(_fresh: Sent) -> None:
 
 def test_held_reply_consumes_sequence_but_is_not_cached(_fresh: Sent) -> None:
     held = AgentResult(
-        meta=_meta(), status=TaskStatus.WORKING, outcome="not_executed_held", output={}
+        meta=_meta(),
+        status=TaskStatus.INPUT_REQUIRED,
+        reason_code="human_input",
+        outcome="held",
+        output={"execution_id": "exe_1", "review_id": "rev_1"},
     )
     _fresh.replies.append(held)
     first = call(key="k-1")
-    assert first["output"]["marketing_status"] == "working"
+    assert first["output"]["marketing_status"] == "input-required"
     second = call(key="k-1")  # 승인 후 같은 키 재요청: 다시 보낸다
     assert [r.sequence for r in _fresh] == [1, 2]
     assert second["output"]["marketing_status"] == "completed"
+
+
+def test_verifying_reply_does_not_consume_sequence(_fresh: Sent) -> None:
+    verifying = AgentResult(
+        meta=_meta(),
+        status=TaskStatus.WORKING,
+        outcome="verifying",
+        output={"execution_id": "exe_1", "grade": "B"},
+    )
+    _fresh.replies.append(verifying)
+    call(key="k-1")
+    call(key="k-1")
+    assert [r.sequence for r in _fresh] == [1, 1]
+
+
+def test_sequence_gap_rejection_does_not_consume_sequence(_fresh: Sent) -> None:
+    _fresh.replies.append(
+        AgentResult(meta=_meta(), status=TaskStatus.REJECTED, outcome="SEQUENCE_GAP", output={})
+    )
+    call(key="k-1")
+    call(key="k-1")
+    assert [r.sequence for r in _fresh] == [1, 1]
+
+
+def test_marketing_timeout_with_execution_info_consumes_sequence(_fresh: Sent) -> None:
+    _fresh.replies.append(
+        AgentResult(
+            meta=_meta(),
+            status=TaskStatus.CANCELED,
+            outcome="TIMEOUT",
+            output={"execution_id": "exe_1", "grade": "B"},
+        )
+    )
+    call(key="k-1")
+    call(key="k-1")
+    assert [r.sequence for r in _fresh] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_requests_in_same_context_get_distinct_sequences(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    monkeypatch.setattr(handlers, "LEDGER", compensation.SequenceLedger())
+    seen: list[int | None] = []
+
+    async def slow_send(target: str, req: AgentRequest) -> AgentResult:
+        seen.append(req.sequence)
+        await asyncio.sleep(0.01)
+        return AgentResult(meta=req.meta, status=TaskStatus.COMPLETED, output={})
+
+    monkeypatch.setattr(handlers, "SEND", slow_send)
+
+    def req(buyer: str) -> AgentRequest:
+        return AgentRequest(
+            meta=_meta().model_copy(update={"idempotency_key": f"k-{buyer}"}),
+            skill="request_compensation",
+            input={"inquiry_id": 1, "buyer_id": buyer, "reason_code": "damaged", "count": 1},
+        )
+
+    await asyncio.gather(
+        handlers.request_compensation(req("a")), handlers.request_compensation(req("b"))
+    )
+    assert sorted(s for s in seen if s) == [1, 2]
 
 
 def test_timeout_keeps_sequence_for_retry(_fresh: Sent) -> None:

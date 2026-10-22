@@ -21,7 +21,7 @@ from pydantic import BaseModel, ValidationError
 from ax_agent_template.client import call_agent
 from ax_agent_template.execute import execute
 from ax_agent_template.server import error_result
-from ax_contracts.schemas import AgentRequest, AgentResult, ErrorCode, Evidence, TaskStatus
+from ax_contracts.schemas import AgentRequest, AgentResult, Evidence, TaskStatus
 from support_agent import compensation, drafting, guard, notices
 from support_agent.schemas import (
     AddCustomerMessageInput,
@@ -312,15 +312,24 @@ async def set_inquiry_status(request: AgentRequest) -> AgentResult:
     )
 
 
-def _answered(reply: AgentResult) -> bool:
-    """마케팅이 실제로 회신했는지. 타임아웃·연결 실패는 회신이 아니다."""
+def _sequence_consumed(reply: AgentResult) -> bool:
+    """마케팅이 이 `sequence`를 소비했는지 (marketing `issue_coupon`의 기록 규칙과 맞춘다).
+
+    소비한 경우: 지급·재무 거절(`completed`), 보류(`input_required`), 실행 실패·거부(`failed`,
+    `execute_*`), 검증 시간 초과(`canceled`, 실행 정보가 output에 있음).
+    소비하지 않은 경우: 재무 검증 중(`working`), 번호 오류·입력 오류(`rejected`·그 밖의 `failed`),
+    우리 쪽 타임아웃·연결 실패(output 없음). 이때는 같은 번호로 다시 보낸다.
+    """
     outcome = str(reply.outcome or "")
-    if reply.status == TaskStatus.CANCELED and outcome == ErrorCode.TIMEOUT:
-        return False
-    return not (
-        reply.status == TaskStatus.FAILED
-        and (outcome == "unreachable" or outcome.startswith("http_"))
-    )
+    match reply.status:
+        case TaskStatus.COMPLETED | TaskStatus.INPUT_REQUIRED:
+            return True
+        case TaskStatus.FAILED:
+            return outcome in ("execute_failed", "execute_rejected")
+        case TaskStatus.CANCELED:
+            return "execution_id" in reply.output
+        case _:
+            return False
 
 
 async def request_compensation(request: AgentRequest) -> AgentResult:
@@ -354,6 +363,20 @@ async def request_compensation(request: AgentRequest) -> AgentResult:
         LEDGER.results[key] = output
         return _done(request, output, outcome="not_eligible", evidence=evidence)
 
+    async with LEDGER.lock(context_id):  # 같은 사건의 요청은 한 건씩 (같은 번호를 읽는 경쟁 방지)
+        return await _request_coupon(request, parsed, decision, key, evidence)
+
+
+async def _request_coupon(
+    request: AgentRequest,
+    parsed: RequestCompensationInput,
+    decision: compensation.CompensationDecision,
+    key: str,
+    evidence: Evidence,
+) -> AgentResult:
+    context_id = request.meta.context_id
+    if key in LEDGER.results:  # 락을 기다리는 사이 같은 요청이 끝났을 수 있다
+        return _done(request, LEDGER.results[key])
     sequence = LEDGER.peek(context_id)
     meta = request.meta.model_copy(update={"idempotency_key": key})
     coupon_request = AgentRequest(
@@ -370,7 +393,7 @@ async def request_compensation(request: AgentRequest) -> AgentResult:
     )
     reply = await SEND("marketing", coupon_request)
 
-    if _answered(reply):  # 회신 못 받은 건은 번호를 쓰지 않고 같은 번호로 다시 보낸다
+    if _sequence_consumed(reply):
         LEDGER.advance(context_id)
     output = {
         "eligible": True,
