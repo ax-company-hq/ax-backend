@@ -12,9 +12,10 @@ import asyncio
 import contextlib
 import os
 from collections.abc import AsyncIterator, Callable
+from datetime import datetime
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, Header, Request
+from fastapi import Depends, FastAPI, Header, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -22,6 +23,7 @@ from ax_agent_template.config import set_agent_name
 from ax_agent_template.server import verify_token
 from ax_shop_api import outbox
 from ax_shop_api.db import Db
+from ax_shop_api.promotions import Promotions
 from ax_shop_api.seed import seed
 from ax_shop_api.service import Shop, ShopError
 
@@ -66,9 +68,28 @@ class FaultIn(BaseModel):
     delay_ms: int = Field(default=2000, ge=0, le=60000)  # kind=latency일 때 더할 지연
 
 
+class BannerIn(BaseModel):
+    notice_id: str
+    text: str = Field(min_length=1, max_length=200)  # 공개 문구. 화면이 이스케이프해서 보여 준다
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+
+
+class CouponIn(BaseModel):
+    idempotency_key: str = Field(min_length=1)  # `context_id + 액션 + 대상`
+    purpose_code: Literal["campaign", "compensation"]
+    buyer_id: str
+    count: int = Field(gt=0)
+    unit_value: int = Field(gt=0)
+    campaign_id: str | None = None
+
+
 # 관리 API 허용 요청자. 장애 해제는 infra 롤백이 관문을 거쳐 부른다(후속 결정 15)
 INJECT_ALLOWED = {"admin"}
 RELEASE_ALLOWED = {"admin", "infra"}
+# 공지·쿠폰 쓰기는 마케팅 관문 토큰만, 쿠폰 조회는 사후 검증·중복 확인을 하는 부서까지
+MARKETING_ONLY = {"marketing"}
+COUPON_READERS = {"marketing", "support", "finance", "orchestrator"}
 
 
 def _caller(allowed: set[str]) -> Callable[..., str]:
@@ -97,6 +118,7 @@ def create_app(db: Db | None = None, seed_data: bool = True) -> FastAPI:
     if seed_data:
         seed(database)
     shop = Shop(database)
+    promotions = Promotions(database)
     interval = float(os.getenv("SHOP_MONITOR_INTERVAL_S") or 5)  # 0이면 주기 판정을 끈다
 
     async def _monitor_loop() -> None:
@@ -117,6 +139,7 @@ def create_app(db: Db | None = None, seed_data: bool = True) -> FastAPI:
 
     app = FastAPI(title="ax-shop-api", lifespan=lifespan)
     app.state.shop = shop
+    app.state.promotions = promotions
 
     @app.exception_handler(ShopError)
     async def _shop_error(_: Request, error: ShopError) -> JSONResponse:
@@ -187,6 +210,43 @@ def create_app(db: Db | None = None, seed_data: bool = True) -> FastAPI:
         state = shop.release_fault()
         await outbox.flush(database)
         return _ok(state)
+
+    # --- 공지 배너(SHOP-08): 고객 화면이 읽고, 마케팅 관문 토큰만 게시·해제한다 ---------
+    @app.get("/api/shop/banners")
+    async def list_banners() -> dict:
+        return _ok(promotions.active_banners())
+
+    @app.post("/api/shop/banners", status_code=201)
+    async def post_banner(body: BannerIn, _: str = Depends(_caller(MARKETING_ONLY))) -> dict:
+        return _ok(
+            promotions.post_banner(body.notice_id, body.text, body.valid_from, body.valid_to)
+        )
+
+    @app.delete("/api/shop/banners/{notice_id}")
+    async def end_banner(notice_id: str, _: str = Depends(_caller(MARKETING_ONLY))) -> dict:
+        return _ok(promotions.end_banner(notice_id))
+
+    # --- 쿠폰(SHOP-10): 발급은 마케팅 관문 토큰만, `idempotency_key` 필수 ---------------
+    @app.post("/api/shop/coupons", status_code=201)
+    async def issue_coupon(
+        body: CouponIn, response: Response, _: str = Depends(_caller(MARKETING_ONLY))
+    ) -> dict:
+        coupon, replayed = promotions.issue_coupon(**body.model_dump())
+        if replayed:
+            response.status_code = 200  # 같은 키의 재요청은 이전 쿠폰을 그대로 돌려준다
+        return _ok(coupon, replayed=replayed)
+
+    @app.get("/api/shop/coupons")
+    async def list_coupons(
+        buyer_id: str | None = None,
+        purpose_code: str | None = None,
+        _: str = Depends(_caller(COUPON_READERS)),
+    ) -> dict:
+        return _ok(promotions.list_coupons(buyer_id, purpose_code))
+
+    @app.get("/api/shop/coupons/{coupon_id}")
+    async def get_coupon(coupon_id: str, _: str = Depends(_caller(COUPON_READERS))) -> dict:
+        return _ok(promotions.get_coupon(coupon_id))
 
     return app
 
