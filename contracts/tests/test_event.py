@@ -10,6 +10,7 @@ from ax_contracts.schemas import (
     EventEnvelope,
     EventType,
     IncidentData,
+    InfraAnomalyData,
     MetricAnomalyData,
     NoticePublishedData,
     PaymentFailedData,
@@ -52,13 +53,14 @@ def test_unknown_event_type_is_rejected() -> None:
 
 def test_event_type_catalog() -> None:
     values = {t.value for t in EventType}
-    assert len(values) == 23
+    assert len(values) == 24
     for expected in (
         "order.created",
         "payment.failed",
         "shop.recovered",
         "support.inquiry_received",
         "metric.anomaly",
+        "infra.anomaly_detected",
         "incident.resolved",
         "coupon.issued",
         "safety.review_decided",
@@ -134,3 +136,41 @@ def test_coupon_purpose_and_campaign_id() -> None:
         )
     with pytest.raises(ValidationError, match="campaign_id"):
         CouponIssuedData(coupon_id="cpn_1", purpose_code="campaign", count=1, total_value=1000)
+
+
+def test_infra_anomaly_event_has_data_model() -> None:
+    assert EVENT_DATA_MODELS[EventType.INFRA_ANOMALY_DETECTED] is InfraAnomalyData
+    envelope = EventEnvelope.model_validate(
+        {
+            "event_id": "evt_infra_1",
+            "type": "infra.anomaly_detected",
+            "occurred_at": "2026-10-22T05:40:00+00:00",
+            "context_id": None,
+            "source": "infra",
+            "idempotency_key": "infra:infra.anomaly_detected:zbx-1001",
+            "data": {
+                "component": "payment",
+                "metric_code": "error_rate_5xx",
+                "value": 0.18,
+                "threshold": 0.05,
+                "detected_at": "2026-10-22T05:39:30Z",
+                "source_ref": "zabbix:trigger:1001",
+            },
+        }
+    )
+    data = InfraAnomalyData.model_validate(envelope.data)
+    assert data.component == "payment"
+    assert data.source_ref == "zabbix:trigger:1001"
+    # 값·임계값·근거 참조는 없어도 된다 (없는 값은 None, 지어내지 않는다)
+    minimal = InfraAnomalyData.model_validate(
+        {"component": "db", "metric_code": "cpu_util", "detected_at": "2026-10-22T05:39:30Z"}
+    )
+    assert (minimal.value, minimal.threshold, minimal.source_ref) == (None, None, None)
+
+
+def test_infra_anomaly_data_rejects_unknown_and_naive_time() -> None:
+    base = {"component": "db", "metric_code": "cpu_util", "detected_at": "2026-10-22T05:39:30Z"}
+    with pytest.raises(ValidationError):
+        InfraAnomalyData.model_validate({**base, "cause": "deploy"})  # 원인 판단 필드는 없다
+    with pytest.raises(ValidationError):
+        InfraAnomalyData.model_validate({**base, "detected_at": "2026-10-22T05:39:30"})

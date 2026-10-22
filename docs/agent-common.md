@@ -151,6 +151,7 @@ C 등급 보류는 Task 상태가 아니라 안전 레이어의 실행 결과(`s
 | `support.inquiry_received` | support (문의 위젯) | inquiry\_id, buyer\_id, order\_id, channel\_code (원문은 untrusted) | orchestrator | 1차 |
 | `support.inquiry_surge` | support | topic\_code, count, window (근거는 Task 쪽, 샘플 문의는 untrusted) | orchestrator → marketing | 2차 |
 | `metric.anomaly` | data | metric, window, observed, baseline, severity | orchestrator | 1차 |
+| `infra.anomaly_detected` | infra | component, metric\_code, value, threshold, detected\_at, source\_ref (원인 판단은 넣지 않고 `diagnose_incident`로) | orchestrator | 1차 |
 | `incident.opened`, `incident.resolved` | **orchestrator** | context\_id, component, 감지 신호 출처, 시각 | 전 부서 | 1차 |
 | `notice.published` | marketing | notice\_id, channel\_code, context\_id (본문·사실·약속은 `get_notice`로) | support, memory | 1차 |
 | `campaign.created` | marketing | campaign\_id, target\_codes, starts\_at, ends\_at, `promises[]` | support, finance | 2차 |
