@@ -1,0 +1,88 @@
+# 액션 등급 레지스트리 (SAF-02, 공통 구성안 7장 "액션 등급 신고").
+#
+# 각 부서가 신고한 상태 변경 액션의 기본 등급·검증자·금액 필드다. 사람만 바꾼다(PR).
+# Agent Card의 grade·verifier와 다르면 이 파일이 우선한다.
+#
+# - owner: 이 액션을 execute()로 요청할 수 있는 유일한 에이전트 (토큰의 requester와 같아야 한다)
+# - base_grade: A | B | C. 금액 기준(thresholds.toml)이 더 높으면 그쪽을 쓴다
+# - verifier, verify_skill: B 교차검증 주체와 그 skill. owner와 같으면 등록을 거부한다
+# - amount: 금액 계산 방법. count_field × unit_field 또는 amount_field 하나
+#   claimed_fields는 요청 쪽이 적어 보낸 총액 필드다. 코드 계산값과 다르면 C(amount_mismatch)
+# - customer_field, purpose_field: 누적 기준(고객당·사건당 보상)에 쓰는 필드
+
+# ---- 마케팅 (재헌)
+[[actions]]
+action = "publish_notice"
+owner = "marketing"
+base_grade = "A"
+
+[[actions]]
+action = "issue_coupon"
+owner = "marketing"
+base_grade = "B"
+verifier = "finance"
+verify_skill = "verify_amount"
+customer_field = "buyer_id"
+purpose_field = "purpose_code"
+amount = { count_field = "count", unit_field = "unit_value", claimed_fields = ["total_value", "claimed_total"] }
+
+# ---- 고객지원 (병환)
+[[actions]]
+action = "refund_request"
+owner = "support"
+base_grade = "B"
+verifier = "finance"
+verify_skill = "verify_amount"
+amount = { amount_field = "refund_amount" }
+
+[[actions]]
+action = "create_inquiry"
+owner = "support"
+base_grade = "A"
+
+[[actions]]
+action = "add_customer_message"
+owner = "support"
+base_grade = "A"
+
+[[actions]]
+action = "send_reply"
+owner = "support"
+base_grade = "A"
+
+[[actions]]
+action = "reject_draft"
+owner = "support"
+base_grade = "A"
+
+[[actions]]
+action = "set_inquiry_status"
+owner = "support"
+base_grade = "A"
+
+# ---- 인사 (준하)
+[[actions]]
+action = "record_case"
+owner = "hr"
+base_grade = "A"
+
+# ---- 인프라 DejaFix (예진). 서버 재부팅·파일 삭제는 등록하지 않는다(미등록 = C)
+[[actions]]
+action = "rollback_deployment"
+owner = "infra"
+base_grade = "B"
+verifier = "planning"
+verify_skill = "verify_rollback_target"
+
+[[actions]]
+action = "restart_service"
+owner = "infra"
+base_grade = "B"
+verifier = "data"
+verify_skill = "anomaly_detection"
+
+# ---- 재무 (태윤). 재무가 재무를 검증하지 않도록 정산 확정은 항상 C
+[[actions]]
+action = "confirm_settlement"
+owner = "finance"
+base_grade = "C"

@@ -1,0 +1,64 @@
+# 기준 금액 등급표 (SAF-02). 원본은 재무 기준표 v1, 공통 구성안 13장 결정 5번.
+#
+# 모든 값은 시작값이다. 바꾸면 version을 올린다. 사람만 바꾼다(PR). 에이전트는 조회만 한다.
+# 규칙에 걸리면 C, 아니면 레지스트리 기본 등급을 쓴다.
+#
+# metric:
+# - amount: 이번 요청의 코드 계산 금액
+# - unit: 이번 요청의 단가
+# - daily_total: 같은 tenant·같은 액션의 오늘(UTC) 실행 누적 + 이번 금액
+# - context_total: 같은 context_id·같은 액션의 실행 누적 + 이번 금액
+# - customer_total: 같은 context_id·같은 고객의 실행 누적 + 이번 금액
+# op: ">=" 또는 ">". when은 params가 이 값일 때만 규칙을 적용한다.
+
+version = 1
+
+# B 교차검증 응답 마감(초). 넘으면 실행하지 않고 C 보류
+verify_timeout_seconds = 30
+
+# C 보류 건을 사람이 결정하지 않으면 자동 거절하는 시간(초). 데모 10분
+review_timeout_seconds = 600
+
+[[rules]]
+key = "coupon_total"
+action = "issue_coupon"
+metric = "amount"
+op = ">="
+value = 300000
+
+[[rules]]
+key = "coupon_unit"
+action = "issue_coupon"
+metric = "unit"
+op = ">"
+value = 20000
+
+[[rules]]
+key = "coupon_daily"
+action = "issue_coupon"
+metric = "daily_total"
+op = ">="
+value = 1000000
+
+[[rules]]
+key = "compensation_per_context"
+action = "issue_coupon"
+metric = "context_total"
+op = ">="
+value = 1000000
+when = { purpose_code = "compensation" }
+
+[[rules]]
+key = "compensation_per_customer"
+action = "issue_coupon"
+metric = "customer_total"
+op = ">="
+value = 50000
+when = { purpose_code = "compensation" }
+
+[[rules]]
+key = "refund_single"
+action = "refund_request"
+metric = "amount"
+op = ">="
+value = 100000
