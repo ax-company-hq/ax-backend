@@ -16,5 +16,7 @@
 
 | 파일 | 제공 | 사용 | 내용 |
 | --- | --- | --- | --- |
-| `shop_failed_orders.py` | shop-api (재헌) | data | 실패 주문 목록. 입력 `from`, `to`, `category` → 출력 `order_id`, `buyer_id`, `amount`, `category`, `failed_at`, `reason`, `tenant_id` (예시 스텁). 입력에 `limit`(기본 1000), 출력에 `collected_at`·`truncated` 추가 |
-| `shop_metric_series.py` | shop-api (재헌) | data | 지표 시계열. 입력 `metric`(`order_count`·`payment_fail_rate`·`order_fail_count`), `from`, `to`, `bucket`(`1m`·`5m`·`15m`·`1h`, 기본 `5m`) → 출력 `points[{ts, value}]`(표본 없으면 `value=None`), `collected_at`, `truncated` |
+| `shop_failed_orders.py` | shop-api (재헌) | data | 실패 주문 목록. 입력 `from`, `to`, `category`, `limit`(기본 1000) → 출력 `order_id`, `buyer_id`, `amount`, `category`, `failed_at`, `reason`, `tenant_id` (예시 스텁), `collected_at`(선택)·`truncated` |
+| `shop_metric_series.py` | shop-api (재헌) | data | 지표 시계열(anomaly_detection). 입력 `metric`(`order_count`·`order_fail_count`·`payment_fail_rate`·`payment_count`), `from`, `to`, `bucket`(`5m`, 1m·15m·1h는 data 확인 뒤), `tenant_id` → 출력 `metric`, `bucket`, `points[{ts, value}]`(표본 없으면 `value=None`), `collected_at`(선택), `truncated` |
+| `shop_seller_profile.py` | shop-api (재헌) | data | 판매자 정보(fraud_score). 입력 `seller_id`, `tenant_id` → 출력 `seller_id`, `joined_at`, `business_hash`, `business_hash_duplicated`, `product_count`, `listings_last_24h`, `tenant_id` |
+| `shop_seller_prices.py` | shop-api (재헌) | data | 판매자 상품 가격(fraud_score). 입력 `seller_id`, `tenant_id` → 출력 `items[product_id, category, price, category_median_price]` |

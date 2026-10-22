@@ -37,5 +37,7 @@ class ShopFailedOrdersResult(AxModel):
     """출력. 조회 자체의 근거(쿼리·시각)는 MCP 봉투와 `Evidence`로 붙인다."""
 
     orders: list[FailedOrder] = Field(default_factory=list)
-    collected_at: UtcDatetime
+    collected_at: UtcDatetime | None = (
+        None  # 기존 소비자와 호환되게 선택 필드(필드 추가 = version 유지)
+    )
     truncated: bool = False
