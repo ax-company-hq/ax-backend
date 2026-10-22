@@ -12,7 +12,7 @@
 - 목 모드: `HR_MOCK=1` (LLM·외부 호출 대신 가짜 응답과 가상 명부·진행 중 항목. CI는 항상 1)
 - 단독 테스트: `uv run pytest agents/hr` (다른 에이전트 없이 돈다. 공통 8항목과 hr 고유 4항목은 `tests/test_standalone.py`)
 - 눈으로 확인(localhost 데모, 개발 전용): `uv run --package ax-agent-hr python -m hr_agent.demo` → http://localhost:8114
-  (탭: 시나리오 · 카드 덱 · 명부 · 인수인계 · 온보딩 · 발령·퇴직 · 계획 비교. 샘플 시나리오 `src/hr_agent/demo/scenarios/*.json`을 hr에 보내 결과·결정성·권한 거부를 화면으로 본다. 헤더의 `+10분`으로 시계를 움직여 보류 만료를 볼 수 있고 `HR_DEMO_PORT`로 포트를 바꾼다)
+  (탭: 시나리오 · 1 기록 · 2 계획 비교 · 3 명부·교대 · 4 인수인계 · 5 발령·퇴직 · 6 온보딩 · 보류 큐 · 감사 로그. 샘플 시나리오 `src/hr_agent/demo/scenarios/*.json`을 hr에 보내 결과·결정성·권한 거부를 화면으로 본다. 헤더의 `+10분`으로 시계를 움직여 보류 만료를 볼 수 있고 `HR_DEMO_PORT`로 포트를 바꾼다)
 - 요청 보내 보기: `uv run ax-test-call --agent http://localhost:8104 --skill get_roster --input input.json`
   (목 모드에서는 `orchestrator`인 것처럼 보낸다. 요청자는 `--as planning`처럼 바꾼다)
 ## 3. 입출력 계약
