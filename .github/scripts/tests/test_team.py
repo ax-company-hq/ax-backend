@@ -389,3 +389,45 @@ def test_guard_recursion_error_reported() -> None:
     deep = "def test_x():\n    assert " + "(" * 300 + "1" + ")" * 300 + "\n"
     v = guard([ch("agents/data/tests/test_x.py")], BASE_TEST, deep)
     assert v == [] or any("파싱 실패" in x for x in v)
+
+
+# ── cap-ok · requeue ─────────────────────────────────────
+def test_token_depts_of(team: Team) -> None:
+    assert team_mod.token_depts_of(team, "JangJaehyeonn") == {"data", "memory"}
+    # contracts의 첫 owner는 준하 → 태윤 토큰으로는 contracts 잡을 세지 않는다
+    assert "contracts" in team_mod.token_depts_of(team, "haakim7")
+    assert "contracts" not in team_mod.token_depts_of(team, "2taeyoon")
+    assert "shop-web" in team_mod.token_depts_of(team, "areatmadm")
+
+
+def test_count_claude_jobs() -> None:
+    jobs = [
+        ("claude:data:task", "success"),
+        ("claude:data:review", "failure"),
+        ("claude-review / claude:memory:review", "success"),  # 재사용 워크플로 형태
+        ("claude:data:task", "skipped"),  # 실행 안 됨
+        ("claude:finance:review", "success"),  # 다른 사람 부서
+        ("prep", "success"),
+        ("apply", None),
+        ("xclaude:data:task", "success"),  # 접두 일치 아님
+    ]
+    assert team_mod.count_claude_jobs(jobs, {"data", "memory"}) == 3
+
+
+@pytest.mark.parametrize(
+    ("labels", "add", "remove"),
+    [
+        ([], ["retry-1"], ["in-progress"]),
+        (["in-progress", "task"], ["retry-1"], ["in-progress"]),
+        (["retry-1"], ["retry-2"], ["in-progress", "retry-1"]),
+        (["retry-2", "in-progress"], ["retry-3"], ["in-progress", "retry-2"]),
+        (["retry-3"], ["blocked"], ["in-progress", "retry-3"]),
+    ],
+)
+def test_next_retry_labels(labels, add, remove) -> None:
+    assert team_mod.next_retry_labels(labels) == (add, remove)
+
+
+def test_requeue_key() -> None:
+    assert team_mod.requeue_key(5, "abc", 3, "99") == "pr:5:abc"
+    assert team_mod.requeue_key(None, None, 3, "99") == "issue:3:99"

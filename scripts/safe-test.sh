@@ -1,12 +1,21 @@
 #!/usr/bin/env bash
 # 한 부서의 검사(pytest, ruff, lint-imports)를 비밀값 없는 컨테이너에서 실행한다.
 # 사용: scripts/safe-test.sh <부서> <소스 디렉터리> [<출력 디렉터리>]
-#  - 소스 디렉터리는 git archive로 내보낸 사본 (읽기 전용 마운트)
+#  - 소스 디렉터리는 git archive로 내보낸 사본 (항상 읽기 전용 마운트)
 #  - 출력: <out>/test-report.md, 의존성이 바뀌었으면 <out>/uv.lock
-# 종료 코드: 전부 통과 0, 아니면 1 (사용법 오류는 2)
+# 종료 코드: 전부 통과 0, 아니면 1, 사용법 오류 2
+#
+# 구조 (테스트 대상 코드가 리포트·lock을 위조하지 못하게 컨테이너를 나눈다):
+#   1) lock : 네트워크 O, 프로젝트 코드 실행 없음(--no-build). uv.lock을 stdout으로만 내보낸다. 쓰기 가능한 호스트 마운트 없음
+#   2) sync : 네트워크 O, 이름 있는 볼륨(/work)에 소스 복사 + uv sync. 호스트 쓰기 마운트 없음
+#   3) 검사 : pytest / ruff / lint-imports 각각 별도 컨테이너. --network none, 볼륨 읽기 전용, 호스트 쓰기 마운트 없음
+# 종료 코드와 로그는 호스트의 docker run 프로세스에서 수집하고 리포트도 호스트가 쓴다.
 set -euo pipefail
 
 IMAGE="${SAFE_TEST_IMAGE:-ghcr.io/astral-sh/uv:0.13.1-python3.12-trixie-slim}"
+T_LOCK="${SAFE_TEST_TIMEOUT_LOCK:-300}"
+T_SYNC="${SAFE_TEST_TIMEOUT_SYNC:-600}"
+T_CHECK="${SAFE_TEST_TIMEOUT_CHECK:-600}"
 
 if [ $# -lt 2 ] || [ $# -gt 3 ]; then
   echo "usage: $0 <dept> <source dir> [<out dir>]" >&2
@@ -50,70 +59,115 @@ SRC="$(cd "$SRC" && pwd)"
 OUT="$(cd "$OUT" && pwd)"
 [ -d "$SRC/$FOLDER" ] || { echo "error: folder '$FOLDER' not in source dir" >&2; exit 2; }
 
+# 호스트 쪽 임시 디렉터리 (컨테이너에는 lock 결과 읽기 전용 마운트로만 노출)
+WORK="$(mktemp -d "$OUT/.safe-test.XXXXXX")"
+RUN_ID="$$-$RANDOM"
+VOL="safe-test-vol-$RUN_ID"
+cleanup() {
+  docker volume rm -f "$VOL" >/dev/null 2>&1 || true
+  rm -rf "$WORK"
+}
+trap cleanup EXIT
+
 # Git Bash(Windows)는 docker 볼륨에 Windows 경로가 필요하고 경로 변환을 꺼야 한다
+SRC_M="$SRC"
+LOCKDIR_M="$WORK/lockout"
+mkdir -p "$WORK/lockout" "$WORK/logs"
+LOGS="$WORK/logs"
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
     export MSYS_NO_PATHCONV=1
-    SRC="$(cd "$SRC" && pwd -W)"
-    OUT="$(cd "$OUT" && pwd -W)"
+    SRC_M="$(cd "$SRC" && pwd -W)"
+    LOCKDIR_M="$(cd "$WORK/lockout" && pwd -W)"
     ;;
 esac
 
-ENV_ARGS=(-e TENANT_ID=shop-demo -e UV_LINK_MODE=copy -e UV_NO_PROGRESS=1 -e PYTHONDONTWRITEBYTECODE=1)
+UIDGID="$(id -u):$(id -g)"
+HARDEN=(--rm --cap-drop ALL --security-opt no-new-privileges --pids-limit 1024 --memory 4g
+        --user "$UIDGID" --entrypoint bash)
+RO_ROOT=(--read-only --tmpfs '/tmp:rw,exec,size=2g' -e HOME=/tmp -e UV_CACHE_DIR=/tmp/uv-cache)
+UV_ENV=(-e UV_LINK_MODE=copy -e UV_NO_PROGRESS=1 -e UV_PYTHON_DOWNLOADS=never -e PYTHONDONTWRITEBYTECODE=1)
+CHECK_ENV=(-e TENANT_ID=shop-demo)
 MOCK_VAR=""
 if [ -n "$PREFIX" ]; then
   MOCK_VAR="${PREFIX}_MOCK"
-  ENV_ARGS+=(-e "${MOCK_VAR}=1")
+  CHECK_ENV+=(-e "${MOCK_VAR}=1")
 fi
 
-rm -rf "$OUT/.steps" "$OUT/test-report.md" "$OUT/uv.lock"
+declare -A RC
 START=$(date +%s)
 
-# 컨테이너 안에서 실행할 스크립트 (호스트 env는 전달하지 않는다)
-read -r -d '' INNER <<'INNER_EOF' || true
-set -u
-FOLDER="$1"
-mkdir -p /work /out/.steps
-cp -a /src/. /work/
+# run_step <name> <timeout sec> <stdout file> <docker run 인자...>
+# 호스트에서 종료 코드·로그를 수집한다. 타임아웃이면 컨테이너를 강제로 지운다.
+run_step() {
+  local name="$1" secs="$2" so="$3" cname rc=0
+  shift 3
+  cname="safe-test-$RUN_ID-$name"
+  timeout "$secs" docker run --name "$cname" "$@" >"$so" 2>"$LOGS/$name.err" || rc=$?
+  if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+    echo "timeout after ${secs}s" >>"$LOGS/$name.err"
+    rc=124
+  fi
+  docker rm -f "$cname" >/dev/null 2>&1 || true
+  RC[$name]=$rc
+}
+
+skip_step() { RC[$1]=99; echo "skipped: $2" >"$LOGS/$1.err"; : >"$LOGS/$1.log"; }
+
+# 1) lock: 프로젝트 코드를 실행하지 않는다 (--no-build: 빌드 백엔드·sdist 빌드 금지, 메타데이터는 정적 pyproject만)
+LOCK_SCRIPT='
+set -eu
+cp -R /src/. /work/
 cd /work
+if uv lock --check --no-build >&2; then :; else uv lock --no-build >&2; fi
+cat /work/uv.lock
+'
+run_step lock "$T_LOCK" "$LOGS/uv.lock.new" "${HARDEN[@]}" "${RO_ROOT[@]}" "${UV_ENV[@]}" \
+  --tmpfs /work:rw,exec,size=1g -v "$SRC_M:/src:ro" "$IMAGE" -c "$LOCK_SCRIPT"
+mv "$LOGS/lock.err" "$LOGS/lock.log"
 LOCK_CHANGED=0
-if uv lock --check >/out/.steps/lock.log 2>&1; then
-  echo 0 >/out/.steps/lock.rc
-else
-  uv lock >>/out/.steps/lock.log 2>&1
-  echo $? >/out/.steps/lock.rc
-  LOCK_CHANGED=1
+if [ "${RC[lock]}" -eq 0 ]; then
+  if [ ! -f "$SRC/uv.lock" ] || ! cmp -s "$SRC/uv.lock" "$LOGS/uv.lock.new"; then LOCK_CHANGED=1; fi
+  cp "$LOGS/uv.lock.new" "$WORK/lockout/uv.lock"
 fi
-echo "$LOCK_CHANGED" >/out/.steps/lock.changed
-uv sync --locked --all-packages >/out/.steps/sync.log 2>&1
-SYNC_RC=$?
-echo "$SYNC_RC" >/out/.steps/sync.rc
-if [ "$SYNC_RC" -ne 0 ]; then
-  for s in pytest ruff lint-imports; do echo "skipped: uv sync failed" >/out/.steps/$s.log; echo 99 >/out/.steps/$s.rc; done
+
+# 2) sync: 이름 있는 볼륨에 소스 복사 + 설치. 이 볼륨이 이후 검사에 읽기 전용으로 마운트된다
+if [ "${RC[lock]}" -eq 0 ]; then
+  docker volume create "$VOL" >/dev/null
+  docker run --rm --user 0 --cap-drop ALL --cap-add CHOWN --entrypoint bash -v "$VOL:/work" "$IMAGE" \
+    -c "chown $UIDGID /work" >/dev/null
+  SYNC_SCRIPT='
+set -eu
+cp -R /src/. /work/
+cp /newlock/uv.lock /work/uv.lock
+cd /work
+uv sync --locked --all-packages
+chmod -R a+rX /work
+'
+  run_step sync "$T_SYNC" "$LOGS/sync.log" "${HARDEN[@]}" "${RO_ROOT[@]}" "${UV_ENV[@]}" \
+    -v "$SRC_M:/src:ro" -v "$LOCKDIR_M:/newlock:ro" -v "$VOL:/work" "$IMAGE" -c "$SYNC_SCRIPT"
+  cat "$LOGS/sync.err" >>"$LOGS/sync.log"
 else
-  uv run pytest "$FOLDER/tests" -q >/out/.steps/pytest.log 2>&1; echo $? >/out/.steps/pytest.rc
-  uv run ruff check "$FOLDER" >/out/.steps/ruff.log 2>&1; echo $? >/out/.steps/ruff.rc
-  uv run lint-imports >/out/.steps/lint-imports.log 2>&1; echo $? >/out/.steps/lint-imports.rc
+  skip_step sync "uv lock failed"
 fi
-if [ "$LOCK_CHANGED" = 1 ] && [ -f /work/uv.lock ]; then cp /work/uv.lock /out/uv.lock; fi
-chmod -R a+rwX /out 2>/dev/null
-exit 0
-INNER_EOF
 
-CRC=0
-docker run --rm --security-opt no-new-privileges --cap-drop ALL --pids-limit 1024 \
-  --entrypoint bash \
-  "${ENV_ARGS[@]}" \
-  -v "$SRC:/src:ro" -v "$OUT:/out" \
-  "$IMAGE" -c "$INNER" _ "$FOLDER" || CRC=$?
+# 3) 검사: 네트워크 없음, 볼륨 읽기 전용, 호스트 쓰기 마운트 없음
+check() { # <name> <command...>
+  local name="$1"; shift
+  if [ "${RC[sync]}" -ne 0 ]; then skip_step "$name" "uv sync failed"; return; fi
+  run_step "$name" "$T_CHECK" "$LOGS/$name.log" "${HARDEN[@]}" "${RO_ROOT[@]}" "${UV_ENV[@]}" "${CHECK_ENV[@]}" \
+    --network none -w /work -v "$VOL:/work:ro" "$IMAGE" -c "$*"
+  cat "$LOGS/$name.err" >>"$LOGS/$name.log"
+}
+check pytest "exec uv run --no-sync --frozen pytest '$FOLDER/tests' -q -p no:cacheprovider"
+check ruff "exec uv run --no-sync --frozen ruff check --no-cache '$FOLDER'"
+check lint-imports "exec uv run --no-sync --frozen lint-imports --no-cache"
 
-STEPS="$OUT/.steps"
-rc() { [ -f "$STEPS/$1.rc" ] && tr -d '[:space:]' <"$STEPS/$1.rc" || echo "n/a"; }
+# 리포트는 호스트가 쓴다
 ALL_OK=1
-[ "$CRC" -eq 0 ] || ALL_OK=0
-for s in lock sync pytest ruff lint-imports; do [ "$(rc $s)" = "0" ] || ALL_OK=0; done
-
+for s in lock sync pytest ruff lint-imports; do [ "${RC[$s]}" -eq 0 ] || ALL_OK=0; done
 DUR=$(( $(date +%s) - START ))
+rm -f "$OUT/test-report.md" "$OUT/uv.lock"
 {
   echo "# 테스트 리포트"
   echo
@@ -122,22 +176,27 @@ DUR=$(( $(date +%s) - START ))
   echo "- MOCK 변수: \`${MOCK_VAR:-없음}\`"
   echo "- 이미지: \`$IMAGE\`"
   echo "- 소요: ${DUR}s"
-  echo "- 결과: $([ $ALL_OK = 1 ] && echo 통과 || echo 실패)"
-  [ "$CRC" -eq 0 ] || echo "- 컨테이너 종료 코드: $CRC (실행 자체 실패)"
-  [ "$(cat "$STEPS/lock.changed" 2>/dev/null || echo 0)" = 1 ] && echo "- uv.lock 갱신됨 (uv.lock을 함께 내보냄)"
+  echo "- 결과: $([ "$ALL_OK" = 1 ] && echo 통과 || echo 실패)"
+  [ "$LOCK_CHANGED" = 1 ] && echo "- uv.lock 갱신됨 (uv.lock을 함께 내보냄)"
   echo
   for s in lock sync pytest ruff lint-imports; do
-    r="$(rc $s)"
-    if [ "$r" = "0" ]; then st="PASS"; else st="FAIL (exit $r)"; fi
+    r="${RC[$s]}"
+    if [ "$r" -eq 0 ]; then st="PASS"; else st="FAIL (exit $r)"; fi
     echo "## $s: $st"
     echo
     echo '```'
-    if [ -f "$STEPS/$s.log" ]; then tail -n 60 "$STEPS/$s.log" | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'; else echo "(no output)"; fi
+    if [ -f "$LOGS/$s.log" ]; then
+      # shellcheck disable=SC2016
+      tail -n 60 "$LOGS/$s.log" | sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/```/` ` `/g'
+    else
+      echo "(no output)"
+    fi
     echo '```'
     echo
   done
 } >"$OUT/test-report.md"
-rm -rf "$STEPS"
+# lock 단계 산출물만 밖으로 (테스트 대상 코드는 이 파일에 관여할 수 없다)
+if [ "$LOCK_CHANGED" = 1 ] && [ "${RC[lock]}" -eq 0 ]; then cp "$LOGS/uv.lock.new" "$OUT/uv.lock"; fi
 
-echo "safe-test dept=$DEPT: $([ $ALL_OK = 1 ] && echo PASS || echo FAIL) (${DUR}s) report: $OUT/test-report.md"
-[ $ALL_OK = 1 ]
+echo "safe-test dept=$DEPT: $([ "$ALL_OK" = 1 ] && echo PASS || echo FAIL) (${DUR}s) report: $OUT/test-report.md"
+[ "$ALL_OK" = 1 ]

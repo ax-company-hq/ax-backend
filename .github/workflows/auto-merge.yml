@@ -1,0 +1,52 @@
+name: auto-merge
+
+# 팀원·봇 PR을 자동 머지 예약한다 (docs/automation-spec.md 7장). 스위치 무관.
+# 실제 머지 조건은 브랜치 보호(필수 체크 + human_paths면 code owner 승인)가 정한다.
+# agent-review가 dev 필수 체크가 되기 전이거나, 그걸 봇 토큰으로 읽지 못하면 예약하지 않는다 (fail-closed).
+# 제외: planning 에이전트 generate_pr이 만든 PR(gen/ 브랜치, generated-pr 라벨) — 머지는 사람이 누른다.
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review]
+    branches: [dev]
+
+permissions: {}
+
+jobs:
+  auto-merge:
+    name: auto-merge
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    environment: bot
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: dev, persist-credentials: false, sparse-checkout: .github }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: team.py 의존성
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet --require-hashes -r .github/scripts/requirements.txt
+      - name: ax-bot token
+        id: bot
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ secrets.AX_BOT_APP_ID }}
+          private-key: ${{ secrets.AX_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: 대상인지 (봇 토큰으로 읽기, 실패하면 예약 안 함)
+        id: check
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          "$RUNNER_TEMP/venv/bin/python" -I .github/scripts/claude_jobs.py automerge-check --pr "$PR"
+      - name: 자동 머지 예약 (squash)
+        if: steps.check.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh pr merge "$PR" -R "$REPO" --auto --squash

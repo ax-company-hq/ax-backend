@@ -13,6 +13,8 @@ PR 코드는 git으로 읽기만 하고 실행하지 않는다 (test-guard도 as
   reviewers-for <base> <head> <author_person>
   arbiter-for <author_dept> <reviewer_dept...>
   test-guard <base> <head>
+  cap-ok <login> [--day YYYY-MM-DD]          오늘 Claude 잡 수 < daily_cap이면 0
+  requeue <issue> <reason> [--pr N --head-sha S] [--run-id R]   (GITHUB_REPOSITORY, GH_TOKEN=ax-bot)
   export-json [--check]                      .github/team.json 생성 (--check: 동기화 검사만)
 """
 
@@ -21,9 +23,12 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 import yaml
@@ -374,6 +379,120 @@ def show(rev: str, path: str) -> str:
     return git("show", f"{rev}:{path}")
 
 
+# ── cap-ok (하루 Claude 실행 상한) ─────────────────────────
+CLAUDE_JOB = re.compile(r"(?:^|/ )claude:([a-z0-9-]+):")
+REPOS = ("ax-company-hq/ax-backend", "ax-company-hq/ax-frontend")
+# 이름에 claude:<부서>:가 붙는 잡이 있는 워크플로만 조회한다 (API 호출 줄이기)
+# 재사용 워크플로 실행은 호출한 워크플로 이름으로 기록되므로 호출자도 넣는다
+CLAUDE_WORKFLOWS = ("_claude-write.yml", "claude-request.yml", "claude-review.yml",
+                    "claude-tasks.yml", "claude-ci-fix.yml", "claude-arbiter.yml",
+                    "claude-plan.yml", "claude-triage.yml")
+
+
+def token_depts_of(team: Team, login: str) -> set[str]:
+    """그 사람이 실행 토큰 주인(owners의 첫 번째)인 부서. 프론트 부서 포함."""
+    depts = {d for d, info in team.depts.items() if info["owners"][0] == login}
+    depts |= {d for d, who in team.data.get("frontend_depts", {}).items() if who == login}
+    return depts
+
+
+def count_claude_jobs(jobs: list[tuple[str, str | None]], depts: set[str]) -> int:
+    """(잡 이름, conclusion) 중 실제로 실행된 claude:<부서>: 잡 수."""
+    n = 0
+    for name, conclusion in jobs:
+        m = CLAUDE_JOB.search(name)
+        if m and m.group(1) in depts and conclusion != "skipped":
+            n += 1
+    return n
+
+
+def gh_api(path: str, *extra: str):
+    out = subprocess.run(
+        ["gh", "api", path, *extra], check=True, capture_output=True, text=True,
+        encoding="utf-8",
+    ).stdout
+    return json.loads(out) if out.strip() else None
+
+
+def todays_claude_jobs(day: str) -> list[tuple[str, str | None]]:
+    """두 레포에서 오늘(UTC) 만들어진 Claude 워크플로 실행의 잡 목록."""
+    jobs: list[tuple[str, str | None]] = []
+    for repo in REPOS:
+        for wf in CLAUDE_WORKFLOWS:
+            try:
+                runs = gh_api(
+                    f"repos/{repo}/actions/workflows/{wf}/runs?created=>={day}&per_page=100"
+                )
+            except subprocess.CalledProcessError:
+                continue  # 아직 없는 워크플로
+            for run in (runs or {}).get("workflow_runs", []):
+                if str(run["id"]) == os.environ.get("GITHUB_RUN_ID"):
+                    continue  # 지금 실행 중인 자기 자신은 세지 않는다
+                data = gh_api(f"repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100")
+                jobs += [(j["name"], j.get("conclusion")) for j in data.get("jobs", [])]
+    return jobs
+
+
+# ── requeue (모든 재대기는 이 함수 하나로) ───────────────────
+RETRY_LABELS = ("retry-1", "retry-2", "retry-3")
+
+
+def next_retry_labels(labels: list[str]) -> tuple[list[str], list[str]]:
+    """(붙일 라벨, 뗄 라벨). retry-1 → 2 → 3, 3 다음은 blocked."""
+    current = [lb for lb in RETRY_LABELS if lb in labels]
+    remove = ["in-progress", *current]
+    if not current:
+        return ["retry-1"], remove
+    level = RETRY_LABELS.index(current[-1]) + 1
+    if level >= len(RETRY_LABELS):
+        return ["blocked"], remove
+    return [RETRY_LABELS[level]], remove
+
+
+def requeue_key(pr: int | None, head_sha: str | None, issue: int, run_id: str | None) -> str:
+    if pr:
+        return f"pr:{pr}:{head_sha}"
+    return f"issue:{issue}:{run_id}"
+
+
+def requeue(repo: str, team: Team, issue: int, reason: str, pr: int | None = None,
+            head_sha: str | None = None, run_id: str | None = None) -> str:
+    """PR이 있으면 닫고 브랜치 삭제, 이슈를 다시 열고 retry 라벨을 올린다.
+
+    같은 키로 이미 requeue했으면(봇 코멘트의 표시) 아무것도 안 한다.
+    """
+    key = requeue_key(pr, head_sha, issue, run_id)
+    marker = f"<!-- requeue:{key} -->"
+    comments = gh_api(f"repos/{repo}/issues/{issue}/comments?per_page=100") or []
+    if any(marker in (c.get("body") or "") and (c.get("user") or {}).get("login") ==
+           team.bot_login for c in comments):
+        return "already"
+    if pr:
+        info = gh_api(f"repos/{repo}/pulls/{pr}")
+        if info["state"] == "open":
+            gh_api(f"repos/{repo}/pulls/{pr}", "-X", "PATCH", "-f", "state=closed")
+        branch = info["head"]["ref"]
+        same_repo = (info["head"]["repo"] or {}).get("full_name") == repo
+        if same_repo and info["user"]["login"] == team.bot_login and team.dept_of_branch(branch):
+            subprocess.run(["gh", "api", "-X", "DELETE", f"repos/{repo}/git/refs/heads/{branch}"],
+                           capture_output=True)
+    issue_info = gh_api(f"repos/{repo}/issues/{issue}")
+    labels = [lb["name"] for lb in issue_info["labels"]]
+    add, remove = next_retry_labels(labels)
+    if issue_info["state"] == "closed":  # blocked여도 열어 둬야 사람이 본다
+        gh_api(f"repos/{repo}/issues/{issue}", "-X", "PATCH", "-f", "state=open")
+    for lb in remove:
+        if lb in labels:
+            subprocess.run(["gh", "api", "-X", "DELETE",
+                            f"repos/{repo}/issues/{issue}/labels/{lb}"], capture_output=True)
+    gh_api(f"repos/{repo}/issues/{issue}/labels", "-X", "POST",
+           *[x for lb in add for x in ("-f", f"labels[]={lb}")])
+    where = f" (PR #{pr} 닫음)" if pr else ""
+    gh_api(f"repos/{repo}/issues/{issue}/comments", "-X", "POST", "-f",
+           f"body={marker}\n재대기{where}: {reason}\n→ {', '.join(add)}")
+    return ",".join(add)
+
+
 # ── CLI ──────────────────────────────────────────────────
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="team.py")
@@ -400,6 +519,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("author_dept")
     p.add_argument("reviewer_depts", nargs="+")
     sub.add_parser("export-json").add_argument("--check", action="store_true")
+    p = sub.add_parser("cap-ok")
+    p.add_argument("login")
+    p.add_argument("--day", help="UTC 날짜 YYYY-MM-DD (기본 오늘)")
+    p = sub.add_parser("requeue")
+    p.add_argument("issue", type=int)
+    p.add_argument("reason")
+    p.add_argument("--pr", type=int)
+    p.add_argument("--head-sha")
+    p.add_argument("--run-id")
     args = ap.parse_args(argv)
 
     team = Team.load()
@@ -439,6 +567,19 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             return 0
         TEAM_JSON.write_text(text, encoding="utf-8", newline="\n")
+        return 0
+    if cmd == "cap-ok":
+        if not team.is_member(args.login):
+            print(f"팀원이 아님: {args.login}", file=sys.stderr)
+            return 1
+        day = args.day or datetime.now(UTC).strftime("%Y-%m-%d")
+        used = count_claude_jobs(todays_claude_jobs(day), token_depts_of(team, args.login))
+        cap = int(team.members[args.login].get("daily_cap", 0))
+        print(f"{used}/{cap}")
+        return 0 if used < cap else 1
+    if cmd == "requeue":
+        repo = os.environ["GITHUB_REPOSITORY"]
+        print(requeue(repo, team, args.issue, args.reason, args.pr, args.head_sha, args.run_id))
         return 0
 
     mb = merge_base(args.base, args.head)
