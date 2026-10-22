@@ -65,6 +65,11 @@ def add_read_api(app: FastAPI) -> None:
         refunds = [{"order_id": oid, "refunded": amount} for oid, amount in book.refunds.items()]
         return {"data": {"compensation": compensation, "refunds": refunds}, "meta": {}}
 
+    @app.get("/api/finance/loss-reports")
+    def loss_reports() -> dict:
+        rows = sorted(state().ledger.loss_reports.values(), key=lambda r: r["at"], reverse=True)
+        return {"data": rows, "meta": {"count": len(rows)}}
+
     @app.get("/api/finance/market-ops")
     def market_ops() -> dict:
         rows = state().ledger.market_ops

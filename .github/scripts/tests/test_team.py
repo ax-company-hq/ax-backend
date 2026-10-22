@@ -1,6 +1,7 @@
 """team.py 단위 테스트 (docs/automation-spec.md 완료 기준)."""
 
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -400,18 +401,72 @@ def test_token_depts_of(team: Team) -> None:
     assert "shop-web" in team_mod.token_depts_of(team, "areatmadm")
 
 
-def test_count_claude_jobs() -> None:
-    jobs = [
-        ("claude:data:task", "success"),
-        ("claude:data:review", "failure"),
-        ("claude-review / claude:memory:review", "success"),  # 재사용 워크플로 형태
-        ("claude:data:task", "skipped"),  # 실행 안 됨
-        ("claude:finance:review", "success"),  # 다른 사람 부서
-        ("prep", "success"),
-        ("apply", None),
-        ("xclaude:data:task", "success"),  # 접두 일치 아님
+def test_usage_by_owner_from_run_titles(team: Team) -> None:
+    runs = [
+        ("claude:data:task #12", "success"),  # 수동 작성 → 재현
+        ("claude-request to:data by JangJaehyeonn", "failure"),  # 사람 요청 → 재현
+        ("claude-request to:memory by bxbae", None),  # 실행 중 → 재현
+        ("claude-request to:finance by ax-company-hq-bot[bot]", "success"),  # 봇 요청 → 세지 않음
+        ("claude-request to:data by JangJaehyeonn", "skipped"),  # 스위치 off → 세지 않음
+        ("claude-review data/24-x-r0 by ax-company-hq-bot[bot]", "success"),  # 리뷰 finance → 태윤
+        ("claude-review agent-template/x by haakim7", "success"),  # finance+planning → 태윤·예진
+        ("claude-review ci/automation by JangJaehyeonn", "success"),  # 사람 경로 → 생략
+        ("claude-review dispatch #5 by JangJaehyeonn", "success"),  # 수동 리뷰 → 알 수 없음
+        ("feat(data): 옛 형식 제목", "success"),  # 바꾸기 전 run → 세지 않음
     ]
-    assert team_mod.count_claude_jobs(jobs, {"data", "memory"}) == 3
+    assert team_mod.usage_by_owner(team, runs) == {
+        "JangJaehyeonn": 3, "2taeyoon": 2, "NYejin": 1}
+
+
+@pytest.mark.parametrize(
+    ("title", "depts"),
+    [("claude:infra-dejafix:request #3", ["dejafix"]),  # 별칭
+     ("claude:nowhere:task #3", []),
+     ("claude-request to:contracts by 2taeyoon", ["contracts"]),
+     ("claude-review support/x by bxbae", ["marketing"]),
+     ("claude-review memory/x by bxbae", ["orchestrator"]),  # 같은 사람 대체
+     ("claude-review data/x by stranger", [])],
+)
+def test_run_token_depts(team: Team, title: str, depts: list[str]) -> None:
+    assert team_mod.run_token_depts(team, title) == depts
+
+
+def test_todays_claude_runs_pages_and_skips_self(monkeypatch) -> None:
+    calls = []
+
+    def fake(path, *extra):
+        calls.append(path)
+        if "claude-review.yml" in path and path.endswith("&page=1"):
+            items = [{"id": i, "display_title": f"t{i}", "conclusion": "success"}
+                     for i in range(100)]
+        elif "claude-review.yml" in path:
+            items = [{"id": 999, "display_title": "self", "conclusion": None}]
+        else:
+            items = []
+        return {"workflow_runs": items}
+
+    monkeypatch.setattr(team_mod, "gh_api", fake)
+    monkeypatch.setenv("GITHUB_RUN_ID", "999")
+    runs = team_mod.todays_claude_runs("2026-10-22")
+    assert len(runs) == 100 and ("self", None) not in runs
+    assert len(calls) == 4  # 워크플로 3개 + review 2쪽, 프론트는 아직 없음
+
+
+def test_cap_status_ok_and_quota(team: Team, monkeypatch) -> None:
+    monkeypatch.setattr(team_mod, "todays_claude_runs",
+                        lambda day: [("claude:data:task #1", "success")] * 20)
+    st = team_mod.cap_status(team, ["JangJaehyeonn", "2taeyoon"], "2026-10-22")
+    assert st["JangJaehyeonn"]["ok"] is False and st["JangJaehyeonn"]["used"] == 20
+    assert st["2taeyoon"]["ok"] is True and st["2taeyoon"]["used"] == 0
+
+
+def test_cap_status_fail_closed(team: Team, monkeypatch) -> None:
+    def boom(day):
+        raise team_mod.subprocess.CalledProcessError(1, "gh")
+
+    monkeypatch.setattr(team_mod, "todays_claude_runs", boom)
+    st = team_mod.cap_status(team, ["JangJaehyeonn"], "2026-10-22")
+    assert st["JangJaehyeonn"]["ok"] is False and st["JangJaehyeonn"]["used"] is None
 
 
 @pytest.mark.parametrize(
@@ -487,3 +542,35 @@ def test_gh_api_logs_github_error_without_body(monkeypatch, capsys) -> None:
     err = capsys.readouterr().err
     assert "POST repos/o/r/issues/5/comments" in err and "HTTP 403" in err and "locked" in err
     assert "SECRET-ish" not in err
+
+
+# ── 이벤트 페이로드 ───────────────────────────────────────
+def _event(tmp_path, monkeypatch, name, payload):
+    f = tmp_path / "event.json"
+    f.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", name)
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(f))
+
+
+def test_event_pull_request_from_payload(tmp_path, monkeypatch) -> None:
+    pr = {"number": 7, "head": {"sha": "a", "ref": "data/x"}, "title": "$(rm -rf /)"}
+    _event(tmp_path, monkeypatch, "pull_request_target", {"pull_request": pr})
+    assert team_mod.event_pull_request(7) == pr  # 값은 그대로 데이터로만 돌려준다
+
+
+@pytest.mark.parametrize(
+    ("name", "payload", "number"),
+    [("workflow_dispatch", {"inputs": {"pr": "7"}}, 7),
+     ("pull_request_target", {"pull_request": {"number": 8}}, 7),
+     ("pull_request_target", {}, 7),
+     ("issues", {"pull_request": {"number": 7}}, 7)],
+)
+def test_event_pull_request_none(tmp_path, monkeypatch, name, payload, number) -> None:
+    _event(tmp_path, monkeypatch, name, payload)
+    assert team_mod.event_pull_request(number) is None
+
+
+def test_event_pull_request_bad_file(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(tmp_path / "missing.json"))
+    assert team_mod.event_pull_request(1) is None
