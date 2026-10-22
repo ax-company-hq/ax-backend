@@ -154,7 +154,9 @@ def gh_json(path: str, *extra: str):
 
 
 def load_pr(repo: str, number: int) -> PullRequest:
-    d = gh_json(f"repos/{repo}/pulls/{number}")
+    # PR 이벤트면 페이로드를 쓴다. workflow_dispatch(sweeper 재요청 등)만 API로 읽는다.
+    # head가 이벤트 뒤에 바뀌었으면 cmd_plan의 fetch 비교에서 걸러진다 (새 이벤트가 다시 돈다)
+    d = team_mod.event_pull_request(number) or gh_json(f"repos/{repo}/pulls/{number}")
     return PullRequest(
         number=number,
         head_sha=d["head"]["sha"],

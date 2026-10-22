@@ -22,7 +22,7 @@ def _mock_mode(monkeypatch: pytest.MonkeyPatch) -> None:
 def _body(skill: str, input: dict, token: str = "mock:orchestrator", **extra) -> dict:
     return {
         "meta": {
-            "context_id": CTX,
+            "context_id": extra.pop("context_id", CTX),
             "token": token,
             "path": extra.pop("path", []),
             "deadline": (datetime.now(UTC) + timedelta(seconds=30)).isoformat(),
@@ -289,3 +289,59 @@ def test_finance_rejection_is_final(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _coupon(sequence=1)["outcome"] == "rejected_by_review"
     assert _coupon(sequence=1)["outcome"] == "rejected_by_review"  # 다시 실행하지 않는다
     assert len(seen) == 1 and _coupon_events() == 0
+
+
+# --- 공지 생명주기(ended) ----------------------------------------------------
+
+RESOLVED_INPUT = {"kind": "incident_resolved", "facts": {"component": "payment"}}
+
+
+def _publish(draft_input: dict, **kwargs) -> str:
+    draft = _call("draft_notice", draft_input, **kwargs)["output"]["draft_id"]
+    return _call("publish_notice", {"draft_id": draft}, **kwargs)["output"]["notice_id"]
+
+
+def _status(notice_id: str) -> str:
+    return _call("get_notice", {"notice_id": notice_id}, token="mock:support")["output"]["status"]
+
+
+def test_resolved_notice_ends_the_incident_notice_of_the_same_context() -> None:
+    opened = _publish(DRAFT_INPUT)
+    assert _status(opened) == "published"
+    resolved = _publish(RESOLVED_INPUT)
+    assert _status(opened) == "ended"  # 장애가 끝났는데 장애 공지를 현재 사실로 쓰면 안 된다
+    assert _status(resolved) == "published"
+
+
+def test_ended_notice_still_returns_its_facts_and_promises() -> None:
+    opened = _publish(DRAFT_INPUT)
+    _publish(RESOLVED_INPUT)
+    view = _call("get_notice", {"notice_id": opened}, token="mock:support")["output"]
+    assert (view["found"], view["status"]) == (True, "ended")
+    assert view["promises"][0]["amount"] == 2000 and view["facts"]["component"] == "payment"
+
+
+def test_other_contexts_and_product_notices_are_not_ended() -> None:
+    opened = _publish(DRAFT_INPUT)
+    product = _publish({"kind": "product_created", "facts": {"product_id": "prd_0001"}})
+    _publish(RESOLVED_INPUT, context_id="ctx_inc_0002")  # 다른 사건의 복구 공지
+    assert _status(opened) == "published" and _status(product) == "published"
+    _publish(RESOLVED_INPUT)
+    assert _status(opened) == "ended" and _status(product) == "published"
+
+
+def test_notice_ends_after_valid_to() -> None:
+    moment = [datetime(2026, 10, 22, 6, 0, tzinfo=UTC)]
+    handlers.STATE.notices.now = lambda: moment[0]
+    valid_to = datetime(2026, 10, 22, 9, 0, tzinfo=UTC).isoformat()
+    notice_id = _publish(DRAFT_INPUT | {"valid_to": valid_to})
+    assert _status(notice_id) == "published"
+    moment[0] = datetime(2026, 10, 22, 9, 1, tzinfo=UTC)
+    assert _status(notice_id) == "ended"
+
+
+def test_republishing_the_same_resolved_draft_keeps_one_notice() -> None:
+    opened = _publish(DRAFT_INPUT)
+    first = _publish(RESOLVED_INPUT)
+    assert _publish(RESOLVED_INPUT) == first
+    assert _status(opened) == "ended" and _status(first) == "published"

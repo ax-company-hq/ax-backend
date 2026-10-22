@@ -18,3 +18,6 @@
 | --- | --- | --- | --- |
 | `shop_failed_orders.py` | shop-api (재헌) | data | 실패 주문 목록. 입력 `from`, `to`, `category` → 출력 `order_id`, `buyer_id`, `amount`, `category`, `failed_at`, `reason`, `tenant_id` (예시 스텁) |
 | `common_log.py` | agent-template `log_event` (쓰기) | dashboard-api, data, memory (읽기 전용) | 공통 로그 저장소(COM-08). 레코드 `LogRecord`(`log_id`, `tenant_id`, `context_id`, `occurred_at`, `source`, `kind`, `skill`, `task_status`, `grade`, `requester`, `payload`), 입력 `CommonLogQuery`(`context_ids`, `from`, `to`, `kinds`, `limit` 1~5000) → 출력 `CommonLogResult`(`records` 오름차순, `truncated`) |
+| `shop_metric_series.py` | shop-api (재헌) | data | 지표 시계열(anomaly_detection). 입력 `metric`, `from`, `to`, `bucket`(5m), `tenant_id` → 출력 `metric`, `bucket`, `points[ts, value]` |
+| `shop_seller_profile.py` | shop-api (재헌) | data | 판매자 정보(fraud_score). 입력 `seller_id`, `tenant_id` → 출력 `seller_id`, `joined_at`, `business_hash`, `business_hash_duplicated`, `product_count`, `listings_last_24h`, `tenant_id` |
+| `shop_seller_prices.py` | shop-api (재헌) | data | 판매자 상품 가격(fraud_score). 입력 `seller_id`, `tenant_id` → 출력 `items[product_id, category, price, category_median_price]` |

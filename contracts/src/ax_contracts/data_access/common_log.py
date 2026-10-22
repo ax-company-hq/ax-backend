@@ -1,7 +1,8 @@
 """공통 로그 저장소(COM-08)의 레코드 형식과 읽기 조회 형식.
 
 쓰기는 agent-template의 `log_event`만 한다. 읽기는 이 형식의 읽기 전용 조회만 쓴다
-(dashboard-api DSH-01~04, data `kpi_summary`, memory 참조 로그 MEM-04). 다른 서비스 DB에는 직접 접근하지 않는다.
+(dashboard-api DSH-01~04, data `kpi_summary`, memory 참조 로그 MEM-04).
+다른 서비스 DB에는 직접 접근하지 않는다.
 `payload`에는 사실만 담는다. 판단 문장과 외부 입력 원문은 넣지 않는다.
 """
 

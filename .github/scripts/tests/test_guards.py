@@ -155,3 +155,33 @@ def test_bot_ok_does_not_requeue(team) -> None:
 )
 def test_closes_issue_uses_bot_marker_only(body, issue) -> None:
     assert guards.closes_issue(body) == issue
+
+
+
+def test_load_pr_uses_payload_without_api(tmp_path, monkeypatch) -> None:
+    payload = {"pull_request": {
+        "number": 9, "state": "open", "body": "x\n<!-- ax-issue:4 -->",
+        "head": {"sha": "b" * 40, "ref": "data/4-x-r0", "repo": {"full_name": "o/r"}},
+        "base": {"ref": "dev"}, "user": {"login": BOT}, "labels": [{"name": "hotfix"}]}}
+    f = tmp_path / "event.json"
+    f.write_text(__import__("json").dumps(payload), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request_target")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(f))
+
+    def no_api(*a, **k):
+        raise AssertionError("API를 부르면 안 됨")
+
+    monkeypatch.setattr(guards, "gh_json", no_api)
+    p = guards.load_pr("o/r", 9)
+    assert (p.head_sha, p.branch, p.author, p.issue, p.is_fork, p.labels) == (
+        "b" * 40, "data/4-x-r0", BOT, 4, False, ["hotfix"])
+
+
+def test_load_pr_falls_back_to_api_on_dispatch(monkeypatch) -> None:
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
+    called = []
+    monkeypatch.setattr(guards, "gh_json", lambda path, *e: called.append(path) or {
+        "state": "open", "body": "", "head": {"sha": "c", "ref": "x", "repo": None},
+        "base": {"ref": "dev"}, "user": {"login": "bxbae"}, "labels": []})
+    p = guards.load_pr("o/r", 3)
+    assert called == ["repos/o/r/pulls/3"] and p.is_fork

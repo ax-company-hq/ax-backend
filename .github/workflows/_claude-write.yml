@@ -1,4 +1,6 @@
 name: _claude-write
+# 수동 실행 run 제목 (cap 계산용, team.py WRITE_TITLE). workflow_call로 불리면 호출한 쪽 제목을 쓴다
+run-name: "claude:${{ inputs.dept }}:${{ inputs.mode }} #${{ inputs.issue }}"
 
 # 모든 "작성" 모드의 단일 구현 (docs/automation-spec.md 3장). 1단계: task · request만.
 # prep(규칙, bot) → claude(Claude 실행, claude, 읽기 전용) → build(비밀값 없음) → apply(규칙, bot) → finalize
@@ -163,6 +165,22 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 >/dev/null || true
           bwrap --ro-bind / / --unshare-user --unshare-pid true && echo "bwrap ok"
 
+      - name: Claude Code 설치 (npm, action과 같은 버전 고정)
+        id: cc
+        # action 내부 설치(claude.ai/install.sh)가 동시 실행이 많으면 429로 막힌다 → npm 레지스트리에서 받고 경로를 넘긴다
+        env:
+          CLAUDE_CODE_VERSION: "2.1.307"
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4; do
+            if npm install -g --no-fund --no-audit "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" >/dev/null; then break; fi
+            [ "$attempt" -eq 4 ] && { echo "::error::Claude Code 설치 실패"; exit 1; }
+            sleep $((attempt * 15))
+          done
+          path="$(npm prefix -g)/bin/claude"
+          "$path" --version
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+
       - name: Claude
         uses: anthropics/claude-code-action@aa8a7738e48bf30a40ee499ce818bef081c5ab5e # v1.0.257
         env:
@@ -172,6 +190,7 @@ jobs:
           github_token: ${{ github.token }}
           allowed_bots: ax-company-hq-bot
           classify_inline_comments: "false"
+          path_to_claude_code_executable: ${{ steps.cc.outputs.path }}
           display_report: "false"
           show_full_output: "false"
           settings: ${{ runner.temp }}/claude-settings.json
@@ -254,7 +273,7 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install --quiet --require-hashes -r "$RUNNER_TEMP/trusted/.github/scripts/requirements-build.txt"
           mapfile -t targets < <("$RUNNER_TEMP/venv/bin/python" -I "$RUNNER_TEMP/trusted/.github/scripts/claude_jobs.py" \
-            ruff-targets --dept "$DEPT" --base origin/dev)
+            ruff-targets --dept "$DEPT" --base origin/dev | sed '/^$/d')
           if [ "${#targets[@]}" -gt 0 ]; then
             "$RUNNER_TEMP/venv/bin/ruff" check --fix --quiet --config "$RUNNER_TEMP/trusted/pyproject.toml" "${targets[@]}" || true
             "$RUNNER_TEMP/venv/bin/ruff" format --quiet --config "$RUNNER_TEMP/trusted/pyproject.toml" "${targets[@]}" || true
