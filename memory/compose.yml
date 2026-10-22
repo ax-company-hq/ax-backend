@@ -10,3 +10,27 @@ services:
         required: false
       - path: ./.env
         required: false
+    environment:
+      # 컨테이너 안에서는 서비스 이름으로 접속한다 (.env의 로컬용 DSN을 덮어쓴다).
+      MEMORY_PG_DSN: postgresql://memory:${MEMORY_DB_PASSWORD:-change-me}@memory-db:5432/memory
+    depends_on:
+      memory-db:
+        condition: service_healthy
+
+  memory-db:
+    image: pgvector/pgvector:pg16
+    # 호스트 포트는 열지 않는다 (5432 충돌 방지). 같은 compose 네트워크에서만 접속한다.
+    environment:
+      POSTGRES_USER: memory
+      POSTGRES_DB: memory
+      POSTGRES_PASSWORD: ${MEMORY_DB_PASSWORD:-change-me}
+    volumes:
+      - memory-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U memory -d memory"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  memory-db-data:
