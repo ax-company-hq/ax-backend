@@ -1,5 +1,23 @@
 {
   "name": "hr",
   "owner": "준하",
-  "skills": []
+  "description": "인사 — 부서가 보낸 사건·결정 기록을 받아 회사 기억에 카드로 남긴다",
+  "url": "http://hr:8104/a2a",
+  "version": "0.1.0",
+  "capabilities": {
+    "streaming": true,
+    "push_notifications": false
+  },
+  "skills": [
+    {
+      "id": "record_case",
+      "description": "부서가 보낸 사건·결정 기록(kind, 요약, 결정 이유, 검토한 대안, 근거 참조)을 받아 결정 카드로 정리해 회사 기억에 저장한다. 결정이 없는 기록은 기록만 남긴다. v0 스텁: 입력을 그대로 돌려준다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/record.py#RecordCase",
+      "output_schema": "contracts/src/ax_contracts/schemas/record.py#RecordCase",
+      "grade": "A",
+      "allowed_requesters": ["orchestrator", "planning", "support", "infra"],
+      "verifier": null,
+      "priority": "required"
+    }
+  ]
 }
