@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 import httpx
 import pytest
 
@@ -5,7 +7,6 @@ from ax_agent_template import config
 from ax_agent_template import execute as execute_module
 from ax_agent_template.execute import SAFETY_TIMEOUT_SECONDS, execute
 from ax_contracts.schemas import Evidence, ExecuteDecision, RequestMeta
-from datetime import UTC, datetime, timedelta
 
 
 @pytest.fixture
