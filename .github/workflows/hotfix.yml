@@ -1,0 +1,59 @@
+name: hotfix
+
+# code owner(hotfix_labelers)가 hotfix 라벨을 붙이면 현재 head에 관문 4개를 success로 남긴다.
+# 다른 사람이 붙이면 라벨을 떼고 코멘트. 새 커밋이 올라오면 guards가 라벨을 뗀다. 스위치 무관.
+on:
+  pull_request_target:
+    types: [labeled]
+    branches: [dev]
+
+permissions: {}
+
+jobs:
+  hotfix:
+    name: hotfix
+    if: github.event.label.name == 'hotfix'
+    runs-on: ubuntu-latest
+    environment: bot
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout dev (trusted, team.json만)
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          persist-credentials: false
+          sparse-checkout: .github
+
+      - name: ax-bot token
+        id: bot
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AX_BOT_APP_ID }}
+          private-key: ${{ secrets.AX_BOT_PRIVATE_KEY }}
+          permission-statuses: write
+          permission-issues: write
+          permission-pull-requests: write
+
+      - name: Apply
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          SENDER: ${{ github.event.sender.login }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if jq -e --arg s "$SENDER" '.hotfix_labelers | index($s) != null' .github/team.json >/dev/null; then
+            for ctx in folder-guard test-guard dev-health agent-review; do
+              gh api -X POST "repos/$REPO/statuses/$SHA" -f state=success -f context="$ctx" \
+                -f description="hotfix @$SENDER ${SHA:0:7}" -f target_url="$RUN_URL" >/dev/null
+            done
+            echo "hotfix 적용: @$SENDER ${SHA:0:7}"
+          else
+            gh api -X DELETE "repos/$REPO/issues/$PR/labels/hotfix" >/dev/null || true
+            gh api -X POST "repos/$REPO/issues/$PR/comments" \
+              -f body="hotfix 라벨은 code owner(.github/team.yml hotfix_labelers)만 붙일 수 있어 뗐습니다. (@$SENDER)" >/dev/null
+            echo "hotfix 거부: @$SENDER"
+          fi

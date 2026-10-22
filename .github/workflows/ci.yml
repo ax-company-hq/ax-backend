@@ -121,8 +121,89 @@ jobs:
         if: steps.select.outputs.targets != 'all' && steps.select.outputs.targets != 'none'
         env:
           TARGETS: ${{ steps.select.outputs.targets }}
-        run: uv run pytest $TARGETS
+        run: |
+          read -ra targets <<< "$TARGETS"
+          uv run pytest "${targets[@]}"
 
       - name: No package tests to run
         if: steps.select.outputs.targets == 'none'
         run: echo "바뀐 패키지가 없어 테스트를 건너뛴다."
+
+  contracts-compat:
+    # 브랜치 보호의 필수 체크 이름. 바꾸지 않는다.
+    # contracts/·shop-api/·dashboard-api/가 바뀌면 merge-base와 head의 스키마·OpenAPI를 비교해 하위 호환을 검사한다.
+    name: contracts-compat
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 검사 대상인지
+        id: need
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.head_ref }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        shell: python
+        run: |
+          import json
+          import os
+          import subprocess
+
+          def out(run: bool, base: str = "") -> None:
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+                  fh.write(f"run={'true' if run else 'false'}\nbase={base}\n")
+              print(f"run={run} base={base}")
+
+          if os.environ["EVENT_NAME"] != "pull_request":
+              out(False)  # push 이벤트는 바로 성공
+              raise SystemExit(0)
+
+          team = json.load(open(".github/team.json", encoding="utf-8"))
+          branch = os.environ["HEAD_REF"]
+          if os.environ["AUTHOR"] == team["bot_login"] and any(
+              branch.startswith(p) and r.get("compat") == "skip"
+              for p, r in team["bot_branches"].items()
+          ):
+              out(False)  # 봇 브랜치(revert/, openapi/sync-)는 생략
+              raise SystemExit(0)
+
+          base = subprocess.run(
+              ["git", "merge-base", os.environ["PR_BASE_SHA"], "HEAD"],
+              capture_output=True, text=True, check=True,
+          ).stdout.strip()
+          diff = subprocess.run(
+              ["git", "diff", "--name-only", "-z", f"{base}...HEAD"],
+              capture_output=True, check=True,
+          ).stdout.decode("utf-8")
+          watched = ("contracts/", "shop-api/", "dashboard-api/")
+          out(any(p.startswith(watched) for p in diff.split("\0") if p), base)
+
+      - name: Install uv
+        if: steps.need.outputs.run == 'true'
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.1"
+          enable-cache: true
+
+      - name: Export head
+        if: steps.need.outputs.run == 'true'
+        run: |
+          uv sync --all-packages --locked
+          uv run python scripts/export-contracts.py "$RUNNER_TEMP/contracts-head"
+
+      - name: Export merge-base
+        if: steps.need.outputs.run == 'true'
+        env:
+          BASE: ${{ steps.need.outputs.base }}
+        run: |
+          git worktree add "$RUNNER_TEMP/base" "$BASE"
+          uv sync --all-packages --locked --directory "$RUNNER_TEMP/base"
+          uv run --directory "$RUNNER_TEMP/base" python "$GITHUB_WORKSPACE/scripts/export-contracts.py" "$RUNNER_TEMP/contracts-base"
+
+      - name: Compare
+        if: steps.need.outputs.run == 'true'
+        run: python3 scripts/compat-check.py "$RUNNER_TEMP/contracts-base" "$RUNNER_TEMP/contracts-head"

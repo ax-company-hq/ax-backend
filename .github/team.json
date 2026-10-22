@@ -1,0 +1,238 @@
+{
+  "bot_branches": {
+    "openapi/sync-": {
+      "compat": "skip",
+      "paths": [
+        "contracts/openapi/"
+      ],
+      "review": "skip"
+    },
+    "revert/": {
+      "compat": "skip",
+      "paths": "reverted",
+      "review": "skip"
+    }
+  },
+  "bot_login": "ax-company-hq-bot[bot]",
+  "contracts_fallback": "data",
+  "depts": {
+    "agent-template": {
+      "env_prefix": "AGENT_TEMPLATE",
+      "folder": "agent-template",
+      "owners": [
+        "haakim7"
+      ]
+    },
+    "contracts": {
+      "folder": "contracts",
+      "owners": [
+        "haakim7",
+        "2taeyoon"
+      ]
+    },
+    "dashboard-api": {
+      "env_prefix": "DASHBOARD",
+      "folder": "dashboard-api",
+      "owners": [
+        "bxbae"
+      ]
+    },
+    "data": {
+      "env_prefix": "DATA",
+      "folder": "agents/data",
+      "owners": [
+        "JangJaehyeonn"
+      ]
+    },
+    "dejafix": {
+      "aliases": [
+        "infra-dejafix"
+      ],
+      "env_prefix": "INFRA",
+      "folder": "agents/infra-dejafix",
+      "owners": [
+        "NYejin"
+      ]
+    },
+    "finance": {
+      "env_prefix": "FINANCE",
+      "folder": "agents/finance",
+      "owners": [
+        "2taeyoon"
+      ]
+    },
+    "hr": {
+      "env_prefix": "HR",
+      "folder": "agents/hr",
+      "owners": [
+        "haakim7"
+      ]
+    },
+    "infra": {
+      "env_prefix": "COMPOSE",
+      "folder": "infra",
+      "owners": [
+        "haakim7"
+      ]
+    },
+    "marketing": {
+      "env_prefix": "MARKETING",
+      "folder": "agents/marketing",
+      "owners": [
+        "areatmadm"
+      ]
+    },
+    "memory": {
+      "env_prefix": "MEMORY",
+      "folder": "memory",
+      "owners": [
+        "JangJaehyeonn"
+      ]
+    },
+    "orchestrator": {
+      "env_prefix": "ORCHESTRATOR",
+      "folder": "orchestrator",
+      "owners": [
+        "haakim7"
+      ]
+    },
+    "planning": {
+      "env_prefix": "PLANNING",
+      "folder": "agents/planning",
+      "owners": [
+        "NYejin"
+      ]
+    },
+    "safety": {
+      "env_prefix": "SAFETY",
+      "folder": "safety",
+      "owners": [
+        "2taeyoon"
+      ]
+    },
+    "shop-api": {
+      "env_prefix": "SHOP",
+      "folder": "shop-api",
+      "owners": [
+        "areatmadm"
+      ]
+    },
+    "support": {
+      "env_prefix": "SUPPORT",
+      "folder": "agents/support",
+      "owners": [
+        "bxbae"
+      ]
+    }
+  },
+  "fallback_order": [
+    "orchestrator",
+    "data",
+    "finance",
+    "planning",
+    "support",
+    "marketing"
+  ],
+  "forbidden_in_dept": [
+    "CLAUDE.md",
+    "CLAUDE.local.md",
+    ".claude",
+    ".mcp.json",
+    ".gitattributes",
+    ".gitmodules"
+  ],
+  "frontend_depts": {
+    "dashboard-web": "bxbae",
+    "shop-web": "areatmadm"
+  },
+  "hotfix_labelers": [
+    "JangJaehyeonn",
+    "haakim7"
+  ],
+  "human_path_exceptions": "docs/notes/",
+  "members": {
+    "2taeyoon": {
+      "daily_cap": 20,
+      "name": "태윤",
+      "token": "CLAUDE_TOKEN_TAEYOON"
+    },
+    "JangJaehyeonn": {
+      "daily_cap": 20,
+      "name": "재현",
+      "token": "CLAUDE_TOKEN_JAEHYEON"
+    },
+    "NYejin": {
+      "daily_cap": 20,
+      "name": "예진",
+      "token": "CLAUDE_TOKEN_YEJIN"
+    },
+    "areatmadm": {
+      "daily_cap": 20,
+      "name": "재헌",
+      "token": "CLAUDE_TOKEN_JAEHEON"
+    },
+    "bxbae": {
+      "daily_cap": 20,
+      "name": "병환",
+      "token": "CLAUDE_TOKEN_BYUNGHWAN"
+    },
+    "haakim7": {
+      "daily_cap": 20,
+      "name": "준하",
+      "token": "CLAUDE_TOKEN_JUNHA"
+    }
+  },
+  "reviewers": {
+    "agent-template": [
+      "finance",
+      "planning"
+    ],
+    "contracts": [
+      "agent-template",
+      "safety"
+    ],
+    "dashboard-api": [
+      "safety"
+    ],
+    "data": [
+      "finance"
+    ],
+    "dejafix": [
+      "orchestrator"
+    ],
+    "finance": [
+      "data"
+    ],
+    "hr": [
+      "memory"
+    ],
+    "infra": [
+      "finance",
+      "planning"
+    ],
+    "marketing": [
+      "support"
+    ],
+    "memory": [
+      "support"
+    ],
+    "orchestrator": [
+      "dejafix"
+    ],
+    "planning": [
+      "orchestrator"
+    ],
+    "safety": [
+      "agent-template"
+    ],
+    "shop-api": [
+      "data"
+    ],
+    "support": [
+      "marketing"
+    ]
+  },
+  "shared_rules": {
+    "uv.lock": "requires_pyproject"
+  }
+}

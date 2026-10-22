@@ -1,0 +1,73 @@
+name: guards
+
+# 관문 (docs/automation-spec.md 5장). 스위치(AX_AUTOMATION)와 무관하게 항상 돈다.
+# dev 정의만 checkout하고 PR 코드는 git으로 읽기만 한다. 결과는 ax-bot 커밋 상태로 남긴다.
+on:
+  pull_request_target:
+    # edited: 다른 브랜치를 향하던 PR의 base를 dev로 바꾼 경우
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+    branches: [dev]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR 번호
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: guards-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+
+jobs:
+  guards:
+    name: guards
+    runs-on: ubuntu-latest
+    environment: bot
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: read
+    steps:
+      - name: Checkout dev (trusted)
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: team.py 의존성 (레포 밖 venv, 해시 고정)
+        run: |
+          python -m venv "$RUNNER_TEMP/team-venv"
+          "$RUNNER_TEMP/team-venv/bin/pip" install --quiet --require-hashes -r .github/scripts/requirements.txt
+
+      - name: Plan (읽기만)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number || inputs.pr }}
+          ACTION: ${{ github.event.action }}
+          DEV_RED: ${{ vars.AX_DEV_RED }}
+        run: |
+          "$RUNNER_TEMP/team-venv/bin/python" -I .github/scripts/guards.py plan \
+            --pr "$PR" --action "$ACTION" --dev-red "${DEV_RED:-off}" --out "$RUNNER_TEMP/plan.json"
+
+      - name: ax-bot token
+        id: bot
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AX_BOT_APP_ID }}
+          private-key: ${{ secrets.AX_BOT_PRIVATE_KEY }}
+          permission-statuses: write
+          permission-issues: write
+          permission-pull-requests: write
+
+      - name: Apply (ax-bot 상태·코멘트)
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+        run: |
+          "$RUNNER_TEMP/team-venv/bin/python" -I .github/scripts/guards.py apply "$RUNNER_TEMP/plan.json"
