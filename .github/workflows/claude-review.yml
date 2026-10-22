@@ -162,6 +162,16 @@ jobs:
             echo "ok=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: 토큰 확인 (값은 출력하지 않고 길이만)
+        env:
+          TOKEN_NAME: ${{ matrix.reviewer.token_secret }}
+          DYNAMIC: ${{ secrets[matrix.reviewer.token_secret] }}
+          STATIC: ${{ (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_JAEHYEON' && secrets.CLAUDE_TOKEN_JAEHYEON) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_TAEYOON' && secrets.CLAUDE_TOKEN_TAEYOON) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_JUNHA' && secrets.CLAUDE_TOKEN_JUNHA) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_YEJIN' && secrets.CLAUDE_TOKEN_YEJIN) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_BYUNGHWAN' && secrets.CLAUDE_TOKEN_BYUNGHWAN) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_JAEHEON' && secrets.CLAUDE_TOKEN_JAEHEON) || '' }}
+        run: |
+          # 임시 진단: 동적 조회(secrets[이름])와 고정 참조 중 어느 쪽이 비는지
+          echo "token=$TOKEN_NAME dynamic_len=${#DYNAMIC} static_len=${#STATIC}"
+          if [ -z "$STATIC" ]; then echo "::error::$TOKEN_NAME 토큰이 비어 있음 (environment claude 확인)"; exit 1; fi
+
       - name: bubblewrap (CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1에 필요)
         run: |
           sudo apt-get update -qq
@@ -176,7 +186,7 @@ jobs:
         env:
           CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
         with:
-          claude_code_oauth_token: ${{ secrets[matrix.reviewer.token_secret] }}
+          claude_code_oauth_token: ${{ (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_JAEHYEON' && secrets.CLAUDE_TOKEN_JAEHYEON) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_TAEYOON' && secrets.CLAUDE_TOKEN_TAEYOON) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_JUNHA' && secrets.CLAUDE_TOKEN_JUNHA) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_YEJIN' && secrets.CLAUDE_TOKEN_YEJIN) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_BYUNGHWAN' && secrets.CLAUDE_TOKEN_BYUNGHWAN) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_JAEHEON' && secrets.CLAUDE_TOKEN_JAEHEON) || '' }}
           github_token: ${{ github.token }}
           allowed_bots: ax-company-hq-bot
           classify_inline_comments: "false"
@@ -201,7 +211,7 @@ jobs:
 
       - name: 결과 검사 · 공개 전 검사
         env:
-          T1: ${{ secrets[matrix.reviewer.token_secret] }}
+          T1: ${{ (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_JAEHYEON' && secrets.CLAUDE_TOKEN_JAEHYEON) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_TAEYOON' && secrets.CLAUDE_TOKEN_TAEYOON) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_JUNHA' && secrets.CLAUDE_TOKEN_JUNHA) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_YEJIN' && secrets.CLAUDE_TOKEN_YEJIN) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_BYUNGHWAN' && secrets.CLAUDE_TOKEN_BYUNGHWAN) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_JAEHEON' && secrets.CLAUDE_TOKEN_JAEHEON) || '' }}
           T2: ${{ github.token }}
           CAP_OK: ${{ steps.cap.outputs.ok }}
         run: |
