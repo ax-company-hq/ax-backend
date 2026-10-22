@@ -8,13 +8,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from ax_dashboard_api.envelope import install_error_handlers
 from ax_dashboard_api.routes import router
 
+DEFAULT_CORS_ORIGINS = "http://localhost:3001,http://127.0.0.1:3001"
+
 app = FastAPI(title="ax-dashboard-api")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         o.strip()
         for o in (
-            os.getenv("DASHBOARD_CORS_ORIGINS") or "http://localhost:3000,http://localhost:3001"
+            os.getenv("DASHBOARD_CORS_ORIGINS") or DEFAULT_CORS_ORIGINS
         ).split(",")
         if o.strip()
     ],
