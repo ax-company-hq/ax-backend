@@ -241,3 +241,38 @@ def test_required_checks_none_on_api_error(monkeypatch) -> None:
     monkeypatch.setattr(cj, "api", lambda *a, **k: {
         "protection": {"required_status_checks": {"contexts": ["ci", "agent-review"]}}})
     assert cj.required_checks() == ["ci", "agent-review"]
+
+
+# ── ruff 대상 · 리뷰 상태 순서 ─────────────────────────────
+def test_ruff_targets_only_changed_py_in_dept(team) -> None:
+    changes = [("A", "agents/data/src/data_agent/impact.py"), ("M", "agents/data/tests/test_x.py"),
+               ("D", "agents/data/old.py"), ("M", "agents/data/README.md"),
+               ("M", "agents/finance/x.py"), ("A", "docs/notes/data/n.py")]
+    assert cj.ruff_targets(team, "data", changes) == [
+        "agents/data/src/data_agent/impact.py", "agents/data/tests/test_x.py"]
+
+
+def test_review_apply_sets_status_before_comment_and_survives_comment_error(
+    team, tmp_path, monkeypatch
+) -> None:
+    head = "a" * 40
+    d = tmp_path / "verdict-finance"
+    d.mkdir()
+    (d / "verdict.json").write_text(json.dumps({"head_sha": head, "verdict": "approve"}))
+    events = []
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setattr(cj, "api", lambda path, *e: {"head": {"sha": head}, "labels": []})
+    monkeypatch.setattr(cj, "has_hotfix", lambda t, s: False)
+    monkeypatch.setattr(cj, "bot_bodies", lambda n, t: [])
+    monkeypatch.setattr(
+        cj, "set_status", lambda sha, ctx, st, desc: events.append(("status", ctx, st))
+    )
+
+    def failing_comment(n, body):
+        events.append(("comment",))
+        raise cj.subprocess.CalledProcessError(1, "gh")
+
+    monkeypatch.setattr(cj, "comment", failing_comment)
+    plan = {"head_sha": head, "reviewers": [{"dept": "finance", "name": "태윤"}]}
+    assert cj.review_apply(team, 27, plan, tmp_path) == "success"
+    assert events.index(("status", "agent-review", "success")) < events.index(("comment",))

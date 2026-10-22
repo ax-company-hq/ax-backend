@@ -431,3 +431,59 @@ def test_next_retry_labels(labels, add, remove) -> None:
 def test_requeue_key() -> None:
     assert team_mod.requeue_key(5, "abc", 3, "99") == "pr:5:abc"
     assert team_mod.requeue_key(None, None, 3, "99") == "issue:3:99"
+
+
+# ── 잠긴 이슈 코멘트 · gh 오류 로그 ───────────────────────
+def test_post_comment_unlocks_and_relocks(monkeypatch) -> None:
+    calls = []
+
+    def fake(path, *extra):
+        calls.append((path, extra))
+        if extra == ():
+            return {"locked": True, "active_lock_reason": "resolved"}
+        return None
+
+    monkeypatch.setattr(team_mod, "gh_api", fake)
+    team_mod.post_comment("o/r", 5, "hi")
+    seq = [(p.split("/issues/5")[1] or "/", e[:2]) for p, e in calls]
+    assert seq == [("/", ()), ("/lock", ("-X", "DELETE")), ("/comments", ("-X", "POST")),
+                   ("/lock", ("-X", "PUT"))]
+    assert calls[-1][1][-1] == "lock_reason=resolved"
+
+
+def test_post_comment_relocks_even_if_comment_fails(monkeypatch) -> None:
+    calls = []
+
+    def fake(path, *extra):
+        calls.append(extra[:2])
+        if extra == ():
+            return {"locked": True, "active_lock_reason": "off-topic"}
+        if path.endswith("/comments"):
+            raise team_mod.subprocess.CalledProcessError(1, "gh")
+        return None
+
+    monkeypatch.setattr(team_mod, "gh_api", fake)
+    with pytest.raises(team_mod.subprocess.CalledProcessError):
+        team_mod.post_comment("o/r", 5, "hi")
+    assert calls[-1] == ("-X", "PUT")
+
+
+def test_post_comment_unlocked_issue_no_lock_calls(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(team_mod, "gh_api",
+                        lambda p, *e: calls.append(p) or ({"locked": False} if not e else None))
+    team_mod.post_comment("o/r", 5, "hi")
+    assert not any(p.endswith("/lock") for p in calls)
+
+
+def test_gh_api_logs_github_error_without_body(monkeypatch, capsys) -> None:
+    def boom(cmd, **kw):
+        raise team_mod.subprocess.CalledProcessError(
+            1, cmd, stderr="gh: Unable to create comment because issue is locked. (HTTP 403)\n")
+
+    monkeypatch.setattr(team_mod.subprocess, "run", boom)
+    with pytest.raises(team_mod.subprocess.CalledProcessError):
+        team_mod.gh_api("repos/o/r/issues/5/comments", "-X", "POST", "-f", "body=SECRET-ish text")
+    err = capsys.readouterr().err
+    assert "POST repos/o/r/issues/5/comments" in err and "HTTP 403" in err and "locked" in err
+    assert "SECRET-ish" not in err

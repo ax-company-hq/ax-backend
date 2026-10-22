@@ -250,6 +250,20 @@ jobs:
           fi
           git -c user.name=ax-agent -c user.email=ax-agent@users.noreply.github.com \
             am -q "$RUNNER_TEMP/write-out/changes.patch"
+          # 에이전트는 셸이 없어 ruff를 못 돌린다. 이번 패치에서 바뀐 .py에만 기계적 수정(import 순서·포맷)
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet --require-hashes -r "$RUNNER_TEMP/trusted/.github/scripts/requirements-build.txt"
+          mapfile -t targets < <("$RUNNER_TEMP/venv/bin/python" -I "$RUNNER_TEMP/trusted/.github/scripts/claude_jobs.py" \
+            ruff-targets --dept "$DEPT" --base origin/dev)
+          if [ "${#targets[@]}" -gt 0 ]; then
+            "$RUNNER_TEMP/venv/bin/ruff" check --fix --quiet --config "$RUNNER_TEMP/trusted/pyproject.toml" "${targets[@]}" || true
+            "$RUNNER_TEMP/venv/bin/ruff" format --quiet --config "$RUNNER_TEMP/trusted/pyproject.toml" "${targets[@]}" || true
+            if ! git diff --quiet -- "${targets[@]}"; then
+              git add -- "${targets[@]}"
+              git -c user.name=ax-agent -c user.email=ax-agent@users.noreply.github.com \
+                commit -q --no-verify -m "style: ruff fix and format"
+            fi
+          fi
           src="$RUNNER_TEMP/src"; mkdir -p "$src"
           git archive HEAD | tar -x -C "$src"
           set +e
