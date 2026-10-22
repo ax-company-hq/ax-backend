@@ -188,6 +188,8 @@ def test_write_not_executed_leaves_store_untouched(
 def test_fail_closed_when_safety_unreachable(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # 전체 테스트에서 다른 서비스가 바꿔 둔 공유 에이전트 이름을 되돌린다 (<이름>_MOCK 접두사 때문)
+    monkeypatch.setattr("ax_agent_template.config._agent_name", "support")
     monkeypatch.delenv("AGENT_TEMPLATE_MOCK")
     monkeypatch.setenv("SUPPORT_MOCK", "1")
     monkeypatch.setattr("ax_agent_template.execute._send_to_safety", _raise, raising=True)
