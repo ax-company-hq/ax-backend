@@ -1,5 +1,50 @@
 {
   "name": "finance",
   "owner": "태윤",
-  "skills": []
+  "description": "재무/정산 + 마켓운영 에이전트. 금액 교차검증, 손실 리포트, 판매자 심사, 정산 보류. 숫자는 코드로 계산하고 요청 쪽 숫자를 믿지 않는다.",
+  "url": "http://finance:8105/a2a",
+  "version": "0.1.0",
+  "capabilities": { "streaming": true, "push_notifications": false },
+  "skills": [
+    {
+      "id": "verify_amount",
+      "description": "안전 레이어가 라우팅한 B 액션(issue_coupon, refund_request)의 금액을 원천 데이터로 다시 계산해 approved/rejected와 사유 코드를 돌려준다. 보상 쿠폰은 data 영향 고객인지, 환불은 결제 금액을 넘지 않는지 확인한다. 상태를 바꾸지 않는다.",
+      "input_schema": "agents/finance/src/finance_agent/schemas.py#VerifyAmountInput",
+      "output_schema": "agents/finance/src/finance_agent/schemas.py#VerifyAmountOutput",
+      "grade": "read",
+      "allowed_requesters": ["safety"],
+      "verifier": null,
+      "priority": "required"
+    },
+    {
+      "id": "loss_aggregation",
+      "description": "장애 구간(window_from, window_to)을 받아 data 영향 분석(실패 주문·영향 고객·피해 금액)과 같은 사건의 보상 쿠폰 지급 합계로 손실 리포트를 만든다. 영향 숫자를 다시 계산하지 않고, 못 받은 값은 확인할 수 없음(null)이다. 상태를 바꾸지 않는다.",
+      "input_schema": "agents/finance/src/finance_agent/schemas.py#LossAggregationInput",
+      "output_schema": "agents/finance/src/finance_agent/schemas.py#LossReport",
+      "grade": "read",
+      "allowed_requesters": ["orchestrator"],
+      "verifier": null,
+      "priority": "required"
+    },
+    {
+      "id": "seller_review",
+      "description": "마켓운영. 판매자 서류 확인 여부와 data 사기 위험 점수로 입점 승인을 execute(seller_review)에 요청한다. 위험 점수가 기준 이상이면 safety C 보류. 판매자 소개 문장(untrusted)은 판단에 쓰지 않는다.",
+      "input_schema": "agents/finance/src/finance_agent/schemas.py#SellerReviewInput",
+      "output_schema": "agents/finance/src/finance_agent/schemas.py#SellerReviewOutput",
+      "grade": "B",
+      "allowed_requesters": ["orchestrator"],
+      "verifier": "data",
+      "priority": "recommended"
+    },
+    {
+      "id": "settlement_hold",
+      "description": "마켓운영. 위험 판매자의 정산 보류를 execute(settlement_hold)로 요청한다(사유 코드 필수). 실제 송금·정산 확정은 하지 않는다.",
+      "input_schema": "agents/finance/src/finance_agent/schemas.py#SettlementHoldInput",
+      "output_schema": "agents/finance/src/finance_agent/schemas.py#SettlementHoldOutput",
+      "grade": "B",
+      "allowed_requesters": ["orchestrator"],
+      "verifier": "data",
+      "priority": "recommended"
+    }
+  ]
 }

@@ -1,0 +1,19 @@
+{
+  "impacts": {
+    "ctx_inc_0001": {
+      "failed_orders": 3,
+      "affected_customers": 3,
+      "lost_amount": 87000,
+      "affected_customer_ids": ["buy_a1", "buy_b2", "buy_c3"]
+    }
+  },
+  "payments": {
+    "ord_1001": 24000,
+    "ord_1002": 50000
+  },
+  "fraud_scores": {
+    "sel_1": 12,
+    "sel_2": 45,
+    "sel_3": 85
+  }
+}
