@@ -231,16 +231,24 @@ async def issue_coupon(request: AgentRequest) -> AgentResult:
         f":{data.campaign_id}" if data.campaign_id else ""
     )
     async with STATE.coupons.lock(context_id):
-        previous = STATE.coupons.previous_by_key(key)
-        if previous is None and request.sequence is not None:
-            previous = STATE.coupons.previous_by_sequence(context_id, request.sequence)
-        if previous is not None:
-            return previous.model_copy(update={"meta": request.meta})
         if request.sequence is not None:
+            replay = STATE.coupons.previous_by_sequence(context_id, request.sequence)
+            if replay is not None:  # 같은 번호의 재요청은 이전 결과 그대로
+                return replay.model_copy(update={"meta": request.meta})
             try:
                 STATE.coupons.check_sequence(context_id, request.sequence)
             except SequenceGap:
                 return _result(request, TaskStatus.REJECTED, outcome="SEQUENCE_GAP")
+        previous = STATE.coupons.previous_by_key(key)
+        if previous is not None:
+            if request.sequence is None:  # 같은 키의 재요청은 이전 결과 그대로
+                return previous.model_copy(update={"meta": request.meta})
+            # 같은 구매자에게 번호만 달리 온 요청: 새로 지급하지 않고 이전 결과에 연결한다
+            linked = previous.model_copy(
+                update={"meta": request.meta, "outcome": "linked_duplicate"}
+            )
+            STATE.coupons.record(context_id, key, request.sequence, linked, cache=True)
+            return linked
 
         total = total_value(data.count, data.unit_value)  # 계산은 코드로
         evidence = _evidence(
@@ -258,7 +266,9 @@ async def issue_coupon(request: AgentRequest) -> AgentResult:
         blocked = _from_decision(request, decision, evidence)
         if blocked:
             if blocked.status != TaskStatus.WORKING:  # 회신한 건은 다음 번호로 넘어간다
-                STATE.coupons.record(context_id, key, request.sequence, blocked)
+                # 보류·취소·실패는 다시 시도할 수 있게 결과를 저장하지 않는다(번호만 소비)
+                cache = blocked.status == TaskStatus.COMPLETED
+                STATE.coupons.record(context_id, key, request.sequence, blocked, cache=cache)
             return blocked
 
         coupon_id = STATE.coupons.new_coupon_id()
@@ -274,7 +284,7 @@ async def issue_coupon(request: AgentRequest) -> AgentResult:
             output=issued.model_dump(mode="json"),
             evidence=evidence.model_copy(update={"ref_ids": [coupon_id, decision.execution_id]}),
         )
-        STATE.coupons.record(context_id, key, request.sequence, result)
+        STATE.coupons.record(context_id, key, request.sequence, result, cache=True)
     await _emit(
         request,
         EventType.COUPON_ISSUED,

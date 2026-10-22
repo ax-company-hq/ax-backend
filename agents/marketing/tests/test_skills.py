@@ -226,3 +226,66 @@ def test_invalid_input_is_failed_not_executed() -> None:
         "issue_coupon", {"purpose_code": "gift", "buyer_id": "b", "count": 0, "unit_value": 1}
     )
     assert (result["status"], result["outcome"]) == ("failed", "invalid_input")
+
+
+# --- 재요청·재시도 ----------------------------------------------------------
+
+
+def _script_execute(
+    monkeypatch: pytest.MonkeyPatch, decisions: list[ExecuteDecision]
+) -> list[dict]:
+    """호출할 때마다 `decisions`를 차례로 돌려주고, 마지막 값은 계속 돌려준다."""
+    seen: list[dict] = []
+
+    async def fake(action, params, context, evidence):  # noqa: ANN001
+        seen.append({"action": action, "key": context.idempotency_key})
+        return decisions[min(len(seen) - 1, len(decisions) - 1)]
+
+    monkeypatch.setattr(handlers, "execute", fake)
+    return seen
+
+
+def _coupon_events() -> int:
+    return sum(e.type.value == "coupon.issued" for e in events.MOCK_PUBLISHED)
+
+
+def test_same_buyer_with_new_sequence_is_linked_not_paid_twice() -> None:
+    first = _coupon(sequence=1)
+    duplicate = _coupon(sequence=2)
+    assert duplicate["outcome"] == "linked_duplicate"
+    assert duplicate["output"]["coupon_id"] == first["output"]["coupon_id"]
+    assert _coupon_events() == 1
+    assert _coupon(sequence=3, buyer_id="buy_a2")["status"] == "completed"  # 번호는 이어진다
+    assert _coupon(sequence=2)["outcome"] == "linked_duplicate"  # 같은 번호 재요청은 그대로
+
+
+def test_held_request_can_be_retried_after_approval(monkeypatch: pytest.MonkeyPatch) -> None:
+    held = _decision(status="held", hold_reason="over_threshold", review_id="rev_1")
+    seen = _script_execute(monkeypatch, [held, _decision()])
+    assert _coupon(sequence=1)["outcome"] == "held"
+    next_buyer = _coupon(sequence=2, buyer_id="buy_a2")  # 보류 건 뒤 번호도 막히지 않는다
+    assert next_buyer["outcome"] != "SEQUENCE_GAP"
+    retried = _coupon(sequence=1)  # 사람이 승인한 뒤 같은 번호로 다시 요청
+    assert (retried["status"], retried["outcome"]) == ("completed", None)
+    assert retried["output"]["coupon_id"].startswith("cpn_")
+    assert len(seen) == 3  # 1번 보류, 2번 지급, 1번 재시도 지급
+    assert _coupon_events() == 2
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [{"status": "rejected", "hold_reason": "verify_timeout"}, {"status": "failed"}],
+)
+def test_canceled_and_failed_requests_are_retryable(monkeypatch, fields) -> None:  # noqa: ANN001
+    _script_execute(monkeypatch, [_decision(**fields), _decision()])
+    assert _coupon(sequence=1)["status"] in ("canceled", "failed")
+    assert _coupon(sequence=1)["status"] == "completed"
+    assert _coupon_events() == 1
+
+
+def test_finance_rejection_is_final(monkeypatch: pytest.MonkeyPatch) -> None:
+    rejected = _decision(status="rejected", hold_reason="verify_rejected")
+    seen = _script_execute(monkeypatch, [rejected, _decision()])
+    assert _coupon(sequence=1)["outcome"] == "rejected_by_review"
+    assert _coupon(sequence=1)["outcome"] == "rejected_by_review"  # 다시 실행하지 않는다
+    assert len(seen) == 1 and _coupon_events() == 0
