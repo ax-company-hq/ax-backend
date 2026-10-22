@@ -17,6 +17,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from ax_contracts.schemas.common import TENANT_ID_DEFAULT, AxModel, UtcDatetime
+from ax_contracts.schemas.execute import HoldReason
 
 
 class EventType(StrEnum):
@@ -263,6 +264,51 @@ class CouponIssuedData(AxModel):
         return self
 
 
+class SafetyActionExecutedData(AxModel):
+    """`safety.action_executed`. 안전 레이어가 발행한다. 금액은 정수 원이다."""
+
+    execution_id: str
+    action: str
+    requester: str
+    grade: Literal["A", "B", "C"]
+    computed_amount: int | None = None
+    threshold_version: int | None = None
+
+
+class SafetyActionHeldData(SafetyActionExecutedData):
+    """`safety.action_held`. C 보류 건. `review_id`는 승인 대기열 ID다."""
+
+    hold_reason: HoldReason
+    review_id: str
+
+
+class SafetyReviewDecidedData(AxModel):
+    """`safety.review_decided`. `decided_by`는 사람 이름이고 자동 거절이면 `system`이다."""
+
+    review_id: str
+    execution_id: str
+    action: str
+    requester: str
+    decision: Literal["approved", "rejected"]
+    decided_by: str
+
+
+class SupportInquiryReceivedData(AxModel):
+    """`support.inquiry_received`. 고객지원이 문의 접수·후속 고객 메시지마다 발행한다.
+
+    사실 필드만 담는다. 문의 원문은 봉투의 `untrusted`로 주고,
+    `category`·`urgency`는 분류 코드값이다.
+    `message_count`는 문의에 쌓인 고객 메시지 수이며 첫 접수는 1이다.
+    `order_id`는 다른 주문 이벤트와 같은 `ord_` 문자열 ID다.
+    """
+
+    inquiry_id: int
+    order_id: str | None = None
+    category: str | None = None
+    urgency: Literal["low", "medium", "high"] | None = None
+    message_count: int = Field(ge=1)
+
+
 # 이벤트 종류 → data 모델. 발행 담당이 새 data 모델을 추가할 때 여기에 한 줄 더한다.
 EVENT_DATA_MODELS: dict[EventType, type[BaseModel]] = {
     EventType.SHOP_DEGRADED: ShopDegradedData,
@@ -284,4 +330,8 @@ EVENT_DATA_MODELS: dict[EventType, type[BaseModel]] = {
     EventType.NOTICE_PUBLISHED: NoticePublishedData,
     EventType.CAMPAIGN_CREATED: CampaignCreatedData,
     EventType.COUPON_ISSUED: CouponIssuedData,
+    EventType.SAFETY_ACTION_EXECUTED: SafetyActionExecutedData,
+    EventType.SAFETY_ACTION_HELD: SafetyActionHeldData,
+    EventType.SAFETY_REVIEW_DECIDED: SafetyReviewDecidedData,
+    EventType.SUPPORT_INQUIRY_RECEIVED: SupportInquiryReceivedData,
 }
