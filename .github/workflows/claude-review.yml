@@ -232,6 +232,8 @@ jobs:
             --max-turns 12
 
       - name: 결과 검사 · 공개 전 검사
+        # Claude 단계가 실패해도(예: 턴 제한 초과) verdict.json을 이미 썼으면 검사해서 살린다
+        if: always()
         env:
           T1: ${{ (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_JAEHYEON' && secrets.CLAUDE_TOKEN_JAEHYEON) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_TAEYOON' && secrets.CLAUDE_TOKEN_TAEYOON) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_JUNHA' && secrets.CLAUDE_TOKEN_JUNHA) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_YEJIN' && secrets.CLAUDE_TOKEN_YEJIN) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_BYUNGHWAN' && secrets.CLAUDE_TOKEN_BYUNGHWAN) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_JAEHEON' && secrets.CLAUDE_TOKEN_JAEHEON) || '' }}
           T2: ${{ github.token }}
@@ -253,6 +255,7 @@ jobs:
             fi
           done
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: verdict-${{ matrix.reviewer.dept }}
           path: ${{ runner.temp }}/final
