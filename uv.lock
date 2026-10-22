@@ -212,15 +212,27 @@ version = "0.1.0"
 source = { editable = "agent-template" }
 dependencies = [
     { name = "ax-contracts" },
+    { name = "fastapi" },
+    { name = "httpx" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "ax-contracts", editable = "contracts" }]
+requires-dist = [
+    { name = "ax-contracts", editable = "contracts" },
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.27" },
+]
 
 [[package]]
 name = "ax-contracts"
 version = "0.1.0"
 source = { editable = "contracts" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic", specifier = ">=2.7" }]
 
 [[package]]
 name = "ax-dashboard-api"
