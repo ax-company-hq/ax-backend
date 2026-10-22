@@ -19,9 +19,7 @@ class ChangedFile:
     deletions: int
 
 
-def build_params(
-    title: str, branch: str, files: list[ChangedFile], body: str = ""
-) -> dict:
+def build_params(title: str, branch: str, files: list[ChangedFile], body: str = "") -> dict:
     """`generate_pr` execute params. 변경 줄·파일·경로를 함께 담는다."""
     paths = sorted({f.path for f in files})
     return {
