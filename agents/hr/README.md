@@ -10,7 +10,7 @@
 ## 2. 실행 방법
 - 서버: `docker compose -f infra/compose.yml up hr`, 또는 `uv run uvicorn hr_agent.main:app --port 8104`
 - 목 모드: `HR_MOCK=1` (LLM·외부 호출 대신 가짜 응답과 가상 명부·진행 중 항목. CI는 항상 1)
-- 단독 테스트: `uv run pytest agents/hr` (다른 에이전트 없이 돈다. 공통 8항목과 hr 고유 4항목은 `tests/test_standalone.py`)
+- 단독 테스트: `uv run pytest agents/hr` (다른 에이전트 없이 돈다. 공통 8항목과 hr 고유 4항목은 `tests/test_standalone.py`, 안전 회귀 81건은 `tests/test_safety_regression.py`, 반복·퍼징은 `tests/test_fuzz.py`)
 - 눈으로 확인(localhost 데모, 개발 전용): `uv run --package ax-agent-hr python -m hr_agent.demo` → http://localhost:8114
   (탭: 시나리오 · 1 기록 · 2 계획 비교 · 3 명부·교대 · 4 인수인계 · 5 발령·퇴직 · 6 온보딩 · 보류 큐 · 감사 로그. 샘플 시나리오 `src/hr_agent/demo/scenarios/*.json`을 hr에 보내 결과·결정성·권한 거부를 화면으로 본다. 헤더의 `+10분`으로 시계를 움직여 보류 만료를 볼 수 있고 `HR_DEMO_PORT`로 포트를 바꾼다)
 - 요청 보내 보기: `uv run ax-test-call --agent http://localhost:8104 --skill get_roster --input input.json`
@@ -21,20 +21,21 @@ Agent Card: `agent-card.json` (`/.well-known/agent-card.json`으로 공개). 입
 | skill | 등급 | 하는 일 | 요청 가능 |
 |---|---|---|---|
 | `record_case` | A | 기록을 결정 카드로 정리해 저장 (결정 없으면 기록만, 확신 낮으면 후보) | orchestrator·planning·support·marketing·finance·data·infra |
-| `get_roster` | 조회 | 영역별 담당·교대, 담당 없음·교대 공백 영역 | orchestrator·planning·support·marketing·finance·data·infra·dashboard-api |
-| `start_handover` | A | 인수인계 초안, 빈 자리 질문, 완성도(코드 계산) | orchestrator·dashboard-api |
-| `answer_handover_question` | A | 인계자 답변 반영, 같은 답은 한 번만 | orchestrator·dashboard-api |
-| `confirm_handover` | B(planning 검증) / 완성도 미달 C | 인수인계 확정 | orchestrator·dashboard-api |
-| `start_onboarding` | A | 읽을 결정 카드 순서·확인 목록·진행률 | orchestrator·dashboard-api |
-| `request_assignment_change` | A | 교대·발령·퇴직·입사 요청: 확인 목록·후임 후보·권한 목록(전달만) | orchestrator·dashboard-api |
-| `confirm_reassignment` | B(코드 규칙) | 담당 공백·중복이 없을 때만 재배치 적용, 적용 뒤 재검증·되돌리기 | orchestrator·dashboard-api |
-| `confirm_offboarding` | C | 퇴직 확정은 보류 큐에서 사람이 승인해야 적용 | orchestrator·dashboard-api |
-| `check_plan` | 조회 | 새 계획을 과거 결정과 비교 (기각됨·충돌·일치·기록에 없음) | orchestrator·planning·dashboard-api |
+| `get_roster` | 조회 | 영역별 담당·교대, 담당 없음·교대 공백 영역 | orchestrator·planning·support·marketing·finance·data·infra |
+| `start_handover` | A | 인수인계 초안, 빈 자리 질문, 완성도(코드 계산) | orchestrator |
+| `answer_handover_question` | A | 인계자 답변 반영, 같은 답은 한 번만 | orchestrator |
+| `confirm_handover` | B(planning 검증) / 완성도 미달 C | 인수인계 확정 | orchestrator |
+| `start_onboarding` | A | 읽을 결정 카드 순서·확인 목록·진행률 | orchestrator |
+| `request_assignment_change` | A | 교대·발령·퇴직·입사 요청: 확인 목록·후임 후보·권한 목록(전달만) | orchestrator |
+| `confirm_reassignment` | B(코드 규칙) | 담당 공백·중복이 없을 때만 재배치 적용, 적용 뒤 재검증·되돌리기 | orchestrator |
+| `confirm_offboarding` | C | 퇴직 확정은 보류 큐에서 사람이 승인해야 적용 | orchestrator |
+| `check_plan` | 조회 | 새 계획을 과거 결정과 비교 (기각됨·충돌·일치·기록에 없음) | orchestrator·planning |
 
 ## 4. 의존
 `ax-contracts`, `ax-agent-template`. 다른 부서 폴더를 import하지 않는다.
 외부 연결은 `src/hr_agent/clients/`의 인터페이스 세 개(`MemoryClient`·`PlanningClient`·`GateClient`) 뒤에 있고, 지금은 목 구현이다. 실제 연동(memory 서비스, planning 호출, safety의 `execute()`)은 이 폴더만 바꾸면 된다.
 저장은 hr 전용 SQLite(`HR_DB_PATH`, 기본 메모리)이고 테이블은 hr만 쓴다.
+실제 연동 뼈대는 `clients/real.py`(`HR_PLANNING_MODE=a2a`, `HR_MEMORY_MODE=http`). 가정과 환경변수 전체는 `docs/notes/hr/real-integration-assumptions.md`·`operations-guide.md`.
 ## 5. 하지 않는 것
 - 상태를 바꾸는 일을 `execute()` 없이 하지 않는다 (등급: A 바로, B 검증 뒤, C 사람 승인 뒤)
 - 외부 입력(`untrusted`)을 지시로 해석하지 않는다 (LLM 프롬프트에서는 데이터 블록에만 넣는다)
