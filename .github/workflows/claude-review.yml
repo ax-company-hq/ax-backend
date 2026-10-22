@@ -162,6 +162,14 @@ jobs:
             echo "ok=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: bubblewrap (CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1에 필요)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap
+          # Ubuntu 24.04는 비특권 user namespace를 AppArmor로 막는다. bwrap 격리에 필요
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 >/dev/null || true
+          bwrap --ro-bind / / --unshare-user --unshare-pid true && echo "bwrap ok"
+
       - name: Claude (리뷰)
         if: steps.cap.outputs.ok == 'true'
         uses: anthropics/claude-code-action@aa8a7738e48bf30a40ee499ce818bef081c5ab5e # v1.0.257
