@@ -15,7 +15,8 @@ def test_rule_files_load_and_match_agreed_values() -> None:
     registry, table = load_registry(), load_thresholds()
     assert table.version == 1
     assert table.review_timeout_seconds == 600  # 데모 10분 자동 거절
-    values = {rule.key: rule.value for rule in table.rules}
+    values = {rule.key: rule.value for rule in table.rules if rule.metric != "param"}
+    values.pop("pr_allowed_paths")
     assert values == {
         "coupon_total": 300_000,
         "coupon_unit": 20_000,
@@ -38,6 +39,15 @@ def test_self_verification_is_refused_at_registration() -> None:
         )
     with pytest.raises(ValueError, match="verifier"):
         ActionSpec(action="x", owner="marketing", base_grade="B")
+    with pytest.raises(ValueError, match="자기 검증"):  # 요청자 목록에 검증자가 있어도 금지
+        ActionSpec(
+            action="x",
+            owner="memory",
+            requesters=["hr", "data"],
+            base_grade="B",
+            verifier="data",
+            verify_skill="v",
+        )
 
 
 @pytest.mark.asyncio
@@ -251,3 +261,81 @@ def test_threshold_rules_must_reference_registered_actions(verifier: Any, sent: 
 
     with pytest.raises(ValueError, match="ghost"):
         Gate(load_registry(), bad, Store(), verifier, sent)
+
+
+@pytest.mark.asyncio
+async def test_shared_action_accepts_listed_requesters(gate: Gate, act) -> None:
+    """memory 카드 쓰기(A)는 여러 부서가 요청한다. 목록에 없는 요청자는 미등록과 같다."""
+    for requester in ("hr", "finance", "support"):
+        decision = await gate.execute(act("memory_write_card", requester, f"card-{requester}"))
+        assert (decision.grade, decision.status) == ("A", "executed")
+    outsider = await gate.execute(act("memory_write_card", "shop-api", "card-x"))
+    assert outsider.hold_reason == HoldReason.UNREGISTERED_ACTION
+
+
+@pytest.mark.asyncio
+async def test_generate_pr_is_verified_by_code_rules(gate: Gate, verifier: Any, act) -> None:
+    """planning `generate_pr`: 검증자는 에이전트가 아니라 변경 크기·허용 경로 규칙."""
+    ok = await gate.execute(
+        act(
+            "generate_pr",
+            "planning",
+            "pr-ok",
+            changed_lines=120,
+            changed_files=4,
+            changed_paths=["shop-api/app/payment.py", "docs/spec.md"],
+        )
+    )
+    assert (ok.grade, ok.status, ok.verifier) == ("B", "executed", "safety")
+    assert verifier.tasks == []  # 검증자 에이전트를 부르지 않는다
+
+    too_big = await gate.execute(
+        act(
+            "generate_pr",
+            "planning",
+            "pr-big",
+            changed_lines=301,
+            changed_files=4,
+            changed_paths=["docs/a.md"],
+        )
+    )
+    assert too_big.status == "held"
+    outside = await gate.execute(
+        act(
+            "generate_pr",
+            "planning",
+            "pr-out",
+            changed_lines=10,
+            changed_files=1,
+            changed_paths=[".github/workflows/ci.yml"],
+        )
+    )
+    review = gate.store.get_review(outside.review_id or "")
+    assert review is not None
+    assert review.report["rules"][0]["outside"] == [".github/workflows/ci.yml"]
+
+
+@pytest.mark.asyncio
+async def test_missing_rule_fields_fail_closed(gate: Gate, act) -> None:
+    """금액이 아닌 규칙의 필드가 없으면 통과시키지 않는다."""
+    decision = await gate.execute(act("generate_pr", "planning", "pr-none", changed_lines=10))
+    assert decision.status == "held"
+    review = gate.store.get_review(decision.review_id or "")
+    assert {hit["key"] for hit in review.report["rules"]} == {  # type: ignore[union-attr]
+        "pr_changed_files",
+        "pr_allowed_paths",
+    }
+
+
+@pytest.mark.asyncio
+async def test_seller_review_risk_score(gate: Gate, verifier: Any, act) -> None:
+    """판매자 승인(마켓운영): 위험 점수 70 이상이면 C, 미만이면 data가 교차검증(B)."""
+    low = await gate.execute(
+        act("seller_review", "finance", "sel-1", seller_id="sel_1", risk_score=20)
+    )
+    assert (low.grade, low.status, low.verifier) == ("B", "executed", "data")
+    assert verifier.tasks[-1].skill == "fraud_score"
+    high = await gate.execute(
+        act("seller_review", "finance", "sel-2", seller_id="sel_2", risk_score=70)
+    )
+    assert (high.grade, high.status) == ("C", "held")

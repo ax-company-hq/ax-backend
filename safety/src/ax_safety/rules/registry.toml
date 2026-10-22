@@ -86,3 +86,32 @@ verify_skill = "anomaly_detection"
 action = "confirm_settlement"
 owner = "finance"
 base_grade = "C"
+
+# ---- 재무 마켓운영 (태윤). 마켓운영은 재무 도메인 skill로 흡수(구성안 수정 요청). 판매자 위험은 data가 다시 본다
+[[actions]]
+action = "seller_review"
+owner = "finance"
+base_grade = "B"
+verifier = "data"
+verify_skill = "fraud_score"
+
+[[actions]]
+action = "settlement_hold"
+owner = "finance"
+base_grade = "B"
+verifier = "data"
+verify_skill = "fraud_score"
+
+# ---- 회사 기억 (재현). 카드 쓰기는 여러 부서가 요청한다
+[[actions]]
+action = "memory_write_card"
+owner = "memory"
+requesters = ["hr", "planning", "infra", "support", "marketing", "finance", "data", "orchestrator"]
+base_grade = "A"
+
+# ---- 기획개발 (예진). 검증자 = 안전 레이어 코드 규칙(변경 크기·허용 경로, thresholds.toml)
+[[actions]]
+action = "generate_pr"
+owner = "planning"
+base_grade = "B"
+verifier = "safety"

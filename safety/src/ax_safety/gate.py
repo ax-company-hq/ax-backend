@@ -138,7 +138,7 @@ class Gate:
         )
 
         spec = self.registry.get(request.action)
-        if spec is None or spec.owner != request.requester:
+        if spec is None or request.requester not in spec.allowed_requesters:
             report = {"reason": "미등록 액션이거나 요청자가 이 액션을 신고하지 않았다"}
             return await self._hold(request, execution_id, HoldReason.UNREGISTERED_ACTION, report)
 
@@ -191,6 +191,17 @@ class Gate:
             )
             return await self._finish(request, decision, customer, report, "safety.action_executed")
 
+        if spec.rules_verified:  # 검증자 = 안전 레이어 코드 규칙. 규칙을 통과했으니 실행
+            report["verification"] = {"verifier": spec.verifier, "result": "rules_passed"}
+            decision = ExecuteDecision(
+                execution_id=execution_id,
+                grade="B",
+                status="executed",
+                computed_amount=amount,
+                threshold_version=version,
+                verifier=spec.verifier,
+            )
+            return await self._finish(request, decision, customer, report, "safety.action_executed")
         return await self._cross_verify(request, spec, execution_id, amount, customer, report)
 
     async def _cross_verify(
@@ -273,41 +284,61 @@ class Gate:
         unit: int | None,
         customer: str | None,
     ) -> list[dict[str, Any]]:
+        """걸린 규칙 목록. 금액이 아닌 규칙의 필드가 없거나 형식이 틀리면 걸린 것으로 본다."""
         hits: list[dict[str, Any]] = []
-        if amount is None:
-            return hits
-        day_start = self._now().replace(hour=0, minute=0, second=0, microsecond=0)
         for rule in self.thresholds.rules_for(spec.action):
             if any(request.params.get(k) != v for k, v in rule.when.items()):
                 continue
-            observed: int | None
-            if rule.metric == "amount":
-                observed = amount
-            elif rule.metric == "unit":
-                observed = unit
-            elif rule.metric == "daily_total":
-                observed = amount + self.store.executed_total(
-                    request.tenant_id, spec.action, since=day_start
-                )
-            elif rule.metric == "context_total":
-                observed = amount + self.store.executed_total(
-                    request.tenant_id, spec.action, context_id=request.context_id
-                )
-            else:  # customer_total
-                if customer is None:
-                    observed = None
-                else:
-                    observed = amount + self.store.executed_total(
-                        request.tenant_id,
-                        spec.action,
-                        context_id=request.context_id,
-                        customer=customer,
-                    )
+            if rule.metric == "paths_within":
+                paths = request.params.get(rule.field or "")
+                if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+                    hits.append({"key": rule.key, "invalid": rule.field})
+                elif outside := rule.paths_outside(paths):
+                    hits.append({"key": rule.key, "outside": outside, "allowed": rule.allowed})
+                continue
+            if rule.metric == "param":
+                value = request.params.get(rule.field or "")
+                if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                    hits.append({"key": rule.key, "invalid": rule.field})
+                    continue
+                observed: int | None = value
+            else:
+                observed = self._amount_metric(rule.metric, spec, request, amount, unit, customer)
             if observed is not None and rule.hit(observed):
                 hits.append(
                     {"key": rule.key, "observed": observed, "op": rule.op, "value": rule.value}
                 )
         return hits
+
+    def _amount_metric(
+        self,
+        metric: str,
+        spec: ActionSpec,
+        request: ExecuteRequest,
+        amount: int | None,
+        unit: int | None,
+        customer: str | None,
+    ) -> int | None:
+        if amount is None:
+            return None
+        if metric == "amount":
+            return amount
+        if metric == "unit":
+            return unit
+        if metric == "daily_total":
+            day_start = self._now().replace(hour=0, minute=0, second=0, microsecond=0)
+            return amount + self.store.executed_total(
+                request.tenant_id, spec.action, since=day_start
+            )
+        if metric == "context_total":
+            return amount + self.store.executed_total(
+                request.tenant_id, spec.action, context_id=request.context_id
+            )
+        if customer is None:  # customer_total
+            return None
+        return amount + self.store.executed_total(
+            request.tenant_id, spec.action, context_id=request.context_id, customer=customer
+        )
 
     # ------------------------------------------------------------------ 결과 처리
     async def _hold(

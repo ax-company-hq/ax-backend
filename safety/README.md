@@ -55,4 +55,5 @@ ax-contracts, ax-agent-template (`call_agent`, `publish`, 토큰 검증), 검증
 - LLM을 쓰지 않는다 (서비스, 코드 규칙만)
 - 기준표·레지스트리를 API로 바꾸지 않는다 (사람이 PR로만)
 - 부서별 보류 목록을 따로 두지 않는다 (C 보류 큐는 여기 하나)
+- 금액이 아닌 규칙(`param`·`paths_within`): `pr_changed_lines`·`pr_changed_files`·`pr_allowed_paths`(planning `generate_pr`, 검증자 = 안전 레이어 코드 규칙), `seller_risk`(판매자 심사). 값은 제안값
 - v0은 저장소가 메모리라 재시작하면 기록이 비워진다 (TODO: postgres)

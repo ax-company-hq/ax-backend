@@ -62,3 +62,35 @@ action = "refund_request"
 metric = "amount"
 op = ">="
 value = 100000
+
+# ---- 금액이 아닌 규칙. 아래 값은 모두 제안값(담당 확인 전)
+[[rules]]
+key = "seller_risk"
+action = "seller_review"
+metric = "param"
+field = "risk_score"
+op = ">="
+value = 70
+
+[[rules]]
+key = "pr_changed_lines"
+action = "generate_pr"
+metric = "param"
+field = "changed_lines"
+op = ">"
+value = 300
+
+[[rules]]
+key = "pr_changed_files"
+action = "generate_pr"
+metric = "param"
+field = "changed_files"
+op = ">"
+value = 20
+
+[[rules]]
+key = "pr_allowed_paths"
+action = "generate_pr"
+metric = "paths_within"
+field = "changed_paths"
+allowed = ["shop-api/", "docs/"]

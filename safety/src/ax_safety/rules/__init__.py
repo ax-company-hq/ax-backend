@@ -16,6 +16,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 Grade = Literal["A", "B", "C"]
 GRADE_ORDER: dict[str, int] = {"A": 0, "B": 1, "C": 2}
 
+# 검증자가 이 값이면 에이전트가 아니라 안전 레이어의 코드 규칙(기준표)이 B를 검증한다
+RULES_VERIFIER = "safety"
+
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -39,8 +42,11 @@ class AmountSpec(_Strict):
 
 
 class ActionSpec(_Strict):
+    """`requesters`가 비어 있으면 `owner`만 요청할 수 있다."""
+
     action: str
     owner: str
+    requesters: list[str] = Field(default_factory=list)
     base_grade: Grade
     verifier: str | None = None
     verify_skill: str | None = None
@@ -48,25 +54,55 @@ class ActionSpec(_Strict):
     customer_field: str | None = None
     purpose_field: str | None = None
 
+    @property
+    def allowed_requesters(self) -> list[str]:
+        return self.requesters or [self.owner]
+
+    @property
+    def rules_verified(self) -> bool:
+        return self.verifier == RULES_VERIFIER
+
     @model_validator(mode="after")
     def _verifier_rules(self) -> ActionSpec:
-        if self.base_grade == "B" and not (self.verifier and self.verify_skill):
-            raise ValueError(f"{self.action}: B 등급에는 verifier와 verify_skill이 필요하다")
-        if self.verifier is not None and self.verifier == self.owner:
-            raise ValueError(f"{self.action}: 자기 검증 금지 (verifier == owner)")
+        if self.base_grade == "B" and not self.verifier:
+            raise ValueError(f"{self.action}: B 등급에는 verifier가 필요하다")
+        if self.verifier and not self.rules_verified and not self.verify_skill:
+            raise ValueError(f"{self.action}: 에이전트 검증자에는 verify_skill이 필요하다")
+        if self.verifier is not None and self.verifier in self.allowed_requesters:
+            raise ValueError(f"{self.action}: 자기 검증 금지 (verifier가 요청자에 있다)")
         return self
 
 
 class Rule(_Strict):
+    """금액 규칙과 금액이 아닌 규칙.
+
+    - 금액: `amount`·`unit`·`daily_total`·`context_total`·`customer_total` (`op`·`value`)
+    - 숫자 파라미터: `param` + `field` (`op`·`value`), 예: `pr_changed_lines`
+    - 경로 목록: `paths_within` + `field` + `allowed` (하나라도 허용 접두사 밖이면 걸림)
+    """
+
     key: str
     action: str
-    metric: Literal["amount", "unit", "daily_total", "context_total", "customer_total"]
-    op: Literal[">=", ">"]
-    value: int = Field(ge=0)
+    metric: Literal[
+        "amount", "unit", "daily_total", "context_total", "customer_total", "param", "paths_within"
+    ]
+    op: Literal[">=", ">"] = ">="
+    value: int = Field(default=0, ge=0)
+    field: str | None = None
+    allowed: list[str] = Field(default_factory=list)
     when: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _field_needed(self) -> Rule:
+        if self.metric in ("param", "paths_within") and not self.field:
+            raise ValueError(f"{self.key}: {self.metric} 규칙에는 field가 필요하다")
+        return self
 
     def hit(self, observed: int) -> bool:
         return observed >= self.value if self.op == ">=" else observed > self.value
+
+    def paths_outside(self, paths: list[str]) -> list[str]:
+        return [p for p in paths if not any(p.startswith(prefix) for prefix in self.allowed)]
 
 
 class ThresholdTable(_Strict):
