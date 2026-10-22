@@ -10,10 +10,10 @@
     },
     {
       "skill": "confirm_handover",
-      "requester": "dashboard-api",
+      "requester": "orchestrator",
       "input": {"handover_id": "${step1.output.handover_id}"},
       "key": "ctx_demo:confirm_handover:held",
-      "expect": {"status": "completed", "outcome": "held", "output": {"status": "held"}, "output_has": ["hold_id"]}
+      "expect": {"status": "input-required", "output": {"status": "held"}, "output_has": ["hold_id"]}
     },
     {
       "action": "decide_hold",
@@ -22,7 +22,7 @@
     },
     {
       "skill": "confirm_handover",
-      "requester": "dashboard-api",
+      "requester": "orchestrator",
       "input": {"handover_id": "${step1.output.handover_id}"},
       "key": "ctx_demo:confirm_handover:held",
       "expect": {"status": "completed", "outcome": "confirmed", "output": {"status": "confirmed"}}

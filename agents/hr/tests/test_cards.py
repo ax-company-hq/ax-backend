@@ -142,7 +142,7 @@ async def test_decision_record_creates_one_confirmed_card(svc) -> None:
     assert result.status == "completed" and result.output["outcome"] == "card_created"
     cards = await _cards(svc)
     assert len(cards) == 1 and cards[0].status == "active"
-    assert ("memory_write_card", "executed") in svc.gate.calls
+    assert ("memory.card_write", "executed") in svc.gate.calls
     assert svc.audit.kinds("ctx_req_1") == ["record_case.card_created"]
 
 
@@ -252,7 +252,7 @@ async def test_untrusted_text_never_reaches_the_card(svc) -> None:
     await record_case(svc, _request(_record(), untrusted=attack))
     card = (await _cards(svc))[0]
     assert "삭제" not in card.body and "쿠폰" not in card.body
-    assert ("memory_write_card", "executed") in svc.gate.calls
+    assert ("memory.card_write", "executed") in svc.gate.calls
 
 
 @pytest.mark.asyncio

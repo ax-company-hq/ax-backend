@@ -43,12 +43,25 @@ def areas_of(store: Store, member_id: str) -> list[str]:
 
 
 def shifts(store: Store, area: str | None = None) -> list[dict[str, Any]]:
-    sql = "SELECT shift_id, area, member_id, start_at, end_at, handled FROM shifts"
+    """교대 일정. 그 영역의 활성 담당이 아닌 사람(퇴직·이동)의 교대는 세지 않는다."""
+    sql = (
+        "SELECT s.shift_id, s.area, s.member_id, s.start_at, s.end_at, s.handled FROM shifts s"
+        " WHERE EXISTS (SELECT 1 FROM roster_entries e WHERE e.area = s.area"
+        " AND e.member_id = s.member_id AND e.active = 1)"
+    )
     params: list[Any] = []
     if area is not None:
-        sql += " WHERE area = ?"
+        sql += " AND s.area = ?"
         params.append(area)
-    return store.all(sql + " ORDER BY start_at, area, member_id", params)
+    return store.all(sql + " ORDER BY s.start_at, s.area, s.member_id", params)
+
+
+def move_shifts(store: Store, area: str, from_member: str, to_member: str, after: str) -> int:
+    """`after`(ISO 시각) 이후에 끝나는 교대를 다른 사람에게 넘긴다. 옮긴 건수를 돌려준다."""
+    return store.execute(
+        "UPDATE shifts SET member_id = ? WHERE area = ? AND member_id = ? AND end_at > ?",
+        (to_member, area, from_member, after),
+    )
 
 
 def _parse(value: str) -> datetime:
@@ -87,6 +100,12 @@ def set_active(store: Store, area: str, role: str, member_id: str, active: bool)
 
 def known_member(store: Store, member_id: str) -> bool:
     return store.one("SELECT 1 FROM members WHERE member_id = ?", (member_id,)) is not None
+
+
+def active_member(store: Store, member_id: str) -> bool:
+    """명부에 있고 재직 중인 사람(퇴직한 사람은 후임이 될 수 없다)."""
+    row = store.one("SELECT active FROM members WHERE member_id = ?", (member_id,))
+    return bool(row and row["active"])
 
 
 def active_members(store: Store) -> list[str]:

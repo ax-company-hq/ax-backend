@@ -10,16 +10,16 @@
     },
     {
       "skill": "confirm_reassignment",
-      "requester": "dashboard-api",
+      "requester": "orchestrator",
       "input": {"change_id": "${step1.output.change_id}", "successor_id": "emp_02"},
       "expect": {"status": "completed", "outcome": "confirmed"}
     },
     {
       "skill": "confirm_offboarding",
-      "requester": "dashboard-api",
+      "requester": "orchestrator",
       "key": "ctx_demo:confirm_offboarding:off",
       "input": {"change_id": "${step1.output.change_id}"},
-      "expect": {"status": "completed", "outcome": "held", "output": {"status": "held"}, "output_has": ["hold_id"]}
+      "expect": {"status": "input-required", "output": {"status": "held"}, "output_has": ["hold_id"]}
     },
     {
       "action": "decide_hold",
@@ -28,7 +28,7 @@
     },
     {
       "skill": "confirm_offboarding",
-      "requester": "dashboard-api",
+      "requester": "orchestrator",
       "key": "ctx_demo:confirm_offboarding:off",
       "input": {"change_id": "${step1.output.change_id}"},
       "expect": {"status": "completed", "outcome": "confirmed", "output": {"status": "confirmed"}}

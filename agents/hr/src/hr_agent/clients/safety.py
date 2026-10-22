@@ -30,7 +30,8 @@ class ActionSpec:
 
 # 등급 신고 초안 (인사 구성안 HR2 5장). 레지스트리 원본은 safety의 registry.toml이다.
 HR_ACTIONS: dict[str, ActionSpec] = {
-    "memory_write_card": ActionSpec("A"),
+    "memory.card_write": ActionSpec("A"),  # 레지스트리 등록 이름(회사 기억)
+    "memory.card_link": ActionSpec("A"),  # 대체·폐기 연결, hr만 요청 가능
     "record_case": ActionSpec("A"),
     "start_handover": ActionSpec("A"),
     "answer_handover_question": ActionSpec("A"),
@@ -38,7 +39,7 @@ HR_ACTIONS: dict[str, ActionSpec] = {
     "start_onboarding": ActionSpec("A"),
     "confirm_handover": ActionSpec("B", verifier="planning"),
     "confirm_handover_incomplete": ActionSpec("C"),  # 완성도 미달이면 사람이 보고 결정한다
-    "confirm_reassignment": ActionSpec("B", verifier="safety_rule"),
+    "confirm_reassignment": ActionSpec("B", verifier="safety"),
     "confirm_offboarding": ActionSpec("C"),
 }
 
@@ -95,8 +96,20 @@ class MockGate:
         if not key:
             raise ValueError("상태 변경에는 idempotency_key가 필요하다")
         self.expire()
-        row = self._store.one("SELECT decision FROM gate_decisions WHERE idem_key = ?", (key,))
+        row = self._store.one(
+            "SELECT decision, action, params FROM gate_decisions WHERE idem_key = ?", (key,)
+        )
         if row:
+            # 같은 키를 다른 액션·다른 대상에 다시 쓰면 저장된 결정을 돌려주지 않고 거부한다
+            saved = loads(row["params"], {})
+            if row["action"] != action or saved.get("target") != params.get("target"):
+                self.calls.append((action, "conflict"))
+                return ExecuteDecision(
+                    execution_id=stable_id("exe_", key, action, str(params.get("target"))),
+                    grade="C",
+                    status="rejected",
+                    hold_reason=HoldReason.VERIFY_REJECTED,
+                )
             return ExecuteDecision.model_validate(loads(row["decision"]))
         decision = await self._decide(action, params, context, key)
         self._save(key, action, context.context_id, params, decision)

@@ -1,7 +1,7 @@
 """회사 기억(memory) 연결: 카드 저장·검색·상태 변경.
 
 실제 연동(3단계)은 같은 `MemoryClient` 인터페이스로 memory 서비스를 부른다. 저장 같은 상태 변경은
-호출하는 쪽이 `execute("memory_write_card")`가 `executed`를 돌려준 뒤에만 부른다.
+호출하는 쪽이 `execute("memory.card_write")`가 `executed`를 돌려준 뒤에만 부른다.
 
 카드의 상태는 계약 `Card.status`(`active`·`superseded`·`retired`)에 "후보"를 더해 다룬다.
 후보(`candidate`)는 `status`가 `active`이고 `extra["candidate"]`가 true인 카드다.

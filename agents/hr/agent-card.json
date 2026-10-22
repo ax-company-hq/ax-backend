@@ -40,11 +40,10 @@
         "marketing",
         "finance",
         "data",
-        "infra",
-        "dashboard-api"
+        "infra"
       ],
       "verifier": null,
-      "priority": "required"
+      "priority": "recommended"
     },
     {
       "id": "start_handover",
@@ -52,9 +51,11 @@
       "input_schema": "contracts/src/ax_contracts/schemas/hr.py#StartHandoverInput",
       "output_schema": "contracts/src/ax_contracts/schemas/hr.py#StartHandoverOutput",
       "grade": "A",
-      "allowed_requesters": ["orchestrator", "dashboard-api"],
+      "allowed_requesters": [
+        "orchestrator"
+      ],
       "verifier": null,
-      "priority": "required"
+      "priority": "recommended"
     },
     {
       "id": "answer_handover_question",
@@ -62,9 +63,11 @@
       "input_schema": "contracts/src/ax_contracts/schemas/hr.py#AnswerHandoverQuestionInput",
       "output_schema": "contracts/src/ax_contracts/schemas/hr.py#AnswerHandoverQuestionOutput",
       "grade": "A",
-      "allowed_requesters": ["orchestrator", "dashboard-api"],
+      "allowed_requesters": [
+        "orchestrator"
+      ],
       "verifier": null,
-      "priority": "required"
+      "priority": "recommended"
     },
     {
       "id": "confirm_handover",
@@ -72,9 +75,11 @@
       "input_schema": "contracts/src/ax_contracts/schemas/hr.py#ConfirmHandoverInput",
       "output_schema": "contracts/src/ax_contracts/schemas/hr.py#ConfirmHandoverOutput",
       "grade": "B",
-      "allowed_requesters": ["orchestrator", "dashboard-api"],
+      "allowed_requesters": [
+        "orchestrator"
+      ],
       "verifier": "planning",
-      "priority": "required"
+      "priority": "recommended"
     },
     {
       "id": "start_onboarding",
@@ -82,9 +87,11 @@
       "input_schema": "contracts/src/ax_contracts/schemas/hr.py#StartOnboardingInput",
       "output_schema": "contracts/src/ax_contracts/schemas/hr.py#StartOnboardingOutput",
       "grade": "A",
-      "allowed_requesters": ["orchestrator", "dashboard-api"],
+      "allowed_requesters": [
+        "orchestrator"
+      ],
       "verifier": null,
-      "priority": "required"
+      "priority": "recommended"
     },
     {
       "id": "request_assignment_change",
@@ -92,9 +99,11 @@
       "input_schema": "contracts/src/ax_contracts/schemas/hr.py#RequestAssignmentChangeInput",
       "output_schema": "contracts/src/ax_contracts/schemas/hr.py#RequestAssignmentChangeOutput",
       "grade": "A",
-      "allowed_requesters": ["orchestrator", "dashboard-api"],
+      "allowed_requesters": [
+        "orchestrator"
+      ],
       "verifier": null,
-      "priority": "required"
+      "priority": "recommended"
     },
     {
       "id": "confirm_reassignment",
@@ -102,9 +111,11 @@
       "input_schema": "contracts/src/ax_contracts/schemas/hr.py#ConfirmReassignmentInput",
       "output_schema": "contracts/src/ax_contracts/schemas/hr.py#ConfirmReassignmentOutput",
       "grade": "B",
-      "allowed_requesters": ["orchestrator", "dashboard-api"],
-      "verifier": "safety_rule",
-      "priority": "required"
+      "allowed_requesters": [
+        "orchestrator"
+      ],
+      "verifier": "safety",
+      "priority": "recommended"
     },
     {
       "id": "confirm_offboarding",
@@ -112,9 +123,11 @@
       "input_schema": "contracts/src/ax_contracts/schemas/hr.py#ConfirmOffboardingInput",
       "output_schema": "contracts/src/ax_contracts/schemas/hr.py#ConfirmOffboardingOutput",
       "grade": "C",
-      "allowed_requesters": ["orchestrator", "dashboard-api"],
+      "allowed_requesters": [
+        "orchestrator"
+      ],
       "verifier": null,
-      "priority": "required"
+      "priority": "recommended"
     },
     {
       "id": "check_plan",
@@ -122,9 +135,12 @@
       "input_schema": "contracts/src/ax_contracts/schemas/hr.py#CheckPlanInput",
       "output_schema": "contracts/src/ax_contracts/schemas/hr.py#CheckPlanOutput",
       "grade": "read",
-      "allowed_requesters": ["orchestrator", "planning", "dashboard-api"],
+      "allowed_requesters": [
+        "orchestrator",
+        "planning"
+      ],
       "verifier": null,
-      "priority": "required"
+      "priority": "recommended"
     }
   ]
 }

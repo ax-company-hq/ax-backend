@@ -296,9 +296,9 @@ function renderHandover(root) {
     if (h.items.length) c.append(el('div', {class: 'muted'}, '인계 목록: ' + h.items.map((i) => `${i.item_id}(${i.title})`).join(', ')));
     h.questions.filter((q) => q.status === 'open').forEach((q) => {
       const ans = el('input', {placeholder: '답변'});
-      c.append(el('div', {class: 'notice'}, q.question, el('div', {class: 'row'}, ans, el('button', {class: 'small', onclick: () => send('answer_handover_question', 'dashboard-api', {question_id: q.question_id, answer: ans.value}, h.context_id, `${h.context_id}:ans:${q.question_id}`)}, '답변 보내기'))));
+      c.append(el('div', {class: 'notice'}, q.question, el('div', {class: 'row'}, ans, el('button', {class: 'small', onclick: () => send('answer_handover_question', 'orchestrator', {question_id: q.question_id, answer: ans.value}, h.context_id, `${h.context_id}:ans:${q.question_id}`)}, '답변 보내기'))));
     });
-    if (h.status !== 'confirmed') c.append(el('div', {class: 'row'}, el('button', {onclick: () => send('confirm_handover', 'dashboard-api', {handover_id: h.handover_id}, h.context_id, `${h.context_id}:confirm:${h.handover_id}`)}, '확정 요청'), el('span', {class: 'muted'}, '완성도 80% 미만이면 보류 큐로 갑니다.')));
+    if (h.status !== 'confirmed') c.append(el('div', {class: 'row'}, el('button', {onclick: () => send('confirm_handover', 'orchestrator', {handover_id: h.handover_id}, h.context_id, `${h.context_id}:confirm:${h.handover_id}`)}, '확정 요청'), el('span', {class: 'muted'}, '완성도 80% 미만이면 보류 큐로 갑니다.')));
     root.append(c);
   });
   root.append(holdsView('confirm_handover'));
@@ -340,9 +340,9 @@ function renderAssign(root) {
     if (c.onboarding_id) card.append(el('div', {class: 'muted'}, '온보딩: ' + c.onboarding_id));
     if (c.status === 'requested') {
       const to = el('input', {value: c.successor_id || (c.kind === 'join' ? c.member_id : '')});
-      card.append(el('div', {class: 'row'}, to, el('button', {class: 'small', onclick: () => send('confirm_reassignment', 'dashboard-api', {change_id: c.change_id, successor_id: to.value}, c.context_id, `${c.context_id}:rea:${c.change_id}`)}, '재배치 확정')));
+      card.append(el('div', {class: 'row'}, to, el('button', {class: 'small', onclick: () => send('confirm_reassignment', 'orchestrator', {change_id: c.change_id, successor_id: to.value}, c.context_id, `${c.context_id}:rea:${c.change_id}`)}, '재배치 확정')));
     }
-    if (c.kind === 'offboarding' && c.status === 'confirmed') card.append(el('div', {class: 'row'}, el('button', {class: 'small', onclick: () => send('confirm_offboarding', 'dashboard-api', {change_id: c.change_id}, c.context_id, `${c.context_id}:off:${c.change_id}`)}, '퇴직 확정(보류 큐)'), el('span', {class: 'muted'}, '승인한 뒤 같은 버튼을 다시 누르면 적용됩니다.')));
+    if (c.kind === 'offboarding' && c.status === 'confirmed') card.append(el('div', {class: 'row'}, el('button', {class: 'small', onclick: () => send('confirm_offboarding', 'orchestrator', {change_id: c.change_id}, c.context_id, `${c.context_id}:off:${c.change_id}`)}, '퇴직 확정(보류 큐)'), el('span', {class: 'muted'}, '승인한 뒤 같은 버튼을 다시 누르면 적용됩니다.')));
     root.append(card);
   });
   root.append(holdsView('confirm_offboarding'));

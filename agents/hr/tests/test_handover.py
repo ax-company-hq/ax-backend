@@ -175,7 +175,7 @@ def test_planning_rejects_when_an_item_is_missing(svc, client) -> None:
 
 def test_validation_and_unknown_ids(svc, client) -> None:
     unknown = _start(client, owner="emp_99")
-    assert (unknown["status"], unknown["outcome"]) == ("failed", "UNKNOWN_MEMBER")
+    assert (unknown["status"], unknown["outcome"]) == ("completed", "UNKNOWN_MEMBER")
     same = _start(client, successor="emp_01")
     assert same["outcome"] == "INVALID_INPUT"
     bad_q = client.post(

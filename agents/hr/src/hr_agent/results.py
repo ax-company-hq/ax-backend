@@ -76,6 +76,7 @@ def input_required(
 
 
 def failed(request: AgentRequest, outcome: str, message: str) -> AgentResult:
+    """실행 오류(외부 호출 실패 등). 정책상 거절에는 `refused`를 쓴다."""
     return AgentResult(
         meta=request.meta,
         status=TaskStatus.FAILED,
@@ -84,17 +85,35 @@ def failed(request: AgentRequest, outcome: str, message: str) -> AgentResult:
     )
 
 
+def refused(request: AgentRequest, outcome: str, message: str) -> AgentResult:
+    """정책상 거절(없는 대상·잠금·상태 불일치 등): 정상 처리한 결과라 `completed` + `outcome`."""
+    return AgentResult(
+        meta=request.meta,
+        status=TaskStatus.COMPLETED,
+        outcome=outcome,
+        output={"message": message},
+        evidence=Evidence(data_summary=message, collected_at=None),
+    )
+
+
 def invalid_input(request: AgentRequest, error: Exception | str) -> AgentResult:
-    """입력이 계약과 맞지 않을 때. 오류 상세는 짧게만 돌려주고 외부 문구를 그대로 싣지 않는다."""
+    """입력이 계약과 맞지 않을 때. 오류 상세는 짧게만 싣는다.
+
+    계약의 `ErrorCode`에 입력 오류 값이 없어 `rejected`로 쓸 수 없다
+    (계약 후속 제안: `INVALID_INPUT`).
+    그때까지는 `failed` + `outcome="INVALID_INPUT"`이다.
+    """
     detail = str(error)
     return failed(request, "INVALID_INPUT", detail.splitlines()[0][:200] if detail else "invalid")
 
 
 def gate_blocked(request: AgentRequest, decision: ExecuteDecision) -> AgentResult:
-    """실행 관문이 실행을 허락하지 않았을 때(거부·검증 거절·보류)."""
+    """실행 관문이 실행을 허락하지 않았을 때. 보류(C)는 사람 승인을 기다리는 `input-required`다."""
+    held = decision.status == "held"
     return AgentResult(
         meta=request.meta,
-        status=TaskStatus.COMPLETED,
+        status=TaskStatus.INPUT_REQUIRED if held else TaskStatus.COMPLETED,
+        reason_code=InputReason.HUMAN_INPUT if held else None,
         outcome=f"gate_{decision.status}",
         output={
             "execution_id": decision.execution_id,

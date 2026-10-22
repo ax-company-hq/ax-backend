@@ -14,7 +14,7 @@
     },
     {
       "skill": "confirm_reassignment",
-      "requester": "dashboard-api",
+      "requester": "orchestrator",
       "input": {"change_id": "${step1.output.change_id}", "successor_id": "emp_02"},
       "expect": {"status": "completed", "outcome": "confirmed", "output": {"status": "confirmed", "gap_areas": [], "duplicate_areas": []}}
     },

@@ -33,11 +33,11 @@ from hr_agent.handover.fields import FIELD_LABEL, FIELDS, question_id
 from hr_agent.narrative import Sentence
 from hr_agent.results import (
     completed,
-    failed,
     gate_blocked,
     input_required,
     invalid_input,
     make_evidence,
+    refused,
     with_key,
 )
 from hr_agent.roster import store as roster
@@ -110,14 +110,16 @@ async def start_handover(svc: Services, request: AgentRequest) -> AgentResult:
     owner = params.owner_id
     owner_areas = roster.areas_of(svc.store, owner)
     if not owner_areas:
-        return failed(request, "UNKNOWN_MEMBER", f"명부에 없는 인계자: {owner}")
+        return refused(request, "UNKNOWN_MEMBER", f"명부에 없는 인계자: {owner}")
     area = params.area or (owner_areas[0] if len(owner_areas) == 1 else None)
     if area is None:
         return invalid_input(request, "인계자의 담당 영역이 여러 개라 area가 필요하다")
     if area not in owner_areas:
-        return failed(request, "NOT_IN_AREA", f"{owner}은(는) {area} 영역 담당이 아니다")
+        return refused(request, "NOT_IN_AREA", f"{owner}은(는) {area} 영역 담당이 아니다")
     if params.successor_id == owner:
         return invalid_input(request, "인계자와 후임이 같다")
+    if params.successor_id and not roster.active_member(svc.store, params.successor_id):
+        return refused(request, "UNKNOWN_MEMBER", f"재직 중인 사람이 아니다: {params.successor_id}")
 
     handover_id = handover_id_of(request, owner, area, params.successor_id)
     if (
@@ -149,8 +151,8 @@ async def start_handover(svc: Services, request: AgentRequest) -> AgentResult:
 
     decision = await svc.gate.execute(
         "start_handover",
-        {"handover_id": handover_id, "summary": summary},
-        with_key(request.meta, "start_handover"),
+        {"handover_id": handover_id, "summary": summary, "target": handover_id},
+        with_key(request.meta, f"start_handover:{handover_id}"),
         make_evidence(svc.clock, summary, refs),
     )
     if decision.status != "executed":
@@ -164,6 +166,8 @@ async def start_handover(svc: Services, request: AgentRequest) -> AgentResult:
         if not auto.get(field, False)
     }
     fallback = any(t.fallback for t in texts.values())
+    if hstore.get(svc.store, handover_id) is not None:  # 기다리는 사이 같은 요청이 먼저 끝났다
+        return _result_for(svc, request, handover_id, "이미 만들어진 인수인계 초안", [handover_id])
     with svc.store.transaction():
         svc.store.execute(
             "INSERT INTO handovers(handover_id, context_id, owner_id, successor_id, area, reason,"
@@ -230,20 +234,26 @@ async def answer_handover_question(svc: Services, request: AgentRequest) -> Agen
         return invalid_input(request, "답변이 비어 있다")
     q = hstore.question(svc.store, params.question_id)
     if q is None:
-        return failed(request, "UNKNOWN_QUESTION", "없는 질문이다")
+        return refused(request, "UNKNOWN_QUESTION", "없는 질문이다")
     handover_id = q["handover_id"]
 
     if q["status"] == "answered":  # 같은 답이 다시 오면 한 번만 반영된 상태를 돌려준다
+        if q["answer"] != answer:
+            return refused(request, "CONFLICT", "이미 다른 답변이 반영된 질문이다")
         svc.audit.record(request.meta.context_id, "answer.duplicate", {"q": q["question_id"]})
         return _answer_result(svc, request, handover_id, "이미 반영된 답변", duplicate=True)
     row = hstore.get(svc.store, handover_id)
     if row and row["status"] in ("confirmed",):
-        return failed(request, "HANDOVER_CLOSED", "이미 확정된 인수인계다")
+        return refused(request, "HANDOVER_CLOSED", "이미 확정된 인수인계다")
 
     decision = await svc.gate.execute(
         "answer_handover_question",
-        {"question_id": q["question_id"], "summary": f"{q['gap_field']} 답변"},
-        with_key(request.meta, "answer"),
+        {
+            "question_id": q["question_id"],
+            "summary": f"{q['gap_field']} 답변",
+            "target": q["question_id"],
+        },
+        with_key(request.meta, f"answer:{q['question_id']}"),
         make_evidence(svc.clock, f"인계자 답변: {q['gap_field']}", [q["question_id"]]),
     )
     if decision.status != "executed":
@@ -298,7 +308,7 @@ async def confirm_handover(svc: Services, request: AgentRequest) -> AgentResult:
         return invalid_input(request, "상태를 바꾸는 요청에는 idempotency_key가 필요하다")
     row = hstore.get(svc.store, params.handover_id)
     if row is None:
-        return failed(request, "UNKNOWN_HANDOVER", "없는 인수인계다")
+        return refused(request, "UNKNOWN_HANDOVER", "없는 인수인계다")
     pct = row["completeness"]
     if row["status"] == "confirmed":
         return _confirm_result(request, svc, row, "confirmed", pct, [], None, "already_confirmed")
@@ -312,6 +322,7 @@ async def confirm_handover(svc: Services, request: AgentRequest) -> AgentResult:
         "area": row["area"],
         "item_ids": item_ids,
         "completeness": pct,
+        "target": row["handover_id"],
         "summary": (
             f"인수인계 확정 요청 {row['owner_id']}→{row['successor_id'] or '미정'} "
             f"({row['area']}), 완성도 {pct}%"
@@ -319,7 +330,10 @@ async def confirm_handover(svc: Services, request: AgentRequest) -> AgentResult:
     }
     evidence = make_evidence(svc.clock, params_for_gate["summary"], [row["handover_id"], *item_ids])
     decision = await svc.gate.execute(
-        action, params_for_gate, with_key(request.meta, action), evidence
+        action,
+        params_for_gate,
+        with_key(request.meta, f"{action}:{row['handover_id']}:{pct}"),
+        evidence,
     )
     now = svc.clock().isoformat()
     if decision.status == "held":
@@ -344,17 +358,23 @@ async def confirm_handover(svc: Services, request: AgentRequest) -> AgentResult:
             "confirmed",
             evidence=evidence,
         )
-    verdict = await svc.planning.verify_handover(
-        VerifyHandoverInput(
-            handover_id=row["handover_id"],
-            owner_id=row["owner_id"],
-            area=row["area"],
-            handover_item_ids=item_ids,
-        )
-    )
-    missing = [i.item_id for i in verdict.missing]
     hstore.set_status(svc.store, row["handover_id"], "input_required", now)
-    svc.audit.record(request.meta.context_id, "confirm_handover.rejected", {"missing": missing})
+    missing: list[str] = []
+    if decision.grade == "B":  # 검증자(planning)가 거절했다: 무엇이 빠졌는지 읽기 전용으로 확인한다
+        verdict = await svc.planning.verify_handover(
+            VerifyHandoverInput(
+                handover_id=row["handover_id"],
+                owner_id=row["owner_id"],
+                area=row["area"],
+                handover_item_ids=item_ids,
+            )
+        )
+        missing = [i.item_id for i in verdict.missing]
+    svc.audit.record(
+        request.meta.context_id,
+        "confirm_handover.rejected",
+        {"grade": decision.grade, "reason": decision.hold_reason, "missing": missing},
+    )
     return _confirm_result(request, svc, row, "rejected", pct, missing, None, "rejected", evidence)
 
 
@@ -376,12 +396,10 @@ def _confirm_result(
         missing_item_ids=missing,
         hold_id=hold_id,
     )
-    return completed(
-        request,
-        output,
-        outcome=outcome,
-        evidence=evidence or make_evidence(svc.clock, f"인수인계 {status}", [row["handover_id"]]),
-    )
+    evidence = evidence or make_evidence(svc.clock, f"인수인계 {status}", [row["handover_id"]])
+    if status == "held":  # C 보류는 사람 승인을 기다리는 input-required다
+        return input_required(request, output, evidence=evidence)
+    return completed(request, output, outcome=outcome, evidence=evidence)
 
 
 def register_verifiers(svc: Services) -> None:

@@ -14,25 +14,25 @@
     },
     {
       "skill": "answer_handover_question",
-      "requester": "dashboard-api",
+      "requester": "orchestrator",
       "input": {"question_id": "${step1.output.questions.0.question_id}", "answer": "재시도는 최대 2회로 확정했다"},
       "expect": {"status": "completed", "outcome": "answered", "output": {"completeness": 60}}
     },
     {
       "skill": "answer_handover_question",
-      "requester": "dashboard-api",
+      "requester": "orchestrator",
       "input": {"question_id": "${step1.output.questions.1.question_id}", "answer": "오류율이 5%를 넘으면 직전 버전으로 되돌린다"},
       "expect": {"status": "completed", "outcome": "answered", "output": {"completeness": 80}}
     },
     {
       "skill": "answer_handover_question",
-      "requester": "dashboard-api",
+      "requester": "orchestrator",
       "input": {"question_id": "${step1.output.questions.2.question_id}", "answer": "야간 배치와 겹치면 타임아웃이 늘 수 있다"},
       "expect": {"status": "completed", "output": {"completeness": 100, "status": "ready"}}
     },
     {
       "skill": "confirm_handover",
-      "requester": "dashboard-api",
+      "requester": "orchestrator",
       "input": {"handover_id": "${step1.output.handover_id}"},
       "expect": {"status": "completed", "outcome": "confirmed", "output": {"status": "confirmed", "completeness": 100}}
     }

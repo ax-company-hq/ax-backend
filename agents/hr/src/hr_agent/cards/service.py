@@ -4,7 +4,7 @@
 1. 입력 검증(`RecordCase`) → 같은 기록이면 중복 처리(멱등성)
 2. 결정 탐지: 규칙(구조화 필드) → 규칙 추출(낮은 확신도) → 결정 없음(기록만)
 3. 카드 조립(근거 없는 값은 "확인할 수 없음", 확신도 규칙)
-4. 저장: `execute("memory_write_card")`가 실행됨을 돌려준 뒤에만 memory에 쓴다
+4. 저장: `execute("memory.card_write")`가 실행됨을 돌려준 뒤에만 memory에 쓴다
 5. 같은 영역의 옛 결정을 대체하면 옛 카드를 `superseded`로 연결
 6. 감사 로그와 결과(카드 ID·확신도·근거)
 
@@ -78,8 +78,8 @@ async def record_case(svc: Services, request: AgentRequest) -> AgentResult:
     if info is None:  # 결정이 없는 기록: 카드를 만들지 않고 기록만 남긴다
         decision = await svc.gate.execute(
             "record_case",
-            {"summary": record.summary, "kind": record.kind.value},
-            with_key(request.meta, "record_case"),
+            {"summary": record.summary, "kind": record.kind.value, "target": key},
+            with_key(request.meta, f"record_case:{key}"),
             evidence,
         )
         if decision.status != "executed":
@@ -94,7 +94,7 @@ async def record_case(svc: Services, request: AgentRequest) -> AgentResult:
                 record.kind.value,
                 record.summary,
                 dumps(record.source_refs),
-                record.author,
+                request.meta.requester or record.author,
                 svc.clock().isoformat(),
             ),
         )
@@ -109,7 +109,9 @@ async def record_case(svc: Services, request: AgentRequest) -> AgentResult:
             alternatives=keep["alternatives"],
         )
 
-    card = build_card(record, info, svc.clock(), svc.settings.card_auto_confirm)
+    card = build_card(
+        record, info, svc.clock(), svc.settings.card_auto_confirm, author=request.meta.requester
+    )
     fallback = False
     if svc.narrator.enabled:  # LLM 문장은 교훈 한 줄만. 실패하면 붙이지 않고 fallback으로 표시한다
         lesson = await svc.narrator.sentence(
@@ -123,9 +125,14 @@ async def record_case(svc: Services, request: AgentRequest) -> AgentResult:
             card = card.model_copy(update={"body": f"{card.body}\n교훈: {lesson.text}"})
 
     decision = await svc.gate.execute(
-        "memory_write_card",
-        {"card_id": card.card_id, "summary": card.title, "confidence": card.confidence},
-        with_key(request.meta, "memory_write_card"),
+        "memory.card_write",
+        {
+            "card_id": card.card_id,
+            "summary": card.title,
+            "confidence": card.confidence,
+            "target": card.card_id,
+        },
+        with_key(request.meta, f"memory.card_write:{card.card_id}"),
         evidence,
     )
     if decision.status != "executed":
@@ -136,9 +143,14 @@ async def record_case(svc: Services, request: AgentRequest) -> AgentResult:
     superseded: list[str] = []
     for old_id in await find_superseded(card, svc.memory):
         link_decision = await svc.gate.execute(
-            "memory_write_card",
-            {"card_id": old_id, "summary": f"{old_id} 대체", "op": "supersede"},
-            with_key(request.meta, f"supersede:{old_id}"),
+            "memory.card_link",
+            {
+                "card_id": old_id,
+                "summary": f"{old_id} 대체",
+                "op": "supersede",
+                "target": f"{old_id}>{card.card_id}",
+            },
+            with_key(request.meta, f"memory.card_link:{old_id}>{card.card_id}"),
             evidence,
         )
         if link_decision.status == "executed":

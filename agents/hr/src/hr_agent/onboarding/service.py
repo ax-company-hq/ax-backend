@@ -20,10 +20,10 @@ from hr_agent.clients.memory import card_state
 from hr_agent.handover import store as hstore
 from hr_agent.results import (
     completed,
-    failed,
     gate_blocked,
     invalid_input,
     make_evidence,
+    refused,
     with_key,
 )
 from hr_agent.roster import store as roster
@@ -91,13 +91,13 @@ async def start_onboarding(svc: Services, request: AgentRequest) -> AgentResult:
     if not params.member_id.strip():
         return invalid_input(request, "member_id가 비어 있다")
     if params.area not in roster.list_areas(svc.store):
-        return failed(request, "UNKNOWN_AREA", f"알 수 없는 영역: {params.area}")
+        return refused(request, "UNKNOWN_AREA", f"알 수 없는 영역: {params.area}")
 
     handover = None
     if params.handover_id:
         handover = hstore.get(svc.store, params.handover_id)
         if handover is None:
-            return failed(request, "UNKNOWN_HANDOVER", "없는 인수인계다")
+            return refused(request, "UNKNOWN_HANDOVER", "없는 인수인계다")
         if handover["area"] != params.area:
             return invalid_input(request, "인수인계의 영역과 온보딩 영역이 다르다")
 
@@ -123,8 +123,8 @@ async def start_onboarding(svc: Services, request: AgentRequest) -> AgentResult:
     )
     decision = await svc.gate.execute(
         "start_onboarding",
-        {"onboarding_id": onboarding_id, "summary": summary},
-        with_key(request.meta, "start_onboarding"),
+        {"onboarding_id": onboarding_id, "summary": summary, "target": onboarding_id},
+        with_key(request.meta, f"start_onboarding:{onboarding_id}"),
         make_evidence(svc.clock, summary, refs),
     )
     if decision.status != "executed":

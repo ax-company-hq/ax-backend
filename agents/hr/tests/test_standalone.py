@@ -21,7 +21,7 @@ REPO = Path(__file__).resolve().parents[3]
 
 # 상태를 바꾸는 skill과, 관문(execute)에 올리는 액션 이름
 STATE_CHANGING = {
-    "record_case": "memory_write_card",
+    "record_case": "memory.card_write",
     "start_handover": "start_handover",
     "answer_handover_question": "answer_handover_question",
     "confirm_handover": "confirm_handover_incomplete",
@@ -278,7 +278,7 @@ def test_state_changes_go_through_the_gate_and_reads_do_not(svc, client: TestCli
     )
     actions = {a for a, _ in svc.gate.calls}
     assert {
-        "memory_write_card",
+        "memory.card_write",
         "start_handover",
         "confirm_handover_incomplete",
         "start_onboarding",

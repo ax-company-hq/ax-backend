@@ -82,7 +82,7 @@ def test_same_request_twice_is_one_change(svc, client) -> None:
 def test_overlapping_change_on_the_same_area_is_locked(svc, client) -> None:
     _request(client, "transfer", "emp_01", "payment", ctx="ctx_asg_0001")
     other = _request(client, "shift", "emp_02", "payment", ctx="ctx_asg_0002")
-    assert (other["status"], other["outcome"]) == ("failed", "LOCKED")
+    assert (other["status"], other["outcome"]) == ("completed", "LOCKED")
 
 
 def test_transfer_confirm_moves_the_owner_without_a_gap(svc, client) -> None:
@@ -180,7 +180,7 @@ def test_offboarding_is_blocked_if_it_would_empty_another_area(svc, client) -> N
     res = client.post(
         "/a2a", json=_body("confirm_offboarding", {"change_id": change}, "off")
     ).json()
-    assert (res["status"], res["outcome"]) == ("failed", "COVERAGE_GAP")
+    assert (res["status"], res["outcome"]) == ("completed", "COVERAGE_GAP")
     assert svc.store.one("SELECT active FROM members WHERE member_id = 'emp_08'")["active"] == 1
 
 
@@ -215,6 +215,6 @@ def test_verifier_rejects_a_plan_that_leaves_a_gap_and_nothing_changes(
     res = _confirm(client, change, "emp_02")
     out = ConfirmReassignmentOutput.model_validate(res["output"])
     assert (out.status, out.gap_areas) == ("rejected", ["payment"])
-    assert ("confirm_reassignment", "rejected") in svc.gate.calls
+    assert "confirm_reassignment" not in [a for a, _ in svc.gate.calls]  # 관문 앞에서 막았다
     assert [(e.area, e.role, e.member_id) for e in roster.entries(svc.store)] == before
     assert svc.store.one("SELECT status FROM assignment_changes")["status"] == "requested"

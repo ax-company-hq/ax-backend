@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from pydantic import ValidationError
 
@@ -25,7 +25,7 @@ from ax_contracts.schemas import (
     SimilarCard,
 )
 from hr_agent.clients.memory import CardHit, card_state
-from hr_agent.results import completed, failed, invalid_input, make_evidence
+from hr_agent.results import completed, invalid_input, make_evidence, refused
 from hr_agent.roster import store as roster
 from hr_agent.services import Services
 from hr_agent.util import overlap, similarity
@@ -38,10 +38,10 @@ def _decided_at(card: Card) -> datetime:
     raw = card.extra.get("decided_at")
     if isinstance(raw, str):
         try:
-            return datetime.fromisoformat(raw)
+            return datetime.fromisoformat(raw).astimezone(UTC)
         except ValueError:
             pass
-    return card.created_at
+    return card.created_at.astimezone(UTC)
 
 
 def _score(card: Card, draft_text: str) -> float:
@@ -70,14 +70,14 @@ async def check_plan(svc: Services, request: AgentRequest) -> AgentResult:
         return invalid_input(request, exc)
     draft = params.draft
     if draft.area not in roster.list_areas(svc.store):
-        return failed(request, "UNKNOWN_AREA", f"알 수 없는 영역: {draft.area}")
+        return refused(request, "UNKNOWN_AREA", f"알 수 없는 영역: {draft.area}")
     if not draft.title.strip():
         return invalid_input(request, "계획 제목이 비어 있다")
 
     now = svc.clock()
     draft_text = f"{draft.title} {draft.summary}"
     found = await svc.memory.search_cards(
-        draft_text, area=draft.area, states=["active", "candidate"], limit=20
+        draft_text, area=draft.area, states=["active", "candidate"], limit=500
     )
     rescored = [CardHit(h.card, _score(h.card, draft_text)) for h in found]
     hits: list[CardHit] = sorted(
@@ -92,23 +92,18 @@ async def check_plan(svc: Services, request: AgentRequest) -> AgentResult:
 
     findings: list[PlanFinding] = []
     computed = CheckPlanComputed()
-    fallback = False
     for hit in firm:
         card = hit.card
         if _is_rejected(card):
-            days = max(0, (now.date() - _decided_at(card).date()).days)
+            days = max(0, (now.astimezone(UTC).date() - _decided_at(card).date()).days)
             reason = card.extra.get("reason") or "기록에 없음"
-            facts = {"card": card.title, "days": days, "reason": reason}
-            template = f"이미 기각된 안과 비슷하다: {card.title} ({days}일 전 기각, 이유: {reason})"
-            sentence = await svc.narrator.sentence(
-                "기각된 안과 비슷하다는 경고", facts, template, untrusted=dict(request.untrusted)
-            )
-            fallback = fallback or sentence.fallback
+            # 경고 문장은 고정 문장이다: 경과 일수 같은 숫자를 LLM 문장에 맡기지 않는다
+            message = f"이미 기각된 안과 비슷하다: {card.title} ({days}일 전 기각, 이유: {reason})"
             findings.append(
                 PlanFinding(
                     code="REJECTED_BEFORE",
                     level="warn",
-                    message=sentence.text,
+                    message=message,
                     card_ids=[card.card_id],
                 )
             )
@@ -162,5 +157,4 @@ async def check_plan(svc: Services, request: AgentRequest) -> AgentResult:
         output,
         outcome=verdict,
         evidence=make_evidence(svc.clock, summary, refs),
-        fallback=fallback,
     )

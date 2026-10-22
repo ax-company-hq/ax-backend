@@ -89,8 +89,14 @@ def _body(record: RecordCase, info: DecisionInfo) -> str:
 
 
 def build_card(
-    record: RecordCase, info: DecisionInfo, now: datetime, auto_confirm: str = "high"
+    record: RecordCase,
+    info: DecisionInfo,
+    now: datetime,
+    auto_confirm: str = "high",
+    author: str | None = None,
 ) -> Card:
+    """`author`는 토큰으로 확인한 요청자다. 없으면 요청 본문의 값을 쓴다(목·단위 테스트)."""
+    who = author or record.author
     confidence = confidence_of(record, info)
     candidate = is_candidate(confidence, auto_confirm)
     area = area_of(record)
@@ -113,12 +119,12 @@ def build_card(
         tags=tags,
         status="active",
         source_refs=record.source_refs,
-        author=record.author,
+        author=who,
         confidence=confidence,
         created_at=now,
         extra={
             "area": area,
-            "owner": record.author,
+            "owner": who,
             "decision": info.decision,
             "reason": info.reason,
             "alternatives_rejected": info.alternatives,
