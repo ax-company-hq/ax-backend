@@ -13,12 +13,16 @@ CI에서는 `MockLLMClient`만 쓴다. 실제 호출은 서버 PC의 시나리�
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
+import httpx
 from pydantic import BaseModel
 
 from ax_agent_template.config import env_prefix
@@ -38,6 +42,7 @@ class LLMSettings:
     model: str | None = None
     base_url: str | None = None
     api_key: str | None = None
+    embed_model: str | None = None
 
     @classmethod
     def from_env(cls, dept: str, env: Mapping[str, str] | None = None) -> LLMSettings:
@@ -50,7 +55,13 @@ class LLMSettings:
                 source.get(f"{prefix}_LLM_{field_name}") or source.get(f"LLM_{field_name}") or None
             )
 
-        return cls(model=pick("MODEL"), base_url=pick("BASE_URL"), api_key=pick("API_KEY"))
+        embed_model = source.get(f"{prefix}_EMBED_MODEL") or source.get("EMBED_MODEL") or None
+        return cls(
+            model=pick("MODEL"),
+            base_url=pick("BASE_URL"),
+            api_key=pick("API_KEY"),
+            embed_model=embed_model,
+        )
 
 
 def format_prompt(prompt: str, untrusted: dict[str, Any] | None = None) -> str:
@@ -88,6 +99,48 @@ class LLMClient:
         format_prompt(prompt, untrusted)
         raise NotImplementedError("TODO: OpenAI 호환 API 호출과 스키마 검증·재요청")
 
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        """OpenAI 호환 `/embeddings`로 텍스트별 벡터를 돌려준다. 입력 순서를 유지한다.
+
+        모델은 `<부서>_EMBED_MODEL`(없으면 `EMBED_MODEL`), 엔드포인트·키는 LLM 설정을 쓴다.
+        """
+        if not self.settings.embed_model:
+            raise LLMNotConfiguredError(
+                f"{env_prefix(self.dept)}_EMBED_MODEL 또는 EMBED_MODEL이 없다"
+            )
+        if not self.settings.base_url:
+            raise LLMNotConfiguredError(f"{env_prefix(self.dept)}_LLM_BASE_URL 또는 LLM_BASE_URL이 없다")
+        if not texts:
+            return []
+        headers = {"Authorization": f"Bearer {self.settings.api_key}"} if self.settings.api_key else {}
+        url = self.settings.base_url.rstrip("/") + "/embeddings"
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            response = await http.post(
+                url, json={"model": self.settings.embed_model, "input": texts}, headers=headers
+            )
+            response.raise_for_status()
+        items = sorted(response.json()["data"], key=lambda item: item["index"])
+        vectors = [[float(x) for x in item["embedding"]] for item in items]
+        if len(vectors) != len(texts):
+            raise ValueError(f"임베딩 개수가 입력과 다르다: {len(vectors)} != {len(texts)}")
+        return vectors
+
+
+MOCK_EMBED_DIM = 64
+
+
+def _mock_embedding(text: str) -> list[float]:
+    """토큰을 sha256으로 버킷에 넣어 세고 L2 정규화한다. 같은 텍스트는 항상 같은 벡터다."""
+    vector = [0.0] * MOCK_EMBED_DIM
+    for token in re.findall(r"\w+", text.lower()):
+        digest = hashlib.sha256(token.encode("utf-8")).digest()
+        vector[int.from_bytes(digest[:4], "big") % MOCK_EMBED_DIM] += 1.0
+    norm = math.sqrt(sum(x * x for x in vector))
+    if norm == 0:
+        vector[0] = 1.0
+        return vector
+    return [x / norm for x in vector]
+
 
 @dataclass
 class MockLLMClient(LLMClient):
@@ -112,3 +165,7 @@ class MockLLMClient(LLMClient):
         if schema not in self.responses:
             raise KeyError(f"MockLLMClient에 {schema.__name__} 응답이 등록되지 않았다")
         return self.responses[schema]  # type: ignore[return-value]
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        """네트워크 없이 토큰 해시 bag-of-words로 만든 `MOCK_EMBED_DIM`차원 정규화 벡터."""
+        return [_mock_embedding(text) for text in texts]
