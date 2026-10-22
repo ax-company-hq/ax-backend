@@ -98,6 +98,16 @@
       "allowed_requesters": ["dashboard-api", "orchestrator"],
       "verifier": null,
       "priority": "required"
+    },
+    {
+      "id": "request_compensation",
+      "description": "보상 단가·대상을 코드 정책표로 판정해 마케팅 issue_coupon(compensation)에 사건별 sequence로 직렬 요청한다. 지급과 execute()는 마케팅이 하고, 고객지원 자신의 상태는 바꾸지 않는다. 보상 대상이 아니면 not_eligible로 돌려준다.",
+      "input_schema": "agents/support/src/support_agent/schemas.py#RequestCompensationInput",
+      "output_schema": "agents/support/src/support_agent/schemas.py#RequestCompensationInput",
+      "grade": "A",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "required"
     }
   ]
 }
