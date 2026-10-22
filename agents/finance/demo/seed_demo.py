@@ -90,6 +90,19 @@ def main() -> None:
         }
         lines.append(f"- {title}: {json.dumps(brief or result, ensure_ascii=False)}")
 
+    # 0) 돈이 나가지 않는 일: 바로 처리
+    show(
+        "장애 안내 공지 올리기",
+        execute(
+            s,
+            "marketing",
+            "publish_notice",
+            "ntc-1",
+            {"draft_id": "drf_1", "channel_code": "banner"},
+        ),
+    )
+    show("장애 기록 남기기", execute(s, "hr", "memory.card_write", "card-1", {"kind": "incident"}))
+
     # 1) 장애 보상 쿠폰 (마케팅 → 안전 레이어 → 재무가 다시 계산)
     for buyer in ("buy_d4", "buy_e5", "buy_f6"):
         show(
