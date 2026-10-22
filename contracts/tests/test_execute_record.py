@@ -84,6 +84,7 @@ def test_record_case_example_and_kinds() -> None:
         "pr_merged",
         "decision_extracted",
         "request_closed",
+        "decision_rejected",
     }
 
 

@@ -57,3 +57,45 @@ class VerifyRollbackTargetOutput(AxModel):
     approved: bool
     reason_code: Literal["deploy_before_incident", "no_deploy_in_window", "deploy_after_incident"]
     related_prs: list[RelatedPr] = Field(default_factory=list)
+
+
+# ---- hr 연동 (이슈 #10 이후, 인사 구성안 HR2 연동 ④·인수인계 검증)
+#
+# - `list_in_progress`: hr → planning, 읽기. 담당자·영역의 진행 중 배포·미완료 티켓·열린 PR을
+#   돌려준다(인수인계 초안의 "진행 중 항목"). 공지된 제약은 1차에서 뺐다.
+# - `verify_handover`: hr `confirm_handover`(B)의 검증 skill. 인계 목록에 진행 중 항목이
+#   빠짐없이 있는지 사실만 확인한다(내용 판단은 하지 않는다).
+
+
+class InProgressItem(AxModel):
+    item_id: str
+    kind: Literal["deployment", "ticket", "pr"]
+    title: str
+    status: str
+    owner_id: str
+    area: str | None = None
+    updated_at: UtcDatetime | None = None
+
+
+class ListInProgressInput(AxModel):
+    owner_id: str
+    area: str | None = None
+
+
+class ListInProgressOutput(AxModel):
+    items: list[InProgressItem] = Field(default_factory=list)
+    collected_at: UtcDatetime  # 조회 시각 (근거)
+
+
+class VerifyHandoverInput(AxModel):
+    handover_id: str
+    owner_id: str
+    area: str | None = None
+    handover_item_ids: list[str] = Field(default_factory=list)  # 인계 목록에 적힌 항목 ID
+
+
+class VerifyHandoverOutput(AxModel):
+    approved: bool
+    reason_code: Literal["complete", "missing_items"]
+    missing: list[InProgressItem] = Field(default_factory=list)  # 인계 목록에 빠진 진행 중 항목
+    checked_at: UtcDatetime

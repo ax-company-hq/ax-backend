@@ -18,7 +18,8 @@ class RecordKind(StrEnum):
     """`record_case`로 보내는 기록의 종류.
 
     `rollback_executed`는 infra가, `spec_confirmed`·`pr_merged`·`decision_extracted`·
-    `request_closed`는 planning이 보낸다.
+    `request_closed`·`decision_rejected`는 planning이 보낸다. `decision_rejected`(기각한 안)는
+    hr `check_plan`이 "과거에 기각된 안"을 판정하는 재료라서 기각 이유와 검토한 대안을 함께 보낸다.
     """
 
     INCIDENT = "incident"
@@ -30,6 +31,7 @@ class RecordKind(StrEnum):
     PR_MERGED = "pr_merged"
     DECISION_EXTRACTED = "decision_extracted"
     REQUEST_CLOSED = "request_closed"
+    DECISION_REJECTED = "decision_rejected"
 
 
 class RecordCase(AxModel):
