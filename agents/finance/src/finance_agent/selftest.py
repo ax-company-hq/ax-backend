@@ -1,6 +1,7 @@
 """재무 AI 자체 점검 (대시보드 "재무 AI 테스트" 버튼).
 
-담당자가 아침마다 눌러서 재무 AI가 제대로 판단하고, 안전 장치·원천 데이터와 연결돼 있는지 본다.
+담당자가 아침마다 눌러서 재무 AI가 제대로 판단하고, 안전 장치·원천 데이터·캣북스와
+연결돼 있는지 본다.
 
 - 판단 점검은 **테스트 전용 가짜 자료**(`SELFTEST_SOURCES`)로 돌린다. 실제 판정 기록, 환불 누적,
   AI 판단 기록에는 아무것도 남기지 않는다. 숫자는 실제 판단과 같은 코드가 계산한다.
@@ -20,6 +21,7 @@ import httpx
 
 from ax_agent_template.config import agent_url
 from ax_contracts.schemas import AgentRequest, RequestMeta
+from finance_agent.catbooks import catbooks_url
 from finance_agent.review import ReviewPolicy, decide
 from finance_agent.schemas import ReviewHoldInput, VerifyAmountInput
 from finance_agent.sources import MockSources
@@ -297,6 +299,18 @@ async def _connection_checks(client: httpx.AsyncClient) -> list[Check]:
                 level="warn",
             )
         )
+
+    status, _ = await _get_json(client, f"{catbooks_url()}/api/health")
+    checks.append(
+        Check(
+            "캣북스 연결",
+            status == 200,
+            "캣북스 쇼핑몰이 응답함"
+            if status == 200
+            else "캣북스에 닿지 않음. 캣북스 환불·교환 건을 새로 가져오지 못합니다",
+            level="warn",
+        )
+    )
     return checks
 
 

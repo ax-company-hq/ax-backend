@@ -27,6 +27,7 @@ THRESHOLDS = {"auto_review": {"enabled": True, "reviewer": "finance"}}
 @pytest.fixture(autouse=True)
 def _mock_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_TEMPLATE_MOCK", "1")
+    monkeypatch.setenv("FINANCE_CATBOOKS_URL", "http://catbooks")
     events.reset_mock_bus()
     handlers.reset_state(MockSources())
 
@@ -53,7 +54,7 @@ async def _run(client: httpx.AsyncClient) -> dict[str, Any]:
 
 @pytest.mark.asyncio
 async def test_all_green_when_everything_is_up() -> None:
-    result = await _run(_network({"safety", "shop-api", "data"}))
+    result = await _run(_network({"safety", "shop-api", "data", "catbooks"}))
     assert result["result"] == "pass", [c for c in result["checks"] if not c["ok"]]
     assert result["passed"] == result["total"] >= 14
     names = {c["name"] for c in result["checks"]}
@@ -65,12 +66,20 @@ async def test_missing_data_sources_only_warn() -> None:
     result = await _run(_network({"safety"}))
     assert result["result"] == "warn"
     bad = {c["name"]: c["level"] for c in result["checks"] if not c["ok"]}
-    assert bad == {"쇼핑몰 연결": "warn", "데이터 AI 연결": "warn"}
+    assert bad == {"쇼핑몰 연결": "warn", "데이터 AI 연결": "warn", "캣북스 연결": "warn"}
+
+
+@pytest.mark.asyncio
+async def test_catbooks_down_only_warns() -> None:
+    result = await _run(_network({"safety", "shop-api", "data"}))
+    assert result["result"] == "warn"
+    bad = [(c["name"], c["level"]) for c in result["checks"] if not c["ok"]]
+    assert bad == [("캣북스 연결", "warn")]
 
 
 @pytest.mark.asyncio
 async def test_safety_down_fails() -> None:
-    result = await _run(_network({"shop-api", "data"}))
+    result = await _run(_network({"shop-api", "data", "catbooks"}))
     assert result["result"] == "fail"
     failed = {c["name"] for c in result["checks"] if not c["ok"] and c["level"] == "fail"}
     assert {"안전 장치 연결", "쿠폰·환불 검증을 재무 AI가 맡는지"} <= failed
@@ -85,7 +94,11 @@ async def test_wrong_routing_and_auto_review_off_are_reported() -> None:
         ]
     }
     result = await _run(
-        _network({"safety", "shop-api", "data"}, registry, {"auto_review": {"enabled": False}})
+        _network(
+            {"safety", "shop-api", "data", "catbooks"},
+            registry,
+            {"auto_review": {"enabled": False}},
+        )
     )
     by = {c["name"]: c for c in result["checks"]}
     assert not by["쿠폰·환불 검증을 재무 AI가 맡는지"]["ok"]
@@ -102,7 +115,9 @@ async def test_broken_judgement_is_caught(monkeypatch: pytest.MonkeyPatch) -> No
         return VerifyAmountOutput(decision="approved", reason_code="recomputed_match")
 
     result = await selftest.run_self_test(
-        always_approve, load_policy(), http_client=_network({"safety", "shop-api", "data"})
+        always_approve,
+        load_policy(),
+        http_client=_network({"safety", "shop-api", "data", "catbooks"}),
     )
     failed = {c["name"] for c in result["checks"] if not c["ok"]}
     assert "금액을 틀리게 적은 쿠폰 막기" in failed and "결제보다 큰 환불 막기" in failed
@@ -111,7 +126,7 @@ async def test_broken_judgement_is_caught(monkeypatch: pytest.MonkeyPatch) -> No
 
 @pytest.mark.asyncio
 async def test_self_test_leaves_no_trace_in_real_records() -> None:
-    await _run(_network({"safety", "shop-api", "data"}))
+    await _run(_network({"safety", "shop-api", "data", "catbooks"}))
     ledger = handlers.state().ledger
     assert ledger.verify_log == [] and ledger.ai_reviews == [] and ledger.refunds == {}
 
