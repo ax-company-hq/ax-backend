@@ -8,6 +8,8 @@ from __future__ import annotations
 from typing import Any
 
 from hr_agent.clients.memory import card_state
+from hr_agent.handover import store as hstore
+from hr_agent.handover.fields import FIELD_LABEL, FIELDS
 from hr_agent.roster import store as roster
 from hr_agent.roster.gaps import compute_gaps
 from hr_agent.roster.service import roster_entries
@@ -25,9 +27,40 @@ async def card_rows(svc: Services) -> list[dict[str, Any]]:
 
 async def snapshot(svc: Services) -> dict[str, Any]:
     holds = svc.gate.list_holds() if hasattr(svc.gate, "list_holds") else []
+    handovers = []
+    for row in hstore.all_handovers(svc.store):
+        hid = row["handover_id"]
+        handovers.append(
+            {
+                **row,
+                "items": [i.model_dump(mode="json") for i in hstore.items(svc.store, hid)],
+                "fields": [
+                    {"field": f, "label": FIELD_LABEL[f], **hstore.fields(svc.store, hid)[f]}
+                    for f, _ in FIELDS
+                ],
+                "questions": svc.store.all(
+                    "SELECT question_id, question, gap_field, status, answer FROM"
+                    " handover_questions WHERE handover_id = ? ORDER BY rowid",
+                    (hid,),
+                ),
+            }
+        )
+    onboardings = []
+    for row in svc.store.all("SELECT * FROM onboardings ORDER BY created_at, onboarding_id"):
+        steps = svc.store.all(
+            "SELECT step_id, step_order, title, card_id, done FROM onboarding_steps"
+            " WHERE onboarding_id = ? ORDER BY step_order",
+            (row["onboarding_id"],),
+        )
+        done = sum(1 for s in steps if s["done"])
+        onboardings.append(
+            {**row, "steps": steps, "progress": round(100 * done / len(steps)) if steps else 0}
+        )
     gaps = compute_gaps(svc.store, svc.clock())
     return {
         "clock": svc.clock().isoformat(),
+        "handovers": handovers,
+        "onboardings": onboardings,
         "roster": [e.model_dump(mode="json") for e in roster_entries(svc)],
         "roster_gaps": {
             "no_owner": gaps.no_owner_areas,

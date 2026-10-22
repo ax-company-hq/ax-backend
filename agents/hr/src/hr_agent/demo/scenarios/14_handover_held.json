@@ -1,0 +1,31 @@
+{
+  "title": "인수인계: 완성도 미달은 보류 큐로",
+  "description": "검색 영역 담당 emp_03의 초안을 답 없이 확정 요청하면 완성도가 기준(80%) 미만이라 보류(C)된다. 사람이 승인하면 같은 요청이 확정된다.",
+  "steps": [
+    {
+      "skill": "start_handover",
+      "requester": "orchestrator",
+      "input": {"owner_id": "emp_03", "successor_id": "emp_04"},
+      "expect": {"status": "input-required", "output": {"completeness": 40}}
+    },
+    {
+      "skill": "confirm_handover",
+      "requester": "dashboard-api",
+      "input": {"handover_id": "${step1.output.handover_id}"},
+      "key": "ctx_demo:confirm_handover:held",
+      "expect": {"status": "completed", "outcome": "held", "output": {"status": "held"}, "output_has": ["hold_id"]}
+    },
+    {
+      "action": "decide_hold",
+      "review_id": "${step2.output.hold_id}",
+      "approved": true
+    },
+    {
+      "skill": "confirm_handover",
+      "requester": "dashboard-api",
+      "input": {"handover_id": "${step1.output.handover_id}"},
+      "key": "ctx_demo:confirm_handover:held",
+      "expect": {"status": "completed", "outcome": "confirmed", "output": {"status": "confirmed"}}
+    }
+  ]
+}

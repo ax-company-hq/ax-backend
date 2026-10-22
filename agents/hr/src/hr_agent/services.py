@@ -82,6 +82,9 @@ def build_services(
         audit=AuditLog(store, clock),
         idem=IdempotencyStore(store, clock),
     )
+    from hr_agent.handover.service import register_verifiers
+
+    register_verifiers(services)
     if seed and settings.mock:
         from hr_agent.roster.seed import seed_roster
 

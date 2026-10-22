@@ -98,6 +98,8 @@ const TABS = [
   {id: 'scenarios', label: '시나리오', render: renderScenarios},
   {id: 'cards', label: '카드 덱', render: renderCards},
   {id: 'roster', label: '명부', render: renderRoster},
+  {id: 'handover', label: '인수인계', render: renderHandover},
+  {id: 'onboarding', label: '온보딩', render: renderOnboarding},
 ];
 function renderTabs() {
   const nav = $('tabs'); nav.replaceChildren();
@@ -245,6 +247,71 @@ function renderRoster(root) {
     root.append(card);
   });
   if (S.lastCall && S.lastCall.result && S.lastCall.result.output && S.lastCall.result.output.entries) root.append(resultBadges(S.lastCall.result), jsonBox('결과 원문', S.lastCall.result));
+}
+
+/* ---------- 보류 큐 조각(여러 탭에서 공용) ---------- */
+function holdsView(actionPrefix) {
+  const holds = ((S.snap && S.snap.holds) || []).filter((h) => !actionPrefix || h.action.startsWith(actionPrefix));
+  const box = el('div');
+  if (!holds.length) return box;
+  box.append(el('h3', {}, `보류 큐 ${holds.length}건`));
+  holds.forEach((h) => {
+    const c = el('div', {class: 'card'}, el('div', {class: 'badges'}, badge(h.action), badge(h.status, h.status === 'pending' ? 'warn' : h.status === 'executed' ? 'ok' : 'bad'), badge(h.hold_reason || '')), el('div', {}, h.summary), el('div', {class: 'muted'}, `${h.review_id} · ${h.created_at.replace('T', ' ').slice(5, 16)}`));
+    if (h.status === 'pending') {
+      const decide = (approved) => async () => { S.snap = await api(`/api/holds/${h.review_id}/decide`, {approved}); render(); };
+      c.append(el('div', {class: 'row'}, el('button', {onclick: decide(true)}, '승인'), el('button', {class: 'ghost', onclick: decide(false)}, '거절')));
+    }
+    box.append(c);
+  });
+  return box;
+}
+async function send(skill, requester, input, ctx, key) {
+  const res = await api('/api/call', {skill, requester, input, context_id: ctx, idempotency_key: key});
+  S.lastCall = res; S.snap = res.state; render();
+}
+
+/* ---------- 인수인계 탭 ---------- */
+function renderHandover(root) {
+  const area = (S.snap && S.snap.areas) || [];
+  const owner = el('input', {value: 'emp_01'}); const succ = el('input', {value: 'emp_02'});
+  const ctx = el('input', {value: 'ctx_hnd_0001'});
+  root.append(el('h3', {}, '인수인계 시작 (start_handover)'),
+    el('div', {class: 'form'}, el('div', {}, el('label', {}, '인계자'), owner), el('div', {}, el('label', {}, '후임'), succ), el('div', {}, el('label', {}, '사건 번호'), ctx)),
+    el('div', {class: 'row'}, el('button', {onclick: () => send('start_handover', 'orchestrator', {owner_id: owner.value, successor_id: succ.value || null}, ctx.value, `${ctx.value}:start:${owner.value}`)}, '초안 만들기'), el('span', {class: 'muted'}, '인계자: emp_01(payment)·emp_03(search)·emp_05(catalog)·emp_06·emp_08')));
+  if (S.lastCall && S.lastCall.request && S.lastCall.request.skill && ['start_handover', 'answer_handover_question', 'confirm_handover'].includes(S.lastCall.request.skill)) root.append(resultBadges(S.lastCall.result), jsonBox('결과 원문', S.lastCall.result));
+  const list = (S.snap && S.snap.handovers) || [];
+  if (!list.length) root.append(el('div', {class: 'empty'}, '아직 인수인계가 없어요. 위에서 초안을 만들어 보세요.'));
+  list.forEach((h) => {
+    const c = el('div', {class: 'card'});
+    c.append(el('div', {class: 'badges'}, badge(h.status, h.status === 'confirmed' ? 'ok' : h.status === 'ready' ? 'ok' : 'warn'), badge(`완성도 ${h.completeness}%`, h.completeness >= 80 ? 'ok' : 'warn'), badge(h.area), badge(`${h.owner_id} → ${h.successor_id || '후임 미정'}`)),
+      el('div', {class: 'muted'}, h.handover_id));
+    h.fields.forEach((f) => c.append(el('div', {}, badge(f.filled ? '채움' : '비어 있음', f.filled ? 'ok' : 'bad'), ' ', f.label, f.answer ? el('span', {class: 'muted'}, '  — ' + f.answer) : (f.filled ? el('span', {class: 'muted'}, '  — 자동 수집') : null))));
+    if (h.items.length) c.append(el('div', {class: 'muted'}, '인계 목록: ' + h.items.map((i) => `${i.item_id}(${i.title})`).join(', ')));
+    h.questions.filter((q) => q.status === 'open').forEach((q) => {
+      const ans = el('input', {placeholder: '답변'});
+      c.append(el('div', {class: 'notice'}, q.question, el('div', {class: 'row'}, ans, el('button', {class: 'small', onclick: () => send('answer_handover_question', 'dashboard-api', {question_id: q.question_id, answer: ans.value}, h.context_id, `${h.context_id}:ans:${q.question_id}`)}, '답변 보내기'))));
+    });
+    if (h.status !== 'confirmed') c.append(el('div', {class: 'row'}, el('button', {onclick: () => send('confirm_handover', 'dashboard-api', {handover_id: h.handover_id}, h.context_id, `${h.context_id}:confirm:${h.handover_id}`)}, '확정 요청'), el('span', {class: 'muted'}, '완성도 80% 미만이면 보류 큐로 갑니다.')));
+    root.append(c);
+  });
+  root.append(holdsView('confirm_handover'));
+}
+
+/* ---------- 온보딩 탭 ---------- */
+function renderOnboarding(root) {
+  const member = el('input', {value: 'emp_10'}); const area = el('input', {value: 'payment'}); const ctx = el('input', {value: 'ctx_onb_0001'});
+  const hid = el('input', {placeholder: '인수인계 ID (선택)'});
+  root.append(el('h3', {}, '온보딩 시작 (start_onboarding)'),
+    el('div', {class: 'form'}, el('div', {}, el('label', {}, '새 담당자'), member), el('div', {}, el('label', {}, '영역'), area), el('div', {}, el('label', {}, '사건 번호'), ctx), el('div', {}, el('label', {}, '인수인계 ID'), hid)),
+    el('div', {class: 'row'}, el('button', {onclick: () => send('start_onboarding', 'orchestrator', {member_id: member.value, area: area.value, handover_id: hid.value || null}, ctx.value, `${ctx.value}:onb:${member.value}:${area.value}`)}, '온보딩 만들기')));
+  if (S.lastCall && S.lastCall.request && S.lastCall.request.skill === 'start_onboarding') root.append(resultBadges(S.lastCall.result), jsonBox('결과 원문', S.lastCall.result));
+  const list = (S.snap && S.snap.onboardings) || [];
+  if (!list.length) root.append(el('div', {class: 'empty'}, '아직 온보딩이 없어요.'));
+  list.forEach((o) => {
+    const c = el('div', {class: 'card'}, el('div', {class: 'badges'}, badge(`진행률 ${o.progress}%`, o.progress === 100 ? 'ok' : 'warn'), badge(o.area), badge(o.member_id)), el('div', {class: 'muted'}, o.onboarding_id));
+    o.steps.forEach((s) => c.append(el('div', {}, badge(s.done ? '완료' : '대기', s.done ? 'ok' : ''), ` ${s.step_order}. ${s.title}`, s.card_id ? el('span', {class: 'muted'}, '  ' + s.card_id) : null)));
+    root.append(c);
+  });
 }
 
 /* ---------- 시작 ---------- */
