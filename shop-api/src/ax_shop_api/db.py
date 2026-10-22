@@ -48,6 +48,18 @@ CREATE TABLE IF NOT EXISTS outbox_events (
   context_id TEXT, created_at TEXT NOT NULL, sent_at TEXT
 );
 CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS banners (
+  notice_id TEXT PRIMARY KEY, text TEXT NOT NULL, status TEXT NOT NULL,
+  valid_from TEXT, valid_to TEXT, tenant_id TEXT NOT NULL, context_id TEXT,
+  created_at TEXT NOT NULL, ended_at TEXT
+);
+CREATE TABLE IF NOT EXISTS coupons (
+  coupon_id TEXT PRIMARY KEY, buyer_id TEXT NOT NULL REFERENCES buyers(buyer_id),
+  purpose_code TEXT NOT NULL, campaign_id TEXT, count INTEGER NOT NULL CHECK (count > 0),
+  unit_value INTEGER NOT NULL CHECK (unit_value > 0), total_value INTEGER NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE, tenant_id TEXT NOT NULL, context_id TEXT,
+  created_at TEXT NOT NULL
+);
 """
 
 TENANT_ID = TENANT_ID_DEFAULT
