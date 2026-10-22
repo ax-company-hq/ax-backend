@@ -46,7 +46,7 @@
 
 ## 5. 상태 전이
 - 인수인계: `draft → input_required → ready → confirmed`, 보류되면 `held`.
-- 변경(발령·교대·입사): `requested → confirmed`. 퇴직은 `requested → confirmed(재배치 끝) → offboarded | cancelled`. 취소된 퇴직은 같은 요청을 다시 보내면 `confirmed`로 다시 열린다.
+- 변경(발령·교대·입사): `requested → confirmed`. 퇴직은 `requested → confirmed(재배치 끝) → offboarded | cancelled`. 취소된 퇴직은 같은 요청을 다시 보내면 (관문을 거쳐) `confirmed`로 다시 열린다. 어느 단계든 `HR_LOCK_TTL_MIN`이 지나도록 방치되면 `expired`로 닫히고 더 확정할 수 없다.
 - 잠금: 같은 사람·같은 영역의 변경이 끝나기 전에는 다른 변경이 `LOCKED`. 퇴직은 `offboarded`/`cancelled`에서 풀린다.
 
 ## 6. 장애 대응
@@ -58,6 +58,9 @@
 | `LOCKED` | 같은 대상의 다른 변경 진행 중 | 먼저 변경을 끝내거나 `HR_LOCK_TTL_MIN`이 지나길 기다린다 |
 | `CONFLICT` | 같은 사건에서 후임·답변이 다른 요청 | 새 사건(`context_id`)으로 다시 요청 |
 | `COVERAGE_GAP` | 퇴직하면 담당이 비는 영역이 있음 | 그 영역의 후임을 먼저 정한다 |
+| `GATE_UNAVAILABLE` | 안전 레이어가 판정하지 못함(무응답 등). 사람이 거절한 것과 구분된다 | 아무것도 바뀌지 않았다. safety가 살아난 뒤 같은 요청을 다시 보낸다 |
+| `LOCK_LOST`·`EXPIRED`·`BAD_STATE` | 잠금을 다른 변경이 잡았거나 방치돼 만료됨 | 새 요청(새 `context_id`)으로 다시 시작한다 |
+| `NOTHING_TO_APPLY` | 대상자가 이미 그 영역 담당이 아님 | 명부를 확인한다 |
 | 카드가 계속 후보 | 이유·대안·근거 부족 | 호출 쪽이 사실을 채워 다시 보낸다 |
 | 데모 호출이 `TIMEOUT` | 요청 마감이 지남 | 데모 러너는 실제 시각에서 30초로 잰다. 직접 요청이면 `deadline`을 확인 |
 
