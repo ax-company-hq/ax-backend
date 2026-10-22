@@ -122,6 +122,11 @@ def main() -> None:
         execute(s, "marketing", "issue_coupon", "cpn-big", coupon("buy_h8", 3, 20000)),
     )
 
+    show(
+        "한 번에 50만 원 쿠폰(재무 AI 재량 한도 45만 원도 넘음 → 사람 확인)",
+        execute(s, "marketing", "issue_coupon", "cpn-huge", coupon("buy_i9", 25, 20000)),
+    )
+
     # 2) 환불 (고객지원 → 안전 레이어 → 재무가 결제 금액과 비교)
     show(
         "ord_1003 환불 20,000원(결제 32,000원)",
