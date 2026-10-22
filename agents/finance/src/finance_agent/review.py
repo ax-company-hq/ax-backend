@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ax_contracts.schemas import RequestMeta
 from finance_agent.schemas import ReviewHoldInput, ReviewHoldOutput
-from finance_agent.sources import Sources
+from finance_agent.sources import Sources, order_key
 
 
 class _Strict(BaseModel):
@@ -176,8 +176,11 @@ async def _refund(
     refunded_before: int,
     p: RefundPolicy,
 ) -> ReviewHoldOutput:
-    amount, order_id = _int(data.params.get("refund_amount")), data.params.get("order_id")
-    if not amount or not isinstance(order_id, str):
+    amount, order_id = (
+        _int(data.params.get("refund_amount")),
+        order_key(data.params.get("order_id")),
+    )
+    if not amount or order_id is None:
         return _out("reject", "invalid_params", "환불 금액이나 주문 번호가 잘못되어 거절합니다.")
     if amount > p.max_amount:
         return _out(

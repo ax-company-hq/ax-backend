@@ -44,7 +44,7 @@ from finance_agent.schemas import (
     VerifyAmountInput,
     VerifyAmountOutput,
 )
-from finance_agent.sources import LiveSources, MockSources, Sources
+from finance_agent.sources import LiveSources, MockSources, Sources, order_key
 
 CLAIMED_TOTAL_FIELDS = ("total_value", "claimed_total")
 
@@ -139,8 +139,8 @@ async def on_event(envelope: EventEnvelope) -> None:
         row["count"] += count
         row["total"] += total
     elif envelope.type == EventType.PAYMENT_REFUNDED:
-        order_id, amount = data.get("order_id"), _positive_int(data.get("refund_amount"))
-        if isinstance(order_id, str) and amount is not None:
+        order_id, amount = order_key(data.get("order_id")), _positive_int(data.get("refund_amount"))
+        if order_id is not None and amount is not None:
             ledger.refunds[order_id] = ledger.refunds.get(order_id, 0) + amount
 
 
@@ -184,8 +184,11 @@ async def recompute(request: AgentRequest, data: VerifyAmountInput) -> VerifyAmo
         )
 
     if data.action == "refund_request":
-        amount, order_id = _positive_int(params.get("refund_amount")), params.get("order_id")
-        if amount is None or not isinstance(order_id, str):
+        amount, order_id = (
+            _positive_int(params.get("refund_amount")),
+            order_key(params.get("order_id")),
+        )
+        if amount is None or order_id is None:
             return reject("invalid_params")
         if data.computed_amount is not None and data.computed_amount != amount:
             return reject("amount_mismatch", refund_amount=amount)
@@ -434,8 +437,8 @@ async def review_hold(request: AgentRequest) -> AgentResult:
     ledger = state().ledger
     if data.review_id in ledger.reviewed:  # 같은 보류 건은 같은 판단
         return ledger.reviewed[data.review_id].model_copy(update={"meta": request.meta})
-    order_id = data.params.get("order_id")
-    refunded = ledger.refunds.get(order_id, 0) if isinstance(order_id, str) else 0
+    order_id = order_key(data.params.get("order_id"))
+    refunded = ledger.refunds.get(order_id, 0) if order_id else 0
     output = await decide(data, request.meta, state().sources, refunded, state().policy)
     result = _result(
         request,
