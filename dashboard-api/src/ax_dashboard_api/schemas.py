@@ -249,6 +249,21 @@ class QueueView(BaseModel):
     awaiting_return: list[Claim]
 
 
+class QueueRunResult(BaseModel):
+    claim_id: int
+    result: Literal["paid", "held", "skipped"]
+    blockers: list[Blocker] = Field(default_factory=list)
+    refund: int | None = None
+    compensation: int | None = None
+
+
+class QueueRun(BaseModel):
+    results: list[QueueRunResult]
+    paid: int
+    held: int
+    queue: list[QueueEntry]
+
+
 # ---------------------------------------------------------------- 문의
 class Source(BaseModel):
     id: str
@@ -411,3 +426,46 @@ class Dashboard(BaseModel):
     guard_findings: dict[str, int]
     queue: list[QueueEntry]
     inquiry_queue: list[InquiryQueueItem]
+
+
+# ---------------------------------------------------------------- 쓰기 요청
+class ConversationCreate(BaseModel):
+    user_id: int
+    subject: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+    order_id: int | None = None
+
+
+class TextBody(BaseModel):
+    text: str = Field(min_length=1)
+
+
+class AgentMessageBody(TextBody):
+    draft_style: str | None = None
+    draft_text: str | None = None
+
+
+class DraftStyleBody(BaseModel):
+    draft_style: str
+
+
+class StatusBody(BaseModel):
+    status: ConversationStatus
+
+
+class NoteBody(BaseModel):
+    note: str = ""
+
+
+class InspectionBody(BaseModel):
+    inspection: str
+    note: str | None = None
+
+
+class QueueProcessBody(BaseModel):
+    limit: int | None = Field(default=None, ge=1)
+    claim_ids: list[int] | None = None
+
+
+class ReviewStatusBody(BaseModel):
+    status: Literal["visible", "hidden"]
