@@ -266,7 +266,8 @@ class CouponIssuedData(AxModel):
 class SupportInquiryReceivedData(AxModel):
     """`support.inquiry_received`. 고객지원이 문의 접수·후속 고객 메시지마다 발행한다.
 
-    사실 필드만 담는다. 문의 원문은 봉투의 `untrusted`로 주고, `category`·`urgency`는 분류 코드값이다.
+    사실 필드만 담는다. 문의 원문은 봉투의 `untrusted`로 주고,
+    `category`·`urgency`는 분류 코드값이다.
     `message_count`는 문의에 쌓인 고객 메시지 수이며 첫 접수는 1이다.
     `order_id`는 다른 주문 이벤트와 같은 `ord_` 문자열 ID다.
     """
