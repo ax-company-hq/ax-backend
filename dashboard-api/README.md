@@ -3,10 +3,12 @@
 ## 1. 역할
 상담원 화면(ax-frontend `dashboard-web`)이 쓰는 API 서버. LLM 없이 코드로만 돈다.
 - 문의·클레임·보상 큐는 support 에이전트(A2A skill), 주문·후기는 shop-api, KB는 memory, 집계는 공통 로그 저장소에서 받아 화면 형태로 돌려준다.
+- 문의(`/conversations*`)는 목 모드가 아니면 support 에이전트 skill을 A2A로 부른다 (3단계, 아래 "문의 API 연결"). 나머지는 아직 목 데이터다.
 - 현재(1~2단계)는 목 데이터로 읽기·쓰기 API를 연다. 쓰기는 목 모드에서 메모리 데이터만 바꾼다. 실제 연결 단계에서 승인·지급 계열은 support의 `execute()`를 거치도록 바꾼다.
 ## 2. 실행 방법
 `docker compose -f infra/compose.yml up dashboard-api` / 목 모드: `DASHBOARD_MOCK=1`
-목 모드가 아니면 `/api/dashboard/*`는 `503 UPSTREAM_NOT_CONNECTED`를 돌려준다.
+목 모드가 아니면 문의 경로는 support를 부르고, 클레임·보상 큐·후기·집계·고객·KB·주문 경로는 `503 UPSTREAM_NOT_CONNECTED`를 돌려준다.
+에이전트 토큰은 `DASHBOARD_API_TOKEN`, support 주소는 `AX_SUPPORT_URL`(기본 `http://support:8102`).
 ## 3. 입출력 계약
 응답은 성공 `{data, meta}`, 실패 `{error: {code, message}}`. 모델은 `schemas.py`이고 OpenAPI는 `contracts/openapi/dashboard-api.json`으로 CI가 내보낸다.
 
@@ -35,6 +37,19 @@
 | `/reviews/{id}/status` | 후기 노출·숨김 |
 
 CORS 허용 출처는 `DASHBOARD_CORS_ORIGINS`(쉼표 구분, 기본 `http://localhost:3000,http://localhost:3001`)로 정한다.
+
+### 문의 API 연결 (목 모드가 아닐 때)
+| 경로 | support skill |
+| --- | --- |
+| GET `/conversations`, `/conversations/{id}` | `list_inquiries`, `get_inquiry` |
+| POST `/conversations` | `create_inquiry` (제목·본문은 `untrusted`) |
+| POST `/conversations/{id}/customer-messages` | `add_customer_message` |
+| POST `/conversations/{id}/check` | `check_reply` |
+| POST `/conversations/{id}/agent-messages` | `send_reply` (가드 차단이면 422 `REPLY_BLOCKED`) |
+| POST `/conversations/{id}/reject-draft`, `/summary`, `/status` | `reject_draft`, `summarize_inquiry`, `set_inquiry_status` |
+
+요청마다 새 `ctx_req_<hex>` 사건 ID를 붙이고, 상태를 바꾸는 skill에는 `idempotency_key`(context_id + skill + 대상)를 붙인다. 오류 매핑: `not_found`→404, `not_executed_*`(보류·거부)→409 `NOT_EXECUTED`, 타임아웃→504 `UPSTREAM_TIMEOUT`, 거부→403 `UPSTREAM_REJECTED`, 그 밖의 실패→502 `UPSTREAM_ERROR`.
+`POST /conversations`는 선택 필드 `customer_name`을 support에 넘긴다 (없으면 "고객 <user_id>"). 고객 목록(`/users`)은 shop-api 연결 전까지 목 전용이다.
 
 ## 4. 의존
 ax-contracts, ax-agent-template

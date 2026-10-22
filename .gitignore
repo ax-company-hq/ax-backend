@@ -37,3 +37,4 @@ Thumbs.db
 # Claude Code 개인 설정
 .claude/settings.local.json
 safe-test-out/
+.ax-cap-cache/

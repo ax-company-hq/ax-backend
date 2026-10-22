@@ -335,6 +335,7 @@ async def seller_review(request: AgentRequest) -> AgentResult:
         return data
 
     def done(output: SellerReviewOutput, evidence: Evidence, **status: Any) -> AgentResult:
+        _log_market_op(request, "seller_review", output.model_dump(mode="json"))
         return _result(
             request,
             output=output.model_dump(mode="json"),
@@ -387,7 +388,6 @@ async def seller_review(request: AgentRequest) -> AgentResult:
     result = done(output, evidence, **mapped)
     if result.status == TaskStatus.COMPLETED:
         state().ledger.done[key] = result
-    _log_market_op(request, "seller_review", output.model_dump(mode="json"))
     return result
 
 

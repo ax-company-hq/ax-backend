@@ -1,4 +1,6 @@
 name: claude-request
+# cap 계산이 run 목록의 제목으로 부서를 센다 (team.py cap-ok). 형식을 바꾸면 team.py도 같이
+run-name: "claude-request ${{ github.event.label.name || format('dispatch #{0}', inputs.issue) }} by ${{ github.event.sender.login || github.actor }}"
 
 # 사람(팀원)이 to:<부서> 라벨을 붙이면 그 부서 에이전트가 처리한다 (docs/automation-spec.md 4장).
 # ax-bot이 만든 요청 이슈는 여기서 바로 실행하지 않는다 (부서끼리 무한히 주고받지 않게, claude-tasks 대기열로).

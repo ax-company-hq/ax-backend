@@ -116,8 +116,13 @@ def _validated_drafts(replies: list[StyleReply], sources: list[Source]) -> list[
     ]
 
 
-async def analyze(text: str, subject: str = "") -> tuple[Analysis, bool]:
-    """고객 메시지를 분석한다. `(분석 결과, 대체 템플릿 사용 여부)`를 돌려준다."""
+async def analyze(
+    text: str, subject: str = "", extra_sources: list[Source] | None = None
+) -> tuple[Analysis, bool]:
+    """고객 메시지를 분석한다. `(분석 결과, 대체 템플릿 사용 여부)`를 돌려준다.
+
+    `extra_sources`(예: 마케팅 공지)는 정책 검색 결과 앞에 붙는다.
+    """
     started = time.perf_counter()
     masked, pii_kinds = guard.mask_pii(text)
     untrusted: dict[str, Any] = {"subject": guard.mask_pii(subject)[0], "customer_message": masked}
@@ -136,7 +141,7 @@ async def analyze(text: str, subject: str = "") -> tuple[Analysis, bool]:
         fallback = True
 
     classification = Classification(**classified.model_dump(), pii_masked=pii_kinds)
-    sources = kb.search(classification.search_query or masked)
+    sources = [*(extra_sources or []), *kb.search(classification.search_query or masked)]
     classify_ms = int((time.perf_counter() - started) * 1000)
 
     drafting_started = time.perf_counter()
