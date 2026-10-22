@@ -191,3 +191,17 @@ class RequestCompensationInput(AxModel):
     buyer_id: str
     reason_code: str
     count: int = 1
+
+
+class RequestCompensationOutput(AxModel):
+    """`request_compensation` 결과. 마케팅 회신은 상태·outcome·출력을 그대로 담는다."""
+
+    eligible: bool
+    reason: str | None = None  # 대상이 아닐 때 이유
+    sequence: int | None = None
+    count: int | None = None
+    unit_value: int | None = None
+    total_value: int | None = None
+    marketing_status: str | None = None
+    marketing_outcome: str | None = None
+    marketing_output: dict[str, Any] = Field(default_factory=dict)
