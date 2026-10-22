@@ -14,6 +14,7 @@ from ax_contracts.schemas import (
     InProgressItem,
     ListInProgressInput,
     ListInProgressOutput,
+    PlanDraft,
     RecordCase,
     RecordCaseOutput,
     RecordKind,
@@ -98,6 +99,18 @@ def test_list_in_progress_and_verify_handover() -> None:
         VerifyHandoverOutput.model_validate(
             {"approved": False, "reason_code": "other", "checked_at": T1}
         )
+    for mismatch in (
+        {"approved": True, "reason_code": "missing_items", "missing": [item]},
+        {"approved": True, "reason_code": "complete", "missing": [item]},
+        {"approved": False, "reason_code": "complete"},
+        {"approved": False, "reason_code": "missing_items"},
+    ):  # 승인·사유·누락 목록이 어긋나면 거부한다
+        with pytest.raises(ValidationError):
+            VerifyHandoverOutput.model_validate({**mismatch, "checked_at": T1})
+    stale = VerifyHandoverOutput.model_validate(
+        {"approved": True, "reason_code": "complete", "stale_item_ids": ["old_1"], "checked_at": T1}
+    )
+    assert stale.stale_item_ids == ["old_1"]
 
 
 def test_handover_flow_models() -> None:
@@ -231,3 +244,13 @@ def test_check_plan_models() -> None:
 def test_models_reject_unknown_fields() -> None:
     with pytest.raises(ValidationError):
         StartHandoverInput.model_validate({"owner_id": "emp_7", "salary": 1})  # 개인 정보 필드 없음
+
+
+def test_plan_draft_kind_is_fixed_and_ref_is_optional() -> None:
+    draft = {"title": "캐시 도입", "summary": "결제 캐시", "area": "payment", "kind": "spec"}
+    assert PlanDraft.model_validate(draft).ref is None
+    assert PlanDraft.model_validate({**draft, "ref": "R2"}).ref == "R2"
+    for kind in ("ticket", "deploy_plan"):
+        assert PlanDraft.model_validate({**draft, "kind": kind}).kind == kind
+    with pytest.raises(ValidationError):
+        PlanDraft.model_validate({**draft, "kind": "memo"})

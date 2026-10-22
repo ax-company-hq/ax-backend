@@ -70,7 +70,7 @@ class HandoverQuestion(AxModel):
 
 
 class StartHandoverInput(AxModel):
-    owner_id: str  # 인계자
+    owner_id: str  # 인계자 (`RosterEntry.member_id`)
     successor_id: str | None = None
     area: str | None = None
     reason: Literal["shift", "transfer", "offboarding", "other"] = "other"
@@ -206,8 +206,9 @@ FindingCode = Literal["MATCH", "CONFLICT", "REJECTED_BEFORE"]
 class PlanDraft(AxModel):
     title: str
     summary: str
-    area: str
-    kind: str
+    area: str  # `RosterEntry.area`와 같은 값 집합 (기획서 문단 id를 넣지 않는다)
+    kind: Literal["spec", "ticket", "deploy_plan"]
+    ref: str | None = None  # 호출 측 참조 id(예: 기획서 문단). 판정에는 쓰지 않는다
 
 
 class CheckPlanInput(AxModel):
