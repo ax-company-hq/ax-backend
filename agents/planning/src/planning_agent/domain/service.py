@@ -153,6 +153,16 @@ async def template_gate(
     return await gate_module.execute(action, params, context, evidence)
 
 
+def _pr_size_params(lines: int, files: int, paths: list[str], task: str) -> dict:
+    """`generate_pr` execute params. 안전 레이어 코드 규칙(#83)이 읽는 키 이름을 쓴다."""
+    return {
+        "changed_lines": lines,
+        "changed_files": files,
+        "changed_paths": sorted(set(paths)),
+        "task": task,
+    }
+
+
 class GateRefused(Exception):
     """관문이 실행을 허락하지 않았다. 액션 전체를 버린다."""
 
@@ -863,12 +873,13 @@ class PlanningService:
         step("planning", "planning", "split_tasks", "A2A", f"R1 → 작업 {task_id}", "A")
 
         gen_text = f"{pr_id} 변경 {lines}줄·{files}파일·{limit['paths']} → 코드 규칙 통과"
+        auto_paths = changed_paths_for(spec_id, "R1", limit["paths"])
         await self._execute(
             "generate_pr",
             ctx,
             pr_id,
             gen_text,
-            {"lines": lines, "files": files, "paths": limit["paths"], "task": task_id},
+            _pr_size_params(lines, files, auto_paths, task_id),
         )
         pr = PR(
             id=pr_id,
@@ -879,7 +890,7 @@ class PlanningService:
             reviews=["통과"],
             gate=PrGate(result="통과", lines=lines, files=files, paths=limit["paths"]),
             merged=False,
-            changed_paths=changed_paths_for(spec_id, "R1", limit["paths"]),
+            changed_paths=auto_paths,
             auto=True,
         )
         s.prs.append(pr)
@@ -1409,7 +1420,7 @@ class PlanningService:
                 ctx,
                 pr.id,
                 gen_text,
-                {"lines": lines, "files": files, "paths": paths, "task": t.id},
+                _pr_size_params(lines, files, pr.changed_paths, t.id),
             )
             review_text = f"{pr.id} 검수 {review}{' (완료 기준 C2)' if review == '불일치' else ''}"
             await self._execute("review_pr", ctx, f"{pr.id}:r1", review_text)
