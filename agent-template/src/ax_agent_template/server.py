@@ -32,7 +32,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from ax_agent_template.config import MAX_PATH_LENGTH, is_mock, set_agent_name
+from ax_agent_template.config import MAX_PATH_LENGTH, agent_name_scope, is_mock, set_agent_name
 from ax_contracts.schemas import (
     AgentCard,
     AgentRequest,
@@ -159,7 +159,8 @@ def create_agent_app(card: AgentCard, handlers: Mapping[str, Handler]) -> FastAP
         except ValidationError as exc:
             return _bad_request("INVALID_REQUEST", str(exc))
 
-        result = await _handle(card, handlers, request)
+        with agent_name_scope(card.name):
+            result = await _handle(card, handlers, request)
         return JSONResponse(content=result.model_dump(mode="json"))
 
     return app
