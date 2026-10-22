@@ -15,9 +15,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         o.strip()
-        for o in (
-            os.getenv("DASHBOARD_CORS_ORIGINS") or DEFAULT_CORS_ORIGINS
-        ).split(",")
+        for o in (os.getenv("DASHBOARD_CORS_ORIGINS") or DEFAULT_CORS_ORIGINS).split(",")
         if o.strip()
     ],
     allow_methods=["*"],
