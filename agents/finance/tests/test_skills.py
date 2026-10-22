@@ -585,3 +585,23 @@ def test_card_descriptions_say_whether_state_changes() -> None:
             assert "상태를 바꾸지 않는다" in skill.description
         else:
             assert "execute" in skill.description
+
+
+def test_every_seller_review_outcome_is_listed(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """서류 없음·점수 없음으로 멈춘 심사도 대시보드 목록에 남는다."""
+    _fake_execute(monkeypatch, _decision())
+    for seller, docs in (("sel_1", True), ("sel_2", False), ("sel_unknown", True)):
+        _call(
+            client,
+            "seller_review",
+            SELLER | {"seller_id": seller, "documents_verified": docs},
+            token="mock:orchestrator",
+        )
+    ops = client.get("/api/finance/market-ops").json()["data"]
+    assert [(o["seller_id"], o["decision"]) for o in ops] == [
+        ("sel_unknown", "undetermined"),
+        ("sel_2", "rejected"),
+        ("sel_1", "approved"),
+    ]
