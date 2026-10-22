@@ -100,3 +100,24 @@ class SettlementHoldOutput(AxModel):
     reason_code: str
     execution_id: str | None = None
     review_id: str | None = None
+
+
+# -------------------------------------------- review_hold (safety → finance, AI 1차 판단)
+class ReviewHoldInput(AxModel):
+    """사람 확인(C)으로 넘어온 건. 금액·누적은 안전 장치가 계산한 값이다."""
+
+    review_id: str
+    execution_id: str
+    action: str
+    requester: str
+    params: dict[str, Any] = Field(default_factory=dict)
+    computed_amount: int | None = None
+    hold_reason: str
+    rules: list[dict[str, Any]] = Field(default_factory=list)
+    totals: dict[str, int | None] = Field(default_factory=dict)
+
+
+class ReviewHoldOutput(AxModel):
+    decision: Literal["approve", "reject", "escalate"]
+    reason_code: str
+    explanation: str

@@ -401,21 +401,87 @@ def test_token_depts_of(team: Team) -> None:
     assert "shop-web" in team_mod.token_depts_of(team, "areatmadm")
 
 
+def cap_run(title: str, conclusion: str | None, run_id: int = 1) -> tuple:
+    return ("ax-company-hq/ax-backend", run_id, title, conclusion)
+
+
 def test_usage_by_owner_from_run_titles(team: Team) -> None:
     runs = [
-        ("claude:data:task #12", "success"),  # 수동 작성 → 재현
-        ("claude-request to:data by JangJaehyeonn", "failure"),  # 사람 요청 → 재현
-        ("claude-request to:memory by bxbae", None),  # 실행 중 → 재현
-        ("claude-request to:finance by ax-company-hq-bot[bot]", "success"),  # 봇 요청 → 세지 않음
-        ("claude-request to:data by JangJaehyeonn", "skipped"),  # 스위치 off → 세지 않음
-        ("claude-review data/24-x-r0 by ax-company-hq-bot[bot]", "success"),  # 리뷰 finance → 태윤
-        ("claude-review agent-template/x by haakim7", "success"),  # finance+planning → 태윤·예진
-        ("claude-review ci/automation by JangJaehyeonn", "success"),  # 사람 경로 → 생략
-        ("claude-review dispatch #5 by JangJaehyeonn", "success"),  # 수동 리뷰 → 알 수 없음
-        ("feat(data): 옛 형식 제목", "success"),  # 바꾸기 전 run → 세지 않음
+        cap_run("claude:data:task #12", "success"),  # 수동 작성 → 재현
+        cap_run("claude-request to:data by JangJaehyeonn", "success"),  # 사람 요청 → 재현
+        cap_run("claude-request to:memory by bxbae", None),  # 실행 중 → 재현
+        cap_run("claude-request to:finance by ax-company-hq-bot[bot]", "success"),  # 봇 요청 → 0
+        cap_run("claude-request to:data by JangJaehyeonn", "skipped"),  # 스위치 off → 0
+        # 봇 PR data → 리뷰 finance → 태윤
+        cap_run("claude-review data/24-x-r0 by ax-company-hq-bot[bot]", "success"),
+        cap_run("claude-review agent-template/x by haakim7", "success"),  # finance+planning
+        cap_run("claude-review ci/automation by JangJaehyeonn", "success"),  # 사람 경로 → 생략
+        cap_run("claude-review dispatch #5 by JangJaehyeonn", "success"),  # 수동 리뷰 → 알 수 없음
+        cap_run("feat(data): 옛 형식 제목", "success"),  # 바꾸기 전 run → 0
     ]
     assert team_mod.usage_by_owner(team, runs) == {
         "JangJaehyeonn": 3, "2taeyoon": 2, "NYejin": 1}
+
+
+def test_failed_runs_counted_only_if_claude_ran(team: Team) -> None:
+    runs = [
+        cap_run("claude-request to:data by JangJaehyeonn", "failure", 10),  # 설치에서 실패 → 0
+        cap_run("claude-review data/1-x-r0 by ax-company-hq-bot[bot]", "failure", 11),  # Claude 돎
+        # 판정 결과가 없으면 제목대로 (보수적)
+        cap_run("claude-request to:memory by JangJaehyeonn", "cancelled", 12),
+    ]
+    ran = {"10": [], "11": ["finance"]}
+    assert team_mod.usage_by_owner(team, runs, ran) == {"2taeyoon": 1, "JangJaehyeonn": 1}
+
+
+def _job(name: str, steps: list[tuple[str, str | None]]) -> dict:
+    return {"name": name, "steps": [{"name": n, "conclusion": c} for n, c in steps]}
+
+
+@pytest.mark.parametrize(
+    ("job", "dept"),
+    [
+        # 새 형식: 설치 단계에서 실패 → Claude 단계 skipped → 세지 않음
+        (_job("write / claude:data:request", [("Claude Code 설치 (npm, 버전 고정)", "failure"),
+                                              ("Claude", "skipped")]), None),
+        # 새 형식: Claude가 돌다 실패 → 셈
+        (_job("claude:finance:review", [("Claude Code 설치 (npm, 버전 고정)", "success"),
+                                        ("Claude (리뷰)", "failure")]), "finance"),
+        (_job("claude:finance:review", [("Claude Code 설치 (npm)", "success"),
+                                        ("Claude (리뷰)", "success")]), "finance"),
+        # 옛 형식(#115 전): 설치가 Claude 단계 안 → 그 단계 실패는 설치 429로 보고 세지 않음
+        (_job("claude:data:review", [("Claude (리뷰)", "failure")]), None),
+        (_job("claude:data:review", [("Claude (리뷰)", "success")]), "data"),
+        # cap이 막아 Claude 단계가 아예 없음 / 다른 잡
+        (_job("claude:data:review", [("도구 · cap", "success"),
+                                     ("Claude (리뷰)", "skipped")]), None),
+        (_job("prep", [("검증 (읽기만)", "failure")]), None),
+    ],
+)
+def test_job_claude_dept(job: dict, dept: str | None) -> None:
+    assert team_mod.job_claude_dept(job) == dept
+
+
+def test_resolve_failed_runs_uses_cache(monkeypatch) -> None:
+    calls = []
+
+    def fake(path, *extra):
+        calls.append(path)
+        return {"jobs": [_job("claude:data:review", [("Claude Code 설치 (npm)", "success"),
+                                                      ("Claude (리뷰)", "failure")])]}
+
+    monkeypatch.setattr(team_mod, "gh_api", fake)
+    runs = [cap_run("t", "failure", 1), cap_run("t", "success", 2), cap_run("t", "failure", 3)]
+    ran = team_mod.resolve_failed_runs(runs, {"1": []})
+    assert ran == {"1": [], "3": ["data"]}
+    assert calls == ["repos/ax-company-hq/ax-backend/actions/runs/3/jobs?per_page=100"]
+
+
+def test_cap_cache_roundtrip(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AX_CAP_CACHE", str(tmp_path / "c" / "runs.json"))
+    assert team_mod.load_cap_cache() == {}
+    team_mod.save_cap_cache({"5": ["data"]})
+    assert team_mod.load_cap_cache() == {"5": ["data"]}
 
 
 @pytest.mark.parametrize(
@@ -448,13 +514,16 @@ def test_todays_claude_runs_pages_and_skips_self(monkeypatch) -> None:
     monkeypatch.setattr(team_mod, "gh_api", fake)
     monkeypatch.setenv("GITHUB_RUN_ID", "999")
     runs = team_mod.todays_claude_runs("2026-10-22")
-    assert len(runs) == 100 and ("self", None) not in runs
+    assert len(runs) == 100 and all(r[1] != 999 for r in runs)
+    assert runs[0] == ("ax-company-hq/ax-backend", 0, "t0", "success")
     assert len(calls) == 4  # 워크플로 3개 + review 2쪽, 프론트는 아직 없음
 
 
 def test_cap_status_ok_and_quota(team: Team, monkeypatch) -> None:
     monkeypatch.setattr(team_mod, "todays_claude_runs",
-                        lambda day: [("claude:data:task #1", "success")] * 20)
+                        lambda day: [cap_run("claude:data:task #1", "success", i)
+                                     for i in range(20)])
+    monkeypatch.delenv("AX_CAP_CACHE", raising=False)
     st = team_mod.cap_status(team, ["JangJaehyeonn", "2taeyoon"], "2026-10-22")
     assert st["JangJaehyeonn"]["ok"] is False and st["JangJaehyeonn"]["used"] == 20
     assert st["2taeyoon"]["ok"] is True and st["2taeyoon"]["used"] == 0

@@ -5,6 +5,21 @@
 
 from ax_contracts.schemas.agent_card import AgentCard, Capabilities, Skill
 from ax_contracts.schemas.common import TENANT_ID_DEFAULT, AxModel, UtcDatetime
+from ax_contracts.schemas.data import (
+    AnomalyDetectionInput,
+    AnomalyDetectionOutput,
+    BusinessMetric,
+    CategoryImpact,
+    FraudReason,
+    FraudScoreInput,
+    FraudScoreOutput,
+    ImpactAnalysisInput,
+    ImpactAnalysisOutput,
+    IncidentKpi,
+    KpiSummaryInput,
+    KpiSummaryOutput,
+    MetricVerdict,
+)
 from ax_contracts.schemas.escalation import Escalation
 from ax_contracts.schemas.event import (
     EVENT_DATA_MODELS,
@@ -32,6 +47,7 @@ from ax_contracts.schemas.event import (
     SellerRegisteredData,
     ShipmentDelayedData,
     ShopDegradedData,
+    SupportInquiryReceivedData,
 )
 from ax_contracts.schemas.execute import ExecuteDecision, ExecuteRequest, HoldReason
 from ax_contracts.schemas.finance import VerifyAmountInput, VerifyAmountOutput, VerifyReason
@@ -133,6 +149,7 @@ __all__ = [
     "RequestMeta",
     "ShopDegradedData",
     "Skill",
+    "SupportInquiryReceivedData",
     "TaskStatus",
     "UtcDatetime",
     "DiagnoseIncidentInput",
@@ -154,4 +171,17 @@ __all__ = [
     "VerifyAmountInput",
     "VerifyAmountOutput",
     "VerifyReason",
+    "AnomalyDetectionInput",
+    "AnomalyDetectionOutput",
+    "BusinessMetric",
+    "CategoryImpact",
+    "FraudReason",
+    "FraudScoreInput",
+    "FraudScoreOutput",
+    "ImpactAnalysisInput",
+    "ImpactAnalysisOutput",
+    "IncidentKpi",
+    "KpiSummaryInput",
+    "KpiSummaryOutput",
+    "MetricVerdict",
 ]

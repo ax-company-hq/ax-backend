@@ -293,6 +293,22 @@ class SafetyReviewDecidedData(AxModel):
     decided_by: str
 
 
+class SupportInquiryReceivedData(AxModel):
+    """`support.inquiry_received`. 고객지원이 문의 접수·후속 고객 메시지마다 발행한다.
+
+    사실 필드만 담는다. 문의 원문은 봉투의 `untrusted`로 주고,
+    `category`·`urgency`는 분류 코드값이다.
+    `message_count`는 문의에 쌓인 고객 메시지 수이며 첫 접수는 1이다.
+    `order_id`는 다른 주문 이벤트와 같은 `ord_` 문자열 ID다.
+    """
+
+    inquiry_id: int
+    order_id: str | None = None
+    category: str | None = None
+    urgency: Literal["low", "medium", "high"] | None = None
+    message_count: int = Field(ge=1)
+
+
 # 이벤트 종류 → data 모델. 발행 담당이 새 data 모델을 추가할 때 여기에 한 줄 더한다.
 EVENT_DATA_MODELS: dict[EventType, type[BaseModel]] = {
     EventType.SHOP_DEGRADED: ShopDegradedData,
@@ -317,4 +333,5 @@ EVENT_DATA_MODELS: dict[EventType, type[BaseModel]] = {
     EventType.SAFETY_ACTION_EXECUTED: SafetyActionExecutedData,
     EventType.SAFETY_ACTION_HELD: SafetyActionHeldData,
     EventType.SAFETY_REVIEW_DECIDED: SafetyReviewDecidedData,
+    EventType.SUPPORT_INQUIRY_RECEIVED: SupportInquiryReceivedData,
 }
