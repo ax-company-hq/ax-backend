@@ -70,6 +70,11 @@ def add_read_api(app: FastAPI) -> None:
         rows = sorted(state().ledger.loss_reports.values(), key=lambda r: r["at"], reverse=True)
         return {"data": rows, "meta": {"count": len(rows)}}
 
+    @app.get("/api/finance/ai-reviews")
+    def ai_reviews() -> dict:
+        rows = state().ledger.ai_reviews
+        return {"data": list(reversed(rows)), "meta": {"count": len(rows)}}
+
     @app.get("/api/finance/market-ops")
     def market_ops() -> dict:
         rows = state().ledger.market_ops

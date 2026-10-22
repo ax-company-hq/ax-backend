@@ -32,9 +32,11 @@ from ax_contracts.schemas import (
     InputReason,
     TaskStatus,
 )
+from finance_agent.review import ReviewPolicy, decide, load_policy
 from finance_agent.schemas import (
     LossAggregationInput,
     LossReport,
+    ReviewHoldInput,
     SellerReviewInput,
     SellerReviewOutput,
     SettlementHoldInput,
@@ -59,6 +61,8 @@ class Ledger:
         self.done: dict[str, AgentResult] = {}  # 멱등성 키 → 끝난 상태 변경 결과
         self.market_ops: list[dict[str, Any]] = []  # 판매자 심사·정산 보류 결과 기록
         self.loss_reports: dict[str, dict[str, Any]] = {}  # context_id → 마지막 손실 리포트
+        self.reviewed: dict[str, AgentResult] = {}  # review_id → AI 1차 판단
+        self.ai_reviews: list[dict[str, Any]] = []  # 대시보드 조회용 AI 판단 기록
 
     def compensation(self, context_id: str) -> dict[str, int]:
         return self.coupons.get(context_id, {"count": 0, "total": 0})
@@ -68,6 +72,7 @@ class State:
     def __init__(self, sources: Sources | None = None) -> None:
         self.sources: Sources = sources or (MockSources() if is_mock("finance") else LiveSources())
         self.ledger = Ledger()
+        self.policy: ReviewPolicy = load_policy()
 
 
 STATE: State | None = None
@@ -421,9 +426,48 @@ async def settlement_hold(request: AgentRequest) -> AgentResult:
     return result
 
 
+# ---------------------------------------------------------------- review_hold (AI 1차 판단)
+async def review_hold(request: AgentRequest) -> AgentResult:
+    data = _parse(request, ReviewHoldInput)
+    if isinstance(data, AgentResult):
+        return data
+    ledger = state().ledger
+    if data.review_id in ledger.reviewed:  # 같은 보류 건은 같은 판단
+        return ledger.reviewed[data.review_id].model_copy(update={"meta": request.meta})
+    order_id = data.params.get("order_id")
+    refunded = ledger.refunds.get(order_id, 0) if isinstance(order_id, str) else 0
+    output = await decide(data, request.meta, state().sources, refunded, state().policy)
+    result = _result(
+        request,
+        TaskStatus.COMPLETED,
+        outcome=output.decision,
+        output=output.model_dump(mode="json"),
+        evidence=_evidence(
+            ["ai_review_policy", f"review:{data.action}"],
+            output.explanation,
+            [data.review_id, data.execution_id],
+        ),
+    )
+    ledger.reviewed[data.review_id] = result
+    ledger.ai_reviews.append(
+        {
+            "review_id": data.review_id,
+            "context_id": request.meta.context_id,
+            "action": data.action,
+            "requester": data.requester,
+            "computed_amount": data.computed_amount,
+            "hold_reason": data.hold_reason,
+            **output.model_dump(mode="json"),
+            "at": _now().isoformat(),
+        }
+    )
+    return result
+
+
 HANDLERS = {
     "verify_amount": verify_amount,
     "loss_aggregation": loss_aggregation,
     "seller_review": seller_review,
     "settlement_hold": settlement_hold,
+    "review_hold": review_hold,
 }
