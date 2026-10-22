@@ -40,6 +40,8 @@ class EventType(StrEnum):
     SUPPORT_INQUIRY_SURGE = "support.inquiry_surge"
     # 데이터분석
     METRIC_ANOMALY = "metric.anomaly"
+    # 인프라(DejaFix 어댑터)
+    INFRA_ANOMALY_DETECTED = "infra.anomaly_detected"
     # 통합 에이전트
     INCIDENT_OPENED = "incident.opened"
     INCIDENT_RESOLVED = "incident.resolved"
@@ -106,6 +108,22 @@ class MetricAnomalyData(AxModel):
     severity: Literal["low", "mid", "high"]
 
 
+class InfraAnomalyData(AxModel):
+    """`infra.anomaly_detected`. infra(DejaFix 어댑터)가 인프라 이상을 감지해 알린다.
+
+    사실만 담는다. 원인 판단은 넣지 않고 infra `diagnose_incident` 결과로 따로 준다.
+    `source_ref`는 근거 참조(Zabbix 이벤트·트리거 ID 등)다. `context_id`는 None이고
+    사건 번호는 통합 에이전트가 발급한다.
+    """
+
+    component: str
+    metric_code: str
+    value: float | None = None
+    threshold: float | None = None
+    detected_at: UtcDatetime
+    source_ref: str | None = None
+
+
 class IncidentData(AxModel):
     """`incident.opened` / `incident.resolved`. 통합 에이전트만 발행한다."""
 
@@ -169,6 +187,7 @@ EVENT_DATA_MODELS: dict[EventType, type[BaseModel]] = {
     EventType.SHOP_RECOVERED: ShopDegradedData,
     EventType.PAYMENT_FAILED: PaymentFailedData,
     EventType.METRIC_ANOMALY: MetricAnomalyData,
+    EventType.INFRA_ANOMALY_DETECTED: InfraAnomalyData,
     EventType.INCIDENT_OPENED: IncidentData,
     EventType.INCIDENT_RESOLVED: IncidentData,
     EventType.NOTICE_PUBLISHED: NoticePublishedData,
