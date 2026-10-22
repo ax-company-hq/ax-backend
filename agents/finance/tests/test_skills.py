@@ -451,3 +451,23 @@ def test_loss_reports_are_listed_for_dashboard(client: TestClient) -> None:
     rows = client.get("/api/finance/loss-reports").json()["data"]
     assert (rows[0]["context_id"], rows[0]["lost_amount"]) == ("ctx_inc_0002", 214_500)
     assert rows[0]["total_loss"] == 214_500  # 보상 지급 기록이 없으면 피해 금액만
+
+
+def test_every_seller_review_outcome_is_listed(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """서류 없음·점수 없음으로 멈춘 심사도 대시보드 목록에 남는다."""
+    _fake_execute(monkeypatch, _decision())
+    for seller, docs in (("sel_1", True), ("sel_2", False), ("sel_unknown", True)):
+        _call(
+            client,
+            "seller_review",
+            SELLER | {"seller_id": seller, "documents_verified": docs},
+            token="mock:orchestrator",
+        )
+    ops = client.get("/api/finance/market-ops").json()["data"]
+    assert [(o["seller_id"], o["decision"]) for o in ops] == [
+        ("sel_unknown", "undetermined"),
+        ("sel_2", "rejected"),
+        ("sel_1", "approved"),
+    ]
