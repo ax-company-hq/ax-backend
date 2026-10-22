@@ -105,8 +105,7 @@ async def test_execute_in_mock_mode_is_a_grade_a_execution() -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_is_fail_closed_when_safety_is_not_reachable(monkeypatch) -> None:
-    monkeypatch.delenv("AGENT_TEMPLATE_MOCK")
+async def test_execute_is_fail_closed_when_safety_is_not_reachable(real_mode) -> None:
     config.set_agent_name("marketing")
     decision = await execute("issue_coupon", {}, _request().meta, Evidence())
     assert decision.status == "rejected"

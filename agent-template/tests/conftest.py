@@ -1,5 +1,6 @@
 """테스트 공용 설정: 목 모드 고정, 장난감 에이전트, 요청 만들기."""
 
+import os
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -100,3 +101,11 @@ def app(card: AgentCard, handlers: dict) -> FastAPI:
 @pytest.fixture
 def request_body() -> Callable[..., dict[str, Any]]:
     return _request_body
+
+
+@pytest.fixture
+def real_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """목 모드를 모두 끈다. CI는 `<부서>_MOCK=1`도 켜 두므로 그것까지 지운다."""
+    for key in list(os.environ):
+        if key == "AGENT_TEMPLATE_MOCK" or key.endswith("_MOCK"):
+            monkeypatch.delenv(key)

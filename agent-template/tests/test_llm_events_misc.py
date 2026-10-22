@@ -89,8 +89,7 @@ async def test_mock_event_bus_delivers_once_to_matching_subscribers() -> None:
 
 
 @pytest.mark.asyncio
-async def test_event_bus_is_a_stub_outside_mock_mode(monkeypatch) -> None:
-    monkeypatch.delenv("AGENT_TEMPLATE_MOCK")
+async def test_event_bus_is_a_stub_outside_mock_mode(real_mode) -> None:
     with pytest.raises(NotImplementedError):
         await events.publish(_event("evt_1", EventType.ORDER_CREATED))
     with pytest.raises(NotImplementedError):

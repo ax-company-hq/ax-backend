@@ -52,8 +52,7 @@ def test_bad_token_is_rejected(client, request_body) -> None:
     assert result["outcome"] == "UNAUTHORIZED"
 
 
-def test_token_is_rejected_outside_mock_mode(client, request_body, monkeypatch) -> None:
-    monkeypatch.delenv("AGENT_TEMPLATE_MOCK")
+def test_token_is_rejected_outside_mock_mode(client, request_body, real_mode) -> None:
     result = client.post("/a2a", json=request_body()).json()
     assert result["outcome"] == "UNAUTHORIZED"
 
