@@ -22,6 +22,14 @@ from ax_contracts.schemas.event import (
 )
 from ax_contracts.schemas.execute import ExecuteDecision, ExecuteRequest, HoldReason
 from ax_contracts.schemas.ids import ContextPrefix, IdPrefix
+from ax_contracts.schemas.infra import (
+    DiagnoseIncidentInput,
+    DiagnoseIncidentOutput,
+    RollbackDeploymentParams,
+    SuspectDeployment,
+    VerifyRecoveryInput,
+    VerifyRecoveryOutput,
+)
 from ax_contracts.schemas.mcp import McpEnvelope
 from ax_contracts.schemas.message import (
     AgentRequest,
@@ -31,6 +39,15 @@ from ax_contracts.schemas.message import (
     InputReason,
     RequestMeta,
     TaskStatus,
+)
+from ax_contracts.schemas.planning import (
+    FindRelatedPrsInput,
+    FindRelatedPrsOutput,
+    LinkIncidentInput,
+    LinkIncidentOutput,
+    RelatedPr,
+    VerifyRollbackTargetInput,
+    VerifyRollbackTargetOutput,
 )
 from ax_contracts.schemas.record import Card, RecordCase, RecordKind
 
@@ -57,6 +74,19 @@ __all__ = [
     "IdPrefix",
     "IncidentData",
     "InfraAnomalyData",
+    "DiagnoseIncidentInput",
+    "DiagnoseIncidentOutput",
+    "RollbackDeploymentParams",
+    "SuspectDeployment",
+    "VerifyRecoveryInput",
+    "VerifyRecoveryOutput",
+    "FindRelatedPrsInput",
+    "FindRelatedPrsOutput",
+    "LinkIncidentInput",
+    "LinkIncidentOutput",
+    "RelatedPr",
+    "VerifyRollbackTargetInput",
+    "VerifyRollbackTargetOutput",
     "InputReason",
     "McpEnvelope",
     "MetricAnomalyData",
