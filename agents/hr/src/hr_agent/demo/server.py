@@ -106,6 +106,22 @@ async def advance(req: AdvanceRequest) -> dict[str, Any]:
         return await snapshot(svc)
 
 
+class TimerRequest(BaseModel):
+    horizon_minutes: int = 60
+
+
+@demo_app.post("/api/timer/run")
+async def run_timer(req: TimerRequest) -> dict[str, Any]:
+    """교대 시각 점검을 한 번 돌린다(운영에서는 `HR_TIMER=1`로 주기 실행)."""
+    from hr_agent.roster.timer import start_due_handovers
+
+    async with _lock:
+        svc = interactive()
+        set_services(svc)
+        started = await start_due_handovers(svc, max(1, req.horizon_minutes))
+        return {"started": started, "state": await snapshot(svc)}
+
+
 @demo_app.post("/api/holds/{review_id}/decide")
 async def decide_hold(review_id: str, req: DecideRequest) -> dict[str, Any]:
     async with _lock:

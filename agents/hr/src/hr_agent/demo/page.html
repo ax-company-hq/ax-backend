@@ -236,10 +236,13 @@ function renderRoster(root) {
   const bar = el('div', {class: 'row'}, el('button', {onclick: async () => {
     const res = await api('/api/call', {skill: 'get_roster', requester: 'orchestrator', input: {}, context_id: 'ctx_req_roster'});
     S.lastCall = res; S.snap = res.state; render();
-  }}, 'get_roster 호출'), el('span', {class: 'muted'}, '시계를 +10분으로 움직이면 교대 시각 기준이 바뀝니다.'));
+  }}, 'get_roster 호출'), el('button', {class: 'ghost', onclick: async () => {
+    const res = await api('/api/timer/run', {horizon_minutes: 60}); S.timer = res.started; S.snap = res.state; render();
+  }}, '교대 점검 실행(60분 이내)'), el('span', {class: 'muted'}, '곧 끝나는 교대에 이어받는 사람이 있으면 인수인계를 자동으로 시작합니다. 헤더 +10분으로 시계를 움직여 보세요.'));
   root.append(el('h3', {}, '영역별 담당·교대'), bar);
   if (gaps.no_owner.length) root.append(el('div', {class: 'notice'}, '담당 없는 영역: ' + gaps.no_owner.join(', ')));
   gaps.shift.forEach((g) => root.append(el('div', {class: 'notice'}, `교대 공백: ${g.area} — ${hhmm(g.at)} UTC 이후 이어받는 사람 없음`)));
+  if (S.timer) root.append(el('div', {class: 'notice'}, S.timer.length ? `교대 점검: 인수인계 ${S.timer.length}건 시작/확인 — ` + S.timer.map((t) => `${t.area}(${t.status})`).join(', ') : '교대 점검: 지금은 곧 끝나는 교대가 없어요.'));
   const areas = snap.areas || [];
   areas.forEach((a) => {
     const mine = rows.filter((r) => r.area === a);

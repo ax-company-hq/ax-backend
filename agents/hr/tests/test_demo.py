@@ -77,3 +77,11 @@ def test_clock_can_be_advanced(client: TestClient) -> None:
     before = client.get("/api/state").json()["clock"]
     after = client.post("/api/clock/advance", json={"minutes": 10}).json()["clock"]
     assert before < after
+
+
+def test_timer_endpoint_starts_handovers_for_due_shifts(client: TestClient) -> None:
+    body = client.post("/api/timer/run", json={"horizon_minutes": 60}).json()
+    assert body["started"] and all(s["handover_id"] for s in body["started"])
+    assert len(body["state"]["handovers"]) == len(body["started"])
+    again = client.post("/api/timer/run", json={"horizon_minutes": 60}).json()
+    assert len(again["state"]["handovers"]) == len(body["state"]["handovers"])
