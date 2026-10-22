@@ -19,6 +19,7 @@ class ShopFailedOrdersQuery(AxModel):
     from_: UtcDatetime = Field(alias="from")
     to: UtcDatetime
     category: str | None = None
+    limit: int = Field(default=1000, ge=1)
     tenant_id: str = TENANT_ID_DEFAULT
 
 
@@ -36,3 +37,5 @@ class ShopFailedOrdersResult(AxModel):
     """출력. 조회 자체의 근거(쿼리·시각)는 MCP 봉투와 `Evidence`로 붙인다."""
 
     orders: list[FailedOrder] = Field(default_factory=list)
+    collected_at: UtcDatetime | None = None  # 조회 시각. 기존 소비자와 호환되게 선택 필드
+    truncated: bool = False  # limit에 걸려 잘렸으면 True
