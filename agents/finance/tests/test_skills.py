@@ -105,7 +105,14 @@ def _decision(status: str = "executed", grade: str = "B", **kw: Any) -> ExecuteD
 def test_agent_card(client: TestClient) -> None:
     card = load_card()
     skills = {s.id: s for s in card.skills}
-    assert set(skills) == {"verify_amount", "loss_aggregation", "seller_review", "settlement_hold"}
+    assert set(skills) == {
+        "verify_amount",
+        "loss_aggregation",
+        "seller_review",
+        "settlement_hold",
+        "review_hold",
+    }
+    assert skills["review_hold"].allowed_requesters == ["safety"]
     assert skills["verify_amount"].allowed_requesters == ["safety"]
     assert (skills["verify_amount"].priority, skills["loss_aggregation"].priority) == (
         "required",
@@ -113,7 +120,7 @@ def test_agent_card(client: TestClient) -> None:
     )
     assert (skills["seller_review"].grade, skills["seller_review"].verifier) == ("B", "data")
     served = client.get("/.well-known/agent-card.json").json()
-    assert served["name"] == "finance" and len(served["skills"]) == 4
+    assert served["name"] == "finance" and len(served["skills"]) == 5
 
 
 # ---------------------------------------------------------------- verify_amount (DEP-FIN-02)
