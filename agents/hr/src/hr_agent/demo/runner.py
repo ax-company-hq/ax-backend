@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -124,7 +124,9 @@ async def call_skill(
             "context_id": ctx,
             "token": f"mock:{requester}",
             "path": path or [],
-            "deadline": (svc.clock() + timedelta(seconds=30)).isoformat(),
+            "deadline": (
+                datetime.now(UTC) + timedelta(seconds=30)
+            ).isoformat(),  # 템플릿은 실제 시각과 비교한다
             "idempotency_key": key or f"{ctx}:{skill}",
         },
         "skill": skill,

@@ -55,6 +55,7 @@ class HrSettings:
     - `handover_question_ttl_minutes`: 인계자 질문에 답이 없을 때 "미응답"으로 보는 시간.
     - `hold_ttl_minutes`: C 보류 건을 자동 거절하기까지 시간(데모 기준 10분).
     - `card_auto_confirm`: 이 확신도일 때만 카드를 자동 확정한다. 기획안은 high만, 세부 기준 미정.
+    - `planning_mode`·`memory_mode`: `mock`(기본) 또는 실제 연동(`a2a`·`http`, `clients/real.py`).
     - `lock_ttl_minutes`: 변경 잠금을 잡고 있는 요청이 이 시간 넘게 끝나지 않으면 잠금을 푼다.
     - `similarity_threshold`: 계획 비교에서 "관련 카드"로 보는 유사도 하한(제안값).
     """
@@ -68,6 +69,8 @@ class HrSettings:
     similarity_threshold: float = 0.2
     timer_enabled: bool = False
     lock_ttl_minutes: int = 1440
+    planning_mode: str = "mock"
+    memory_mode: str = "mock"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> HrSettings:
@@ -81,4 +84,6 @@ class HrSettings:
             card_auto_confirm=source.get("HR_CARD_AUTO_CONFIRM") or "high",
             timer_enabled=_flag(source, "HR_TIMER"),
             lock_ttl_minutes=_int(source, "HR_LOCK_TTL_MIN", 1440),
+            planning_mode=source.get("HR_PLANNING_MODE") or "mock",
+            memory_mode=source.get("HR_MEMORY_MODE") or "mock",
         )

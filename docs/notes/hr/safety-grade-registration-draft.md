@@ -1,13 +1,14 @@
 # hr 안전 등급 신고표 (초안, 태윤에게 보낼 것)
 
-> 상태: **초안**. 아직 `safety/src/ax_safety/rules/registry.toml`에 반영하지 않았다(그 파일은 사람이 PR로만 바꾼다).
+> 상태: **초안**. `safety/src/ax_safety/rules/registry.toml`에는 반영하지 않았다(그 파일은 사람이 PR로만 바꾼다).
+> 로컬 초안 브랜치 `draft/hr-safety-registry`(워크트리 `C:/wt/hr-registry-draft`, 푸시·PR 없음)에 같은 내용을 넣어 `uv run pytest safety`(62개)가 통과하는 것까지 확인했다.
 > hr 쪽 목 구현의 등급은 `agents/hr/src/hr_agent/clients/safety.py`의 `HR_ACTIONS`에 같은 값으로 들어 있다.
 
 ## 1. 신고할 액션 (owner = hr)
 
 | 액션 | 기본 등급 | 검증자 | 이유 |
 |---|---|---|---|
-| `memory_write_card` | A | — | 카드 쓰기·대체 연결. 기록이 목적이고 되돌릴 수 있다(상태만 `superseded`) |
+| `memory.card_write`, `memory.card_link` | A | — | **이미 등록됨**(회사 기억). hr은 이 이름으로 카드 쓰기·대체 연결을 요청한다 |
 | `record_case` | A | — | **이미 등록됨.** 결정 없는 기록만 저장하는 경로 |
 | `start_handover` | A | — | 초안 생성만 한다. 외부에 영향 없음 |
 | `answer_handover_question` | A | — | 인계자 답변 저장 |
@@ -24,11 +25,6 @@
 
 ```toml
 # ---- 인사 hr (준하)
-[[actions]]
-action = "memory_write_card"
-owner = "hr"
-base_grade = "A"
-
 [[actions]]
 action = "start_handover"
 owner = "hr"

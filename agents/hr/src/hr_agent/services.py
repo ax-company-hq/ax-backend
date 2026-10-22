@@ -66,6 +66,14 @@ def build_services(
     store = Store(settings.db_path)
     memory: MemoryClient = MockMemoryClient(store, clock)
     planning: PlanningClient = MockPlanningClient(clock)
+    if settings.memory_mode == "http":
+        from hr_agent.clients.real import HttpMemoryClient
+
+        memory = HttpMemoryClient()
+    if settings.planning_mode == "a2a":
+        from hr_agent.clients.real import A2APlanningClient
+
+        planning = A2APlanningClient()
     gate: GateClient
     if settings.mock:
         gate = MockGate(store, clock, hold_ttl_minutes=settings.hold_ttl_minutes)

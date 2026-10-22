@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 from typing import Any, Literal, Protocol
 
 from ax_contracts.schemas import Evidence, ExecuteDecision, HoldReason, RequestMeta
+from hr_agent.clients.errors import UpstreamError
 from hr_agent.config import Clock
 from hr_agent.store import Store
 from hr_agent.util import dumps, loads, stable_id
@@ -67,7 +68,10 @@ class TemplateGate:
     ) -> ExecuteDecision:
         from ax_agent_template.execute import execute
 
-        return await execute(action, params, context, evidence)
+        try:
+            return await execute(action, params, context, evidence)
+        except (NotImplementedError, OSError) as exc:  # 안전 레이어에 닿지 못했다: 실행하지 않는다
+            raise UpstreamError("safety", type(exc).__name__) from exc
 
 
 class MockGate:

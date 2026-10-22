@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from ax_contracts.schemas import AgentRequest, RequestMeta
+from hr_agent.clients.errors import UpstreamError, bind_meta
 from hr_agent.narrative import Narrator
 from hr_agent.roster import store as roster
 from hr_agent.services import Services, get_services
@@ -82,7 +83,12 @@ async def start_due_handovers(svc: Services, horizon_minutes: int = 60) -> list[
             },
         )
         # 주기 실행 경로는 LLM을 부르지 않는다(질문은 고정 문장)
-        result = await start_handover(replace(svc, narrator=Narrator(None)), request)
+        bind_meta(request.meta)
+        try:
+            result = await start_handover(replace(svc, narrator=Narrator(None)), request)
+        except UpstreamError as exc:
+            svc.audit.record(ctx, "timer.upstream_error", {"service": exc.service})
+            continue
         output = result.output or {}
         started.append(
             {

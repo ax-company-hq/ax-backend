@@ -7,12 +7,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+
 from ax_contracts.schemas import AgentRequest, AgentResult
 from hr_agent.assignment import service as assignment
 from hr_agent.cards import service as cards
+from hr_agent.clients.errors import UpstreamError, bind_meta
 from hr_agent.handover import service as handover
 from hr_agent.onboarding import service as onboarding
 from hr_agent.planning_check import service as planning_check
+from hr_agent.results import failed
 from hr_agent.roster import service as roster
 from hr_agent.services import get_services
 
@@ -57,7 +61,25 @@ async def check_plan(request: AgentRequest) -> AgentResult:
     return await planning_check.check_plan(get_services(), request)
 
 
-HANDLERS = {
+Handler = Callable[[AgentRequest], Awaitable[AgentResult]]
+
+
+def _guarded(fn: Handler) -> Handler:
+    """요청 메타를 연동 클라이언트에 알리고, 다른 서비스가 실패하면 지어내지 않고 실패로 답한다."""
+
+    async def run(request: AgentRequest) -> AgentResult:
+        bind_meta(request.meta)
+        try:
+            return await fn(request)
+        except UpstreamError as exc:
+            return failed(
+                request, "UPSTREAM_UNAVAILABLE", f"{exc.service} 연결 문제로 처리하지 못했다"
+            )
+
+    return run
+
+
+_HANDLERS = {
     "check_plan": check_plan,
     "request_assignment_change": request_assignment_change,
     "confirm_reassignment": confirm_reassignment,
@@ -69,3 +91,6 @@ HANDLERS = {
     "answer_handover_question": answer_handover_question,
     "confirm_handover": confirm_handover,
 }
+
+
+HANDLERS = {name: _guarded(fn) for name, fn in _HANDLERS.items()}
