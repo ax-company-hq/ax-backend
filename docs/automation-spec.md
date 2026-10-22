@@ -101,7 +101,7 @@ anthropics/claude-code-action@v1의 입력은 공식 문서(code.claude.com/docs
 members:
   JangJaehyeonn:  { name: 재현, token: CLAUDE_TOKEN_JAEHYEON,  daily_cap: 20 }
   2taeyoon:       { name: 태윤, token: CLAUDE_TOKEN_TAEYOON,   daily_cap: 20 }
-  manjo2828-blip: { name: 준하, token: CLAUDE_TOKEN_JUNHA,     daily_cap: 20 }
+  haakim7:        { name: 준하, token: CLAUDE_TOKEN_JUNHA,     daily_cap: 20 }
   NYejin:         { name: 예진, token: CLAUDE_TOKEN_YEJIN,     daily_cap: 20 }
   bxbae:          { name: 병환, token: CLAUDE_TOKEN_BYUNGHWAN, daily_cap: 20 }
   areatmadm:      { name: 재헌, token: CLAUDE_TOKEN_JAEHEON,   daily_cap: 20 }
@@ -111,22 +111,22 @@ depts:      # id: { folder, aliases, owners(첫 번째가 실행 토큰), env_pr
   memory:         { folder: memory,               owners: [JangJaehyeonn],  env_prefix: MEMORY }
   finance:        { folder: agents/finance,       owners: [2taeyoon],       env_prefix: FINANCE }
   safety:         { folder: safety,               owners: [2taeyoon],       env_prefix: SAFETY }
-  hr:             { folder: agents/hr,            owners: [manjo2828-blip], env_prefix: HR }
-  orchestrator:   { folder: orchestrator,         owners: [manjo2828-blip], env_prefix: ORCHESTRATOR }
-  agent-template: { folder: agent-template,       owners: [manjo2828-blip], env_prefix: AGENT_TEMPLATE }
-  infra:          { folder: infra,                owners: [manjo2828-blip], env_prefix: COMPOSE }
+  hr:             { folder: agents/hr,            owners: [haakim7], env_prefix: HR }
+  orchestrator:   { folder: orchestrator,         owners: [haakim7], env_prefix: ORCHESTRATOR }
+  agent-template: { folder: agent-template,       owners: [haakim7], env_prefix: AGENT_TEMPLATE }
+  infra:          { folder: infra,                owners: [haakim7], env_prefix: COMPOSE }
   planning:       { folder: agents/planning,      owners: [NYejin],         env_prefix: PLANNING }
   dejafix:        { folder: agents/infra-dejafix, aliases: [infra-dejafix], owners: [NYejin], env_prefix: INFRA }
   support:        { folder: agents/support,       owners: [bxbae],          env_prefix: SUPPORT }
   dashboard-api:  { folder: dashboard-api,        owners: [bxbae],          env_prefix: DASHBOARD }
   marketing:      { folder: agents/marketing,     owners: [areatmadm],      env_prefix: MARKETING }
   shop-api:       { folder: shop-api,             owners: [areatmadm],      env_prefix: SHOP }
-  contracts:      { folder: contracts,            owners: [manjo2828-blip, 2taeyoon] }   # env_prefix 없음 → MOCK 변수 안 씀
+  contracts:      { folder: contracts,            owners: [haakim7, 2taeyoon] }   # env_prefix 없음 → MOCK 변수 안 씀
 reviewers: (위 "리뷰어 배정" 표를 부서 id로 그대로)
 fallback_order: [orchestrator, data, finance, planning, support, marketing]
 human_paths: "부서 폴더, docs/notes/<부서>/, shared_rules 파일을 뺀 레포 전체" (CODEOWNERS와 같은 정의)
 human_path_exceptions: [docs/notes/<부서>/ → 그 부서]
-hotfix_labelers: [JangJaehyeonn, manjo2828-blip]   # code owner. 이 사람이 붙인 hotfix 라벨만 인정
+hotfix_labelers: [JangJaehyeonn, haakim7]   # code owner. 이 사람이 붙인 hotfix 라벨만 인정
 shared_rules:
   uv.lock: 같은 PR에서 그 부서 폴더의 pyproject.toml이 바뀌었을 때만 허용 (lock 갱신은 build 잡이 함)
   # 환경변수 예시는 패키지마다 <폴더>/.env.example에 둔다. 루트 .env.example은 공통 변수만, 사람 승인 경로
@@ -361,7 +361,7 @@ ax-backend와 같은 구조(prep/claude/apply 분리, environment claude·bot, �
   shared_rules: package-lock.json은 같은 PR에서 그 부서의 package.json이 바뀌었을 때만 허용
   bot_branches: revert/ (리뷰 생략), types/sync- (허용 경로 types/ + shop-web/ + dashboard-web/, 부서 검사 면제.
     types/만이면 리뷰 생략, 앱 폴더가 바뀌면 바뀐 앱의 상대 앱 부서가 리뷰, 둘 다 바뀌면 data. ci-fix 라벨은 앱별 ci-fix-shop-1·2, ci-fix-dash-1·2)
-- CODEOWNERS: `* @JangJaehyeonn @manjo2828-blip` 다음 줄에 소유자 없는 줄로 `/shop-web/`, `/dashboard-web/`, `/types/`, `/package-lock.json` 해제 (types/는 folder-guard가 types/sync- 봇 브랜치로만 제한), dev 보호(승인 0, code owner 리뷰 필수, up to date 끔, 우회 금지), main ruleset(ci + release-gate)
+- CODEOWNERS: `* @JangJaehyeonn @haakim7` 다음 줄에 소유자 없는 줄로 `/shop-web/`, `/dashboard-web/`, `/types/`, `/package-lock.json` 해제 (types/는 folder-guard가 types/sync- 봇 브랜치로만 제한), dev 보호(승인 0, code owner 리뷰 필수, up to date 끔, 우회 금지), main ruleset(ci + release-gate)
 - 워크플로: team-guard, guards(folder-guard·test-guard(*.test.ts의 test/it 수)·dev-health), _claude-write, claude-tasks(ax-backend claude-plan이 만든 이 레포 이슈, 다른 레포 depends 확인),
   claude-request, claude-review, claude-ci-fix, claude-arbiter, auto-merge, dev-health(revert 포함), sweeper, daily-report, setup-labels
 - Claude에게 셸 없음, build 잡(비밀값 없음)에서 scripts/safe-test.sh <부서> <소스>: git archive 사본으로 컨테이너에서, package.json이 바뀌었으면 먼저 `npm install --package-lock-only --ignore-scripts` → `npm ci --ignore-scripts` → 그 앱 typecheck·test·build. 갱신된 package-lock.json을 패치에 추가

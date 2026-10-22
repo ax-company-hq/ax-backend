@@ -107,7 +107,7 @@ DejaFix에서는 "승인 1명 + 작성자 본인 승인 불가" 때문에 PR 30�
 
 ```
 # .github/CODEOWNERS
-*                    @JangJaehyeonn @manjo2828-blip
+*                    @JangJaehyeonn @haakim7
 # 부서 폴더·notes·uv.lock은 owner 없음 (에이전트 리뷰로 머지)
 /contracts/
 /agent-template/
