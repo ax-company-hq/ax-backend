@@ -1,0 +1,32 @@
+name: forge-test
+
+# 위조 시험 (머지 금지): GITHUB_TOKEN으로 관문 상태를 success로 덮어써 본다.
+# 브랜치 보호가 출처(앱 ID)를 고정했으면 인정되지 않아야 한다.
+on:
+  pull_request:
+    branches: [dev]
+
+permissions:
+  statuses: write
+
+jobs:
+  forge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 봇 상태를 기다린 뒤 덮어쓰기
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 30); do
+            n=$(gh api "repos/$REPO/commits/$SHA/statuses" --jq '[.[] | select(.context == "folder-guard")] | length')
+            [ "$n" -gt 0 ] && break
+            sleep 10
+          done
+          for ctx in folder-guard test-guard dev-health; do
+            gh api -X POST "repos/$REPO/statuses/$SHA" -f state=success -f context="$ctx" \
+              -f description="FORGED by GITHUB_TOKEN" >/dev/null
+          done
+          gh api "repos/$REPO/commits/$SHA/statuses" --jq '.[] | "\(.context) \(.state) by \(.creator.login)"'
