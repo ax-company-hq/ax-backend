@@ -2,14 +2,27 @@
   "title": "기획 확정 기록 (planning)",
   "description": "planning이 기획서를 확정하고 결정 이유와 검토한 대안을 함께 보낸다. 결정 카드(decision)의 재료.",
   "requester": "planning",
-  "expect": { "status": "completed" },
+  "expect": {
+    "status": "completed",
+    "outcome": "card_created",
+    "output": {
+      "confidence": "high"
+    }
+  },
   "input": {
     "context_id": "ctx_req_0123",
     "kind": "spec_confirmed",
     "summary": "결제 재시도 기준을 최대 2회로 확정했다.",
     "decision_reason": "중복 결제 위험을 줄이면서 일시적 오류는 한 번 더 시도하기 위해서다.",
-    "alternatives_considered": ["재시도 없음", "최대 3회"],
-    "source_refs": ["pr:412", "spec:payment-retry"],
+    "alternatives_considered": [
+      "재시도 없음",
+      "최대 3회"
+    ],
+    "source_refs": [
+      "pr:412",
+      "spec:payment-retry",
+      "area:payment"
+    ],
     "author": "planning"
   }
 }

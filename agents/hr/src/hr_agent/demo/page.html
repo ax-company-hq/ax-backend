@@ -19,166 +19,215 @@
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 'Pretendard','Noto Sans KR','Malgun Gothic',system-ui,sans-serif}
-header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:14px 20px;background:var(--panel);border-bottom:1px solid var(--line)}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:12px 20px;background:var(--panel);border-bottom:1px solid var(--line)}
 h1{font-size:18px;margin:0}
 h1 small{font-weight:400;color:var(--muted);margin-left:8px}
-button{font:inherit;cursor:pointer;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:8px 14px}
+button{font:inherit;cursor:pointer;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:7px 13px}
 button.ghost{background:transparent;color:var(--accent)}
+button.small{padding:3px 9px;font-size:13px}
 button:disabled{opacity:.6;cursor:wait}
-.layout{display:grid;grid-template-columns:320px 1fr;gap:16px;padding:16px 20px;max-width:1200px;margin:0 auto}
-@media (max-width:820px){.layout{grid-template-columns:1fr;padding:12px 16px}}
-.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px}
-.list{padding:8px}
-.item{display:flex;gap:10px;align-items:flex-start;padding:10px;border-radius:8px;cursor:pointer;border:1px solid transparent}
-.item:hover{background:var(--accent-soft)}
-.item.active{background:var(--accent-soft);border-color:var(--accent)}
-.item b{display:block;font-size:14px}
-.item span{font-size:12px;color:var(--muted)}
+nav{display:flex;flex-wrap:wrap;gap:6px;padding:10px 20px 0;max-width:1200px;margin:0 auto}
+nav button{background:transparent;color:var(--muted);border:1px solid var(--line);border-bottom:none;border-radius:8px 8px 0 0}
+nav button.active{background:var(--panel);color:var(--accent);border-color:var(--accent)}
+main{max-width:1200px;margin:0 auto;padding:0 20px 24px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:0 12px 12px 12px;padding:16px 18px}
+.layout{display:grid;grid-template-columns:300px 1fr;gap:16px}
+@media (max-width:820px){.layout{grid-template-columns:1fr}}
+.list .item{display:flex;gap:10px;align-items:flex-start;padding:9px;border-radius:8px;cursor:pointer;border:1px solid transparent}
+.list .item:hover{background:var(--accent-soft)}
+.list .item.active{background:var(--accent-soft);border-color:var(--accent)}
+.item b{display:block;font-size:14px}.item span{font-size:12px;color:var(--muted)}
 .dot{width:10px;height:10px;border-radius:50%;margin-top:6px;background:var(--line);flex:none}
 .dot.ok{background:var(--ok)}.dot.bad{background:var(--bad)}
-.main{padding:18px 20px;min-height:300px}
-.main h2{margin:0 0 4px;font-size:18px}
 .muted{color:var(--muted)}
-.badges{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.badges{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
 .badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;background:var(--accent-soft);color:var(--accent)}
-.badge.ok{background:var(--ok-soft);color:var(--ok)}
-.badge.bad{background:var(--bad-soft);color:var(--bad)}
-.badge.warn{background:var(--warn-soft);color:var(--warn)}
-.notice{background:var(--warn-soft);color:var(--warn);border-radius:8px;padding:8px 12px;margin:10px 0;font-size:13px}
-.card{border:1px solid var(--line);border-radius:12px;padding:16px;margin:12px 0;background:var(--panel)}
-.card h3{margin:6px 0 10px;font-size:16px}
-.card dt{font-size:12px;color:var(--muted);margin-top:10px}
-.card dd{margin:2px 0 0}
-.card ul{margin:2px 0 0;padding-left:18px}
-.reject{border:1px solid var(--bad);background:var(--bad-soft);color:var(--bad);border-radius:12px;padding:14px 16px;margin:12px 0}
-details{margin-top:12px}
-summary{cursor:pointer;color:var(--muted);font-size:13px}
-pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;font:12px/1.5 Consolas,monospace}
-.empty{padding:40px 12px;text-align:center;color:var(--muted)}
+.badge.ok{background:var(--ok-soft);color:var(--ok)}.badge.bad{background:var(--bad-soft);color:var(--bad)}.badge.warn{background:var(--warn-soft);color:var(--warn)}
+.card{border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:10px 0;background:var(--panel)}
+.card h3{margin:6px 0;font-size:16px}
+.card pre.body{white-space:pre-wrap;margin:6px 0;font:inherit}
+.card.dim{opacity:.6}
+.step{border-left:3px solid var(--line);padding:4px 0 4px 12px;margin:10px 0}
+.step.ok{border-color:var(--ok)}.step.bad{border-color:var(--bad)}
+details{margin-top:6px}summary{cursor:pointer;color:var(--muted);font-size:13px}
+pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px;overflow:auto;font:12px/1.5 Consolas,monospace}
+.form{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:8px 0}
+.form label{display:block;font-size:12px;color:var(--muted)}
+.form input,.form select,.form textarea{width:100%;font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink)}
+.form .wide{grid-column:1/-1}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+.empty{padding:30px 10px;text-align:center;color:var(--muted)}
+.notice{background:var(--warn-soft);color:var(--warn);border-radius:8px;padding:8px 12px;margin:8px 0;font-size:13px}
+.problems{color:var(--bad);font-size:13px;margin:4px 0}
 </style>
 </head>
 <body>
 <header>
   <h1>인사 에이전트 데모<small>localhost · 개발 전용 · 목 모드</small></h1>
-  <div>
-    <span id="total" class="badge" hidden></span>
-    <button id="runAll">전체 실행</button>
+  <div class="row">
+    <span class="badge" id="clock">시계</span>
+    <button class="ghost small" id="adv10">+10분</button>
+    <button class="ghost small" id="reset">상태 초기화</button>
   </div>
 </header>
-<div class="layout">
-  <aside class="panel list" id="list" aria-label="시나리오 목록"></aside>
-  <section class="panel main" id="main"><div class="empty">왼쪽에서 시나리오를 고르거나 <b>전체 실행</b>을 눌러 보세요.</div></section>
-</div>
+<nav id="tabs"></nav>
+<main><section class="panel" id="panel"></section></main>
+
 <script>
-const KIND = {incident:'사건',decision:'결정',case:'사례',notice:'공지',rollback_executed:'롤백 실행',
-  spec_confirmed:'기획 확정',pr_merged:'PR 머지',decision_extracted:'결정 추출',request_closed:'요청 종료'};
-const state = {scenarios: [], runs: {}, current: null};
+const KIND_LABEL = {incident:'사건',decision:'결정',case:'사례',notice:'공지',policy:'정책',fraud:'사기'};
+const STATE_LABEL = {active:'유효',candidate:'후보',superseded:'대체됨',retired:'폐기'};
+const RECORD_KINDS = ['incident','decision','case','notice','rollback_executed','spec_confirmed','pr_merged','decision_extracted','request_closed','decision_rejected'];
+const REQUESTERS = ['orchestrator','planning','support','marketing','finance','data','infra'];
 const $ = (id) => document.getElementById(id);
 const el = (tag, attrs = {}, ...kids) => {
   const n = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) { if (k === 'class') n.className = v; else n.setAttribute(k, v); }
-  for (const kid of kids) n.append(kid instanceof Node ? kid : document.createTextNode(kid ?? ''));
+  for (const [k, v] of Object.entries(attrs)) { if (k === 'class') n.className = v; else if (k === 'onclick') n.onclick = v; else n.setAttribute(k, v); }
+  for (const kid of kids) if (kid != null) n.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
   return n;
 };
+const badge = (text, cls = '') => el('span', {class: 'badge ' + cls}, text);
 async function api(path, body) {
-  const res = await fetch(path, body ? {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)} : undefined);
+  const res = await fetch(path, body === undefined ? undefined : {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
   if (!res.ok) throw new Error(path + ' ' + res.status);
   return res.json();
 }
-function renderList() {
-  const box = $('list'); box.replaceChildren();
-  for (const s of state.scenarios) {
-    const run = state.runs[s.name];
-    const ok = run && run.passed && run.deterministic;
-    const dot = el('i', {class: 'dot' + (run ? (ok ? ' ok' : ' bad') : '')});
-    const item = el('div', {class: 'item' + (state.current === s.name ? ' active' : ''), tabindex: '0'},
-      dot, el('div', {}, el('b', {}, s.title), el('span', {}, `${s.requester} · 기대: ${s.expect.status}${s.expect.outcome ? ' / ' + s.expect.outcome : ''}`)));
-    item.onclick = () => select(s.name);
-    item.onkeydown = (e) => { if (e.key === 'Enter') select(s.name); };
-    box.append(item);
+const S = {tab: 'scenarios', snap: null, scenarios: [], runs: {}, current: null, lastCall: null, filter: 'all'};
+
+/* ---------- 탭 정의: 기능을 만들 때마다 한 줄씩 늘어난다 ---------- */
+const TABS = [
+  {id: 'scenarios', label: '시나리오', render: renderScenarios},
+  {id: 'cards', label: '카드 덱', render: renderCards},
+];
+function renderTabs() {
+  const nav = $('tabs'); nav.replaceChildren();
+  for (const t of TABS) nav.append(el('button', {class: S.tab === t.id ? 'active' : '', onclick: () => { S.tab = t.id; render(); }}, t.label));
+}
+function render() {
+  renderTabs();
+  $('clock').textContent = S.snap ? '시계 ' + S.snap.clock.replace('T', ' ').slice(0, 16) + ' UTC' : '시계';
+  const tab = TABS.find((t) => t.id === S.tab);
+  $('panel').replaceChildren(); tab.render($('panel'));
+}
+async function refresh(snap) { S.snap = snap || await api('/api/state'); render(); }
+
+/* ---------- 공통 조각 ---------- */
+function jsonBox(title, data) {
+  const d = el('details'); d.append(el('summary', {}, title), el('pre', {}, JSON.stringify(data, null, 2))); return d;
+}
+function resultBadges(result) {
+  const ok = result.status === 'completed';
+  const box = el('div', {class: 'badges'}, badge('상태 ' + result.status, ok ? 'ok' : 'bad'));
+  if (result.outcome) box.append(badge('결과 ' + result.outcome));
+  if (result.fallback) box.append(badge('fallback', 'warn'));
+  if (result.reason_code) box.append(badge('입력 대기 ' + result.reason_code, 'warn'));
+  return box;
+}
+function cardView(card) {
+  const x = card.extra || {};
+  const c = el('div', {class: 'card' + (card.state === 'superseded' ? ' dim' : '')});
+  const b = el('div', {class: 'badges'}, badge(KIND_LABEL[card.kind] || card.kind), badge('확신도 ' + card.confidence, card.confidence === 'high' ? 'ok' : card.confidence === 'mid' ? 'warn' : 'bad'), badge(STATE_LABEL[card.state] || card.state, card.state === 'active' ? 'ok' : card.state === 'candidate' ? 'warn' : ''));
+  if (x.area) b.append(badge('영역 ' + x.area));
+  if (x.outcome === 'rejected') b.append(badge('기각된 안', 'bad'));
+  c.append(b, el('h3', {}, card.title), el('pre', {class: 'body'}, card.body));
+  if (card.superseded_by) c.append(el('div', {class: 'muted'}, '→ 대체한 카드: ' + card.superseded_by));
+  c.append(el('div', {class: 'muted'}, `작성 ${card.author} · ${card.card_id} · ${card.context_id}`));
+  if ((card.tags || []).length) c.append(el('div', {class: 'muted'}, '태그: ' + card.tags.join(', ')));
+  return c;
+}
+
+/* ---------- 시나리오 탭 ---------- */
+function renderScenarios(root) {
+  const box = el('div', {class: 'layout'});
+  const list = el('div', {class: 'list'});
+  const total = Object.values(S.runs);
+  const ok = total.filter((r) => r.passed && r.deterministic).length;
+  const head = el('div', {class: 'row'}, el('button', {onclick: runAll}, '전체 실행'), total.length ? badge(`${ok} / ${S.scenarios.length} 통과`, ok === S.scenarios.length ? 'ok' : 'bad') : null);
+  list.append(head);
+  for (const s of S.scenarios) {
+    const run = S.runs[s.name]; const pass = run && run.passed && run.deterministic;
+    const item = el('div', {class: 'item' + (S.current === s.name ? ' active' : ''), tabindex: '0', onclick: () => { S.current = s.name; render(); }},
+      el('i', {class: 'dot' + (run ? (pass ? ' ok' : ' bad') : '')}), el('div', {}, el('b', {}, s.title), el('span', {}, `${s.steps}단계`)));
+    list.append(item);
   }
-}
-function cardView(output) {
-  // 카드(H2 이후)면 카드 모양으로, 아직 v0 스텁(입력 그대로)이면 기록 모양으로 보여 준다.
-  const isCard = output && output.card_id && output.body;
-  const card = el('div', {class: 'card'});
-  const kind = output.kind;
-  card.append(el('span', {class: 'badge'}, isCard ? '카드 · ' + (KIND[kind] || kind) : '기록 · ' + (KIND[kind] || kind)));
-  card.append(el('h3', {}, isCard ? output.title : output.summary));
-  const dl = el('dl');
-  const add = (label, value) => { dl.append(el('dt', {}, label), el('dd', {}, value)); };
-  if (isCard) {
-    add('본문', output.body);
-    if ((output.tags || []).length) add('태그', output.tags.join(', '));
-    add('확신도', output.confidence);
-    add('상태', output.status);
-  } else {
-    add('결정 이유', output.decision_reason || '확인할 수 없음');
-    const alts = output.alternatives_considered || [];
-    const dd = el('dd'); if (alts.length) { const ul = el('ul'); alts.forEach(a => ul.append(el('li', {}, a))); dd.append(ul); } else dd.append('없음');
-    dl.append(el('dt', {}, '검토한 대안'), dd);
+  const detail = el('div');
+  const s = S.scenarios.find((x) => x.name === S.current);
+  if (!s) detail.append(el('div', {class: 'empty'}, '왼쪽에서 시나리오를 고르거나 전체 실행을 눌러 보세요.'));
+  else {
+    detail.append(el('h2', {}, s.title), el('div', {class: 'muted'}, s.description));
+    const run = S.runs[s.name];
+    if (!run) detail.append(el('div', {class: 'row'}, el('button', {onclick: () => runOne(s.name)}, '이 시나리오 실행')));
+    else {
+      detail.append(el('div', {class: 'badges'}, badge(run.passed ? '기대 결과와 일치' : '기대 결과와 다름', run.passed ? 'ok' : 'bad'), badge(`결정성 ${run.repeat}회: ${run.deterministic ? '동일' : '다름'}`, run.deterministic ? 'ok' : 'bad')));
+      run.steps.forEach((st, i) => {
+        const bad = st.problems && st.problems.length;
+        const step = el('div', {class: 'step ' + (bad ? 'bad' : 'ok')}, el('b', {}, `${i + 1}. ${st.label}`));
+        if (st.result && st.result.status) step.append(resultBadges(st.result));
+        if (bad) step.append(el('div', {class: 'problems'}, st.problems.join(' / ')));
+        if (st.result && st.result.output && Object.keys(st.result.output).length) step.append(jsonBox('결과 output', st.result.output));
+        if (st.request) step.append(jsonBox('요청 원문', st.request));
+        detail.append(step);
+      });
+      if (run.cards.length) { detail.append(el('h3', {}, `만들어진 카드 ${run.cards.length}장`)); run.cards.forEach((c) => { c.state = c.extra && c.extra.candidate ? 'candidate' : c.status; detail.append(cardView(c)); }); }
+      detail.append(el('div', {class: 'row'}, el('button', {class: 'ghost', onclick: () => runOne(s.name)}, '다시 실행')));
+    }
   }
-  const refs = output.source_refs || [];
-  const refDd = el('dd');
-  if (refs.length) { const ul = el('ul'); refs.forEach(r => ul.append(el('li', {}, r))); refDd.append(ul); }
-  else refDd.append(el('span', {class: 'badge warn'}, '근거 없음 · 확인할 수 없음'));
-  dl.append(el('dt', {}, '근거'), refDd);
-  card.append(dl);
-  return card;
+  box.append(list, detail); root.append(box);
 }
-function renderMain() {
-  const run = state.runs[state.current];
-  const s = state.scenarios.find(x => x.name === state.current);
-  const box = $('main'); box.replaceChildren();
-  if (!s) { box.append(el('div', {class: 'empty'}, '시나리오를 고르세요.')); return; }
-  box.append(el('h2', {}, s.title), el('div', {class: 'muted'}, s.description));
-  if (!run) {
-    const b = el('button', {}, '이 시나리오 실행'); b.onclick = () => runOne(s.name);
-    box.append(el('div', {style: 'margin-top:16px'}, b)); return;
-  }
-  const res = run.result;
-  box.append(el('div', {class: 'badges'},
-    el('span', {class: 'badge ' + (run.passed ? 'ok' : 'bad')}, run.passed ? '기대 결과와 일치' : '기대 결과와 다름'),
-    el('span', {class: 'badge ' + (run.deterministic ? 'ok' : 'bad')}, `결정성 ${run.repeat}회: ${run.deterministic ? '동일' : '다름'}`),
-    el('span', {class: 'badge'}, `상태 ${res.status}${res.outcome ? ' / ' + res.outcome : ''}`),
-    el('span', {class: 'badge'}, `${run.elapsed_ms}ms`)));
-  if (res.status === 'completed' && res.output) {
-    if (!(res.output.card_id && res.output.body))
-      box.append(el('div', {class: 'notice'}, '현재 v0 스텁: 입력을 그대로 돌려줍니다. 카드 조립기(H2)가 완성되면 카드로 표시됩니다.'));
-    box.append(cardView(res.output));
-  } else {
-    box.append(el('div', {class: 'reject'}, `거부됨: ${res.outcome || res.status}`));
-  }
-  const d = el('details'); d.append(el('summary', {}, '요청·응답 원문(JSON)'));
-  d.append(el('pre', {}, JSON.stringify({request: run.request, response: res}, null, 2)));
-  box.append(d);
-  const again = el('button', {class: 'ghost', style: 'margin-top:12px'}, '다시 실행'); again.onclick = () => runOne(s.name);
-  box.append(again);
+async function runOne(name) { S.runs[name] = await api('/api/run', {name, repeat: 2}); render(); }
+async function runAll() {
+  const all = await api('/api/run-all', {});
+  all.runs.forEach((r) => { S.runs[r.name] = r; }); render();
 }
-function select(name) { state.current = name; renderList(); renderMain(); }
-async function runOne(name) {
-  state.runs[name] = await api('/api/run', {name, repeat: 2});
-  renderList(); renderMain(); updateTotal();
-}
-function updateTotal() {
-  const done = Object.values(state.runs);
-  if (!done.length) return;
-  const ok = done.filter(r => r.passed && r.deterministic).length;
-  const t = $('total'); t.hidden = false; t.textContent = `${ok} / ${state.scenarios.length} 통과`;
-  t.className = 'badge ' + (ok === state.scenarios.length ? 'ok' : 'bad');
-}
-$('runAll').onclick = async (e) => {
-  e.target.disabled = true;
-  try {
-    const all = await api('/api/run-all', {});
-    all.runs.forEach(r => { state.runs[r.name] = r; });
-    renderList(); renderMain(); updateTotal();
-  } finally { e.target.disabled = false; }
+
+/* ---------- 카드 덱 탭 ---------- */
+const PRESETS = {
+  '결정(이유·대안·근거 있음)': {kind: 'spec_confirmed', requester: 'planning', summary: '결제 재시도를 최대 2회로 확정했다', reason: '중복 결제 위험을 줄이기 위해', alternatives: '재시도 없음, 무제한 재시도', refs: 'pr:412, area:payment'},
+  '기각한 안': {kind: 'decision_rejected', requester: 'planning', summary: '결제 서버 캐시 도입안을 기각했다', reason: '결제 정합성 위험', alternatives: '현행 유지', refs: 'req:88, area:payment'},
+  '결정 없음(기록만)': {kind: 'pr_merged', requester: 'planning', summary: '결제 재시도 로직 PR이 머지됐다', reason: '', alternatives: '', refs: 'pr:412'},
+  '근거 없는 결정(후보)': {kind: 'decision', requester: 'orchestrator', summary: '야간 지연 주문 대응을 보류하기로 했다', reason: '', alternatives: '', refs: ''},
 };
+function renderCards(root) {
+  const cards = (S.snap && S.snap.cards) || [];
+  const form = el('div', {class: 'form'});
+  const f = {};
+  const field = (key, label, node, wide) => { f[key] = node; form.append(el('div', {class: wide ? 'wide' : ''}, el('label', {}, label), node)); };
+  const select = (opts, val) => { const s = el('select'); opts.forEach((o) => s.append(el('option', {value: o}, o))); s.value = val; return s; };
+  field('kind', '기록 종류(kind)', select(RECORD_KINDS, 'spec_confirmed'));
+  field('requester', '요청자', select(REQUESTERS, 'planning'));
+  field('context', '사건 번호(context_id)', el('input', {value: 'ctx_req_' + String(Date.now()).slice(-4)}));
+  field('summary', '요약', el('input', {value: ''}), true);
+  field('reason', '결정 이유 (비우면 없음)', el('input'), true);
+  field('alternatives', '검토한 대안 (쉼표로 구분)', el('input'), true);
+  field('refs', '근거 참조 (쉼표로 구분, area:영역 으로 영역 지정)', el('input'), true);
+  const out = el('div');
+  const preset = el('div', {class: 'row'}, el('span', {class: 'muted'}, '예시:'));
+  Object.entries(PRESETS).forEach(([name, p]) => preset.append(el('button', {class: 'ghost small', onclick: () => { f.kind.value = p.kind; f.requester.value = p.requester; f.summary.value = p.summary; f.reason.value = p.reason; f.alternatives.value = p.alternatives; f.refs.value = p.refs; }}, name)));
+  const list = (v) => v.split(',').map((x) => x.trim()).filter(Boolean);
+  const send = el('button', {onclick: async () => {
+    const input = {context_id: f.context.value, kind: f.kind.value, summary: f.summary.value || '(요약 없음)', author: f.requester.value, source_refs: list(f.refs.value), alternatives_considered: list(f.alternatives.value)};
+    if (f.reason.value.trim()) input.decision_reason = f.reason.value.trim();
+    const res = await api('/api/call', {skill: 'record_case', requester: f.requester.value, input, context_id: f.context.value});
+    S.lastCall = res; S.snap = res.state; render();
+  }}, '기록 보내기');
+  root.append(el('h3', {}, 'hr에 기록 보내기 (record_case)'), preset, form, el('div', {class: 'row'}, send));
+  if (S.lastCall && S.lastCall.result) { out.append(resultBadges(S.lastCall.result), jsonBox('결과 원문', S.lastCall.result)); root.append(out); }
+  const states = ['all', 'active', 'candidate', 'superseded'];
+  const bar = el('div', {class: 'row'}, el('b', {}, `카드 ${cards.length}장`));
+  states.forEach((st) => bar.append(el('button', {class: (S.filter === st ? '' : 'ghost ') + 'small', onclick: () => { S.filter = st; render(); }}, st === 'all' ? '전체' : STATE_LABEL[st])));
+  root.append(el('hr'), bar);
+  const shown = cards.filter((c) => S.filter === 'all' || c.state === S.filter);
+  if (!shown.length) root.append(el('div', {class: 'empty'}, '카드가 없어요. 위에서 기록을 보내 보세요.'));
+  shown.forEach((c) => root.append(cardView(c)));
+  const recs = (S.snap && S.snap.records) || [];
+  if (recs.length) { root.append(el('h3', {}, `기록만 저장된 것 ${recs.length}건`)); recs.forEach((r) => root.append(el('div', {class: 'card'}, badge(r.kind), ' ', r.summary, el('div', {class: 'muted'}, r.context_id)))); }
+}
+
+/* ---------- 시작 ---------- */
+$('adv10').onclick = async () => { await refresh(await api('/api/clock/advance', {minutes: 10})); };
+$('reset').onclick = async () => { S.lastCall = null; await refresh(await api('/api/reset', {})); };
 (async () => {
-  state.scenarios = await api('/api/scenarios');
-  state.current = state.scenarios[0]?.name ?? null;
-  renderList(); renderMain();
+  S.scenarios = await api('/api/scenarios'); S.current = S.scenarios[0] ? S.scenarios[0].name : null;
+  await refresh();
 })();
 </script>
 </body>

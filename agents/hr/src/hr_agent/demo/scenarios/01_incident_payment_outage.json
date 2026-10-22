@@ -2,18 +2,29 @@
   "title": "결제 장애 사건 종료 기록",
   "description": "통합 에이전트가 시나리오 A(결제 API 장애)를 마친 뒤 사건 기록을 요청한다. 가장 기본이 되는 사건 카드.",
   "requester": "orchestrator",
-  "expect": { "status": "completed" },
+  "expect": {
+    "status": "completed",
+    "outcome": "card_created",
+    "output": {
+      "confidence": "high"
+    },
+    "card_count": 1
+  },
   "input": {
     "context_id": "ctx_inc_0001",
     "kind": "incident",
     "summary": "결제 API 지연으로 주문 실패율이 올라 롤백으로 복구했다. 점검 공지와 보상 쿠폰까지 처리 후 사건 종료.",
     "decision_reason": "직전 배포 이후 오류가 급증해 롤백이 가장 빠르고 안전한 조치였다.",
-    "alternatives_considered": ["서비스 재시작", "결제 트래픽 일부 차단"],
+    "alternatives_considered": [
+      "서비스 재시작",
+      "결제 트래픽 일부 차단"
+    ],
     "source_refs": [
       "event:shop.degraded:evt_0001",
       "tool_call:infra.diagnose_incident:tc_0012",
       "execution:exe_0007",
-      "event:shop.recovered:evt_0042"
+      "event:shop.recovered:evt_0042",
+      "area:payment"
     ],
     "author": "orchestrator"
   }
