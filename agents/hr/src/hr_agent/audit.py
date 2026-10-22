@@ -48,3 +48,20 @@ class AuditLog:
 
     def kinds(self, context_id: str) -> list[str]:
         return [row["kind"] for row in self.list(context_id)]
+
+    def contexts(self, limit: int = 50) -> list[dict[str, Any]]:
+        """감사 기록이 있는 사건(`context_id`) 목록: 최근 기록이 있는 순서, 건수와 마지막 시각."""
+        return self._store.all(
+            "SELECT context_id, COUNT(*) AS entries, MIN(created_at) AS first_at,"
+            " MAX(created_at) AS last_at FROM audit_logs GROUP BY context_id"
+            " ORDER BY MAX(id) DESC LIMIT ?",
+            (limit,),
+        )
+
+    def timeline(self, context_id: str) -> list[dict[str, Any]]:
+        """한 사건에서 hr이 한 일을 시간순(기록 순)으로 돌려준다. 값은 기록된 그대로다."""
+        rows = self.list(context_id, limit=1000)
+        return [
+            {"seq": n, "at": r["created_at"], "kind": r["kind"], "payload": r["payload"]}
+            for n, r in enumerate(rows, start=1)
+        ]

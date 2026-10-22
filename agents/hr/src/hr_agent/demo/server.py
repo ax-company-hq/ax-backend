@@ -122,6 +122,19 @@ async def run_timer(req: TimerRequest) -> dict[str, Any]:
         return {"started": started, "state": await snapshot(svc)}
 
 
+@demo_app.get("/api/audit")
+async def audit_contexts() -> dict[str, Any]:
+    async with _lock:
+        return {"contexts": interactive().audit.contexts()}
+
+
+@demo_app.get("/api/audit/{context_id}")
+async def audit_timeline(context_id: str) -> dict[str, Any]:
+    async with _lock:
+        svc = interactive()
+        return {"context_id": context_id, "timeline": svc.audit.timeline(context_id)}
+
+
 @demo_app.post("/api/holds/{review_id}/decide")
 async def decide_hold(review_id: str, req: DecideRequest) -> dict[str, Any]:
     async with _lock:
