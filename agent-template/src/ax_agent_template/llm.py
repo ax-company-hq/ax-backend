@@ -109,10 +109,14 @@ class LLMClient:
                 f"{env_prefix(self.dept)}_EMBED_MODEL 또는 EMBED_MODEL이 없다"
             )
         if not self.settings.base_url:
-            raise LLMNotConfiguredError(f"{env_prefix(self.dept)}_LLM_BASE_URL 또는 LLM_BASE_URL이 없다")
+            raise LLMNotConfiguredError(
+                f"{env_prefix(self.dept)}_LLM_BASE_URL 또는 LLM_BASE_URL이 없다"
+            )
         if not texts:
             return []
-        headers = {"Authorization": f"Bearer {self.settings.api_key}"} if self.settings.api_key else {}
+        headers = (
+            {"Authorization": f"Bearer {self.settings.api_key}"} if self.settings.api_key else {}
+        )
         url = self.settings.base_url.rstrip("/") + "/embeddings"
         async with httpx.AsyncClient(timeout=30.0) as http:
             response = await http.post(
