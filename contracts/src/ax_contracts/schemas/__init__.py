@@ -60,7 +60,21 @@ from ax_contracts.schemas.planning import (
     VerifyRollbackTargetInput,
     VerifyRollbackTargetOutput,
 )
-from ax_contracts.schemas.record import Card, RecordCase, RecordKind
+from ax_contracts.schemas.record import (
+    Card,
+    CardDraft,
+    CardGetInput,
+    CardGetOutput,
+    CardHit,
+    CardLinkInput,
+    CardLinkOutput,
+    CardSearchInput,
+    CardSearchOutput,
+    CardWriteInput,
+    CardWriteOutput,
+    RecordCase,
+    RecordKind,
+)
 
 __all__ = [
     "EVENT_DATA_MODELS",
@@ -71,6 +85,16 @@ __all__ = [
     "AxModel",
     "Capabilities",
     "Card",
+    "CardDraft",
+    "CardGetInput",
+    "CardGetOutput",
+    "CardHit",
+    "CardLinkInput",
+    "CardLinkOutput",
+    "CardSearchInput",
+    "CardSearchOutput",
+    "CardWriteInput",
+    "CardWriteOutput",
     "CampaignCreatedData",
     "ContextPrefix",
     "CouponIssuedData",
