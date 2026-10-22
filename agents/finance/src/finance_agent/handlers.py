@@ -58,6 +58,7 @@ class Ledger:
         self.verify_log: list[dict[str, Any]] = []  # 대시보드 조회용 판정 기록
         self.done: dict[str, AgentResult] = {}  # 멱등성 키 → 끝난 상태 변경 결과
         self.market_ops: list[dict[str, Any]] = []  # 판매자 심사·정산 보류 결과 기록
+        self.loss_reports: dict[str, dict[str, Any]] = {}  # context_id → 마지막 손실 리포트
 
     def compensation(self, context_id: str) -> dict[str, int]:
         return self.coupons.get(context_id, {"count": 0, "total": 0})
@@ -278,6 +279,9 @@ async def loss_aggregation(request: AgentRequest) -> AgentResult:
             summary=summary,
         )
     refs = [impact.ref] if impact else []
+    state().ledger.loss_reports[context_id] = report.model_dump(mode="json") | {
+        "at": _now().isoformat()
+    }
     return _result(
         request,
         TaskStatus.COMPLETED,
@@ -331,6 +335,7 @@ async def seller_review(request: AgentRequest) -> AgentResult:
         return data
 
     def done(output: SellerReviewOutput, evidence: Evidence, **status: Any) -> AgentResult:
+        _log_market_op(request, "seller_review", output.model_dump(mode="json"))
         return _result(
             request,
             output=output.model_dump(mode="json"),
@@ -383,7 +388,6 @@ async def seller_review(request: AgentRequest) -> AgentResult:
     result = done(output, evidence, **mapped)
     if result.status == TaskStatus.COMPLETED:
         state().ledger.done[key] = result
-    _log_market_op(request, "seller_review", output.model_dump(mode="json"))
     return result
 
 

@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from ax_agent_template.llm import MockLLMClient
 from ax_contracts.schemas import ExecuteDecision
 from support_agent import drafting, guard, handlers, kb
-from support_agent.main import app, load_card
+from support_agent.main import ALL_HANDLERS, app, load_card
 from support_agent.schemas import LLMClassification, LLMDrafts
 from support_agent.store import InquiryStore
 
@@ -65,7 +65,7 @@ def create(client: TestClient, key: str = "k-create-1", **untrusted: str) -> dic
 def test_agent_card_matches_handlers_and_is_served(client: TestClient) -> None:
     card = load_card()
     assert card.name == "support"
-    assert {s.id for s in card.skills} == set(handlers.HANDLERS)
+    assert {s.id for s in card.skills} == set(ALL_HANDLERS)
     assert client.get("/.well-known/agent-card.json").json()["name"] == "support"
 
 
