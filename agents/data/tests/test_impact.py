@@ -19,9 +19,7 @@ def _order(order_id: str, buyer_id: str, amount: int) -> FailedOrder:
 
 
 def test_normal() -> None:
-    result = ShopFailedOrdersResult(
-        orders=[_order("o1", "b1", 10000), _order("o2", "b2", 25000)]
-    )
+    result = ShopFailedOrdersResult(orders=[_order("o1", "b1", 10000), _order("o2", "b2", 25000)])
     assert aggregate_impact(result) == ImpactCounts(2, 2, 35000)
 
 
