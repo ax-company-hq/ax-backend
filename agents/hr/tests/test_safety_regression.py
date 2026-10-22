@@ -180,15 +180,17 @@ def test_a_gate_that_does_not_execute_changes_nothing(
     if mode == "raise":
         assert res["status"] == "failed"
     else:
-        assert res["outcome"] in {"gate_rejected", "gate_held", "rejected"} or res["status"] in {
-            "input-required",
-            "completed",
+        # 실행되지 않았음을 어떤 방식으로든 알린다(거절·보류·판정 실패)
+        assert res.get("outcome") in {
+            "gate_rejected",
+            "gate_held",
+            "GATE_UNAVAILABLE",
+            "rejected",
+            None,
         }
+        assert res["status"] in {"completed", "input-required", "failed"}
     after = state(svc)
-    if skill == "confirm_offboarding":  # 관문이 거절하면 퇴직 변경만 취소된다(사람·명부는 그대로)
-        for key in ("changes", "locks"):
-            before.pop(key), after.pop(key)
-    if skill == "confirm_handover":  # 보류되면 인수인계가 '보류' 상태가 될 뿐 확정되지 않는다
+    if mode == "held" and skill == "confirm_handover":  # 보류는 확정이 아니다
         assert all(h["status"] != "confirmed" for h in after["handovers"])
         before.pop("handovers"), after.pop("handovers")
     assert after == before

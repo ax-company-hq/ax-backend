@@ -22,14 +22,18 @@ from hr_agent.cards.mapping import DECISION_KINDS
 
 # 이유를 직접 밝히는 표지: "이유는 …", "사유: …", "근거는 …"
 _MARKER = re.compile(
-    r"(?:이유는|이유\s*[:：]|사유는|사유\s*[:：]|근거는|근거\s*[:：]|목적은)\s*([^.()\n]+)"
+    r"(?:이유는|이유\s*[:：]|사유는|사유\s*[:：]|근거는|근거\s*[:：]|목적은)"
+    r"\s*([^.()\n]+)"
 )
+
+_NO_REASON_WORDS = ("없", "불명", "미정", "아직")
 
 # 이유 절의 끝말: "…하기 위해", "…때문에", "…이므로", "…를 고려해" 등.
 # "위해 요소"처럼 명사로 쓰인 경우는 이유가 아니다.
 _CONNECTIVE = (
     r"(?:위해서?(?!\s*(?:요소|요인|물질|행위))|위하여|때문에|덕분에|탓에"
-    r"|(?:으)?로 인해|인해|(?:으)?므로|(?:이)?라서|고려해서?|감안해서?|대비해서?|[을를] 위한|목적"
+    r"|(?:으)?로 인해|(?<![가-힣])인해|(?:으)?므로|(?:이)?라서|고려해서?|감안해서?|대비해서?"
+    r"|[을를] 위한|목적"
     r"|(?:으)?려고|[이가]\s[가-힣]+(?:어|여|아|져|겨|해)서)"
 )
 # 절은 마침표·쉼표·괄호·줄표 같은 경계 뒤에서 시작한다.
@@ -38,10 +42,16 @@ _REASON = re.compile(r"([^.,;()\n—–]*?" + _CONNECTIVE + r")")
 # 기각 표현: 결정 종류 `decision`·`decision_extracted`일 때만 문장에서 읽는다(확신도는 낮게).
 _REJECT = re.compile(
     r"(?:기각|반려)(?:했|한다|하기로|됐|된다|되었|함|하였|처리)"
-    r"|[가-힣]지\s*않기로\s*(?:했|한다|함|결정|하였)"
-    r"|(?:채택|도입|적용|추가|승인|진행|허용|시행|반영)하지\s*(?:않았|않는다|않음)"
+    r"|(?:채택|도입|적용|추가|승인|진행|허용|시행|반영)하지\s*(?:않기로|않았|않는다|않음)"
+    r"|받아들이지\s*(?:않기로|않았|않는다)"
 )
-_NOT_REJECT = re.compile(r"철회|(?:기각|반려)(?:하지|되지)\s*(?:않|못)")
+# 기각이 아닌 표현: 부정("기각하지 않고")·기각의 철회·다시 채택·"기각했던 안을 …"
+_NOT_REJECT = re.compile(
+    r"(?:기각|반려)(?:하지|되지)\s*(?:않|못)"
+    r"|(?:기각|반려)[^.]{0,10}철회"
+    r"|(?:기각|반려)(?:했|됐|되었)던"
+    r"|다시\s*(?:채택|승인|도입)|재승인|재채택|번복"
+)
 _INFER_KINDS = frozenset({RecordKind.DECISION, RecordKind.DECISION_EXTRACTED})
 
 
@@ -68,7 +78,7 @@ def extract_reason(summary: str) -> str | None:
     marked = _MARKER.search(summary)
     if marked:
         clause = marked.group(1).strip(" ,")
-        if clause:
+        if clause and not clause.startswith(_NO_REASON_WORDS):  # "근거는 없지만 …"은 이유가 아니다
             return clause
     match = _REASON.search(summary)
     if not match:

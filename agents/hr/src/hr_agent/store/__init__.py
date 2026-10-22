@@ -186,10 +186,12 @@ class Store:
     def execute(self, sql: str, params: tuple[Any, ...] | list[Any] = ()) -> int:
         """쓰기 한 문장을 실행한다(자동 확정, `transaction()` 안에서는 묶음 단위로 확정).
 
-        마지막 행 ID(없으면 영향 행 수)를 돌려준다.
+        INSERT는 마지막 행 ID(없으면 영향 행 수), UPDATE·DELETE는 영향 행 수를 돌려준다.
         """
         with self._lock:
             cur = self._conn.execute(sql, params)
+            if sql.lstrip().upper().startswith(("UPDATE", "DELETE")):
+                return cur.rowcount
             return cur.lastrowid if cur.lastrowid else cur.rowcount
 
     def one(self, sql: str, params: tuple[Any, ...] | list[Any] = ()) -> dict[str, Any] | None:

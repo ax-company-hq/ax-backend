@@ -27,6 +27,7 @@ from ax_contracts.schemas import (
     ConfirmOffboardingOutput,
     ConfirmReassignmentInput,
     ConfirmReassignmentOutput,
+    HoldReason,
     RequestAssignmentChangeInput,
     RequestAssignmentChangeOutput,
 )
@@ -34,6 +35,7 @@ from hr_agent.assignment import rules
 from hr_agent.clients.safety import VerifyOutcome
 from hr_agent.results import (
     completed,
+    failed,
     gate_blocked,
     input_required,
     invalid_input,
@@ -44,6 +46,13 @@ from hr_agent.results import (
 from hr_agent.roster import store as roster
 from hr_agent.services import Services
 from hr_agent.util import dumps, loads, stable_id
+
+# 사람(또는 검증자)이 거절했거나 보류 기한이 지난 경우의 사유. 그 밖의 거부는 판정 실패다.
+_DECIDED_REJECTIONS = (HoldReason.VERIFY_REJECTED, HoldReason.REVIEW_TIMEOUT)
+
+
+class _Stale(Exception):
+    """확정하려는 사이 변경의 상태가 바뀌었다."""
 
 
 class _Rollback(Exception):
@@ -67,7 +76,15 @@ def _blocking_lock(svc: Services, change_id: str, member: str, area: str) -> str
         if not row or row["owner"] == change_id:
             continue
         if now - datetime.fromisoformat(row["created_at"]) >= ttl:
-            svc.store.execute("DELETE FROM locks WHERE key = ?", (key,))
+            # 오래 방치된 변경은 만료로 닫고 잠금을 푼다(만료된 변경은 더 확정할 수 없다)
+            owner = row["owner"]
+            svc.store.execute(
+                "UPDATE assignment_changes SET status = 'expired' WHERE change_id = ?"
+                " AND status IN ('requested', 'confirmed')",
+                (owner,),
+            )
+            svc.store.execute("DELETE FROM locks WHERE owner = ?", (owner,))
+            svc.audit.record("ctx_system", "assignment.expired", {"id": owner})
             continue
         return key
     return None
@@ -83,6 +100,19 @@ def _take(svc: Services, change_id: str, member: str, area: str) -> None:
 
 def _release(svc: Services, change_id: str) -> None:
     svc.store.execute("DELETE FROM locks WHERE owner = ?", (change_id,))
+
+
+def _hold_lock(svc: Services, change: dict[str, Any]) -> str | None:
+    """진행 중인 변경이 잠금을 쥐고 있게 한다(없으면 다시 잡고, 시각을 새로 한다).
+
+    다른 변경이 잡고 있으면 그 키를 돌려준다(이 변경은 더 진행할 수 없다).
+    """
+    blocked = _blocking_lock(svc, change["change_id"], change["member_id"], change["area"])
+    if blocked:
+        return blocked
+    svc.store.execute("DELETE FROM locks WHERE owner = ?", (change["change_id"],))
+    _take(svc, change["change_id"], change["member_id"], change["area"])
+    return None
 
 
 # ---- 조회 ----------------------------------------------------------------------
@@ -129,23 +159,40 @@ def _duplicate(request: AgentRequest, svc: Services, change: dict[str, Any]) -> 
     )
 
 
-def _reopen_offboarding(
+async def _reopen_offboarding(
     request: AgentRequest, svc: Services, change: dict[str, Any]
 ) -> AgentResult:
-    """거절·만료로 취소된 퇴직을 같은 요청으로 다시 연다(재배치는 이미 끝났으므로 퇴직 확정부터)."""
-    blocked = _blocking_lock(svc, change["change_id"], change["member_id"], change["area"])
+    """거절·만료로 취소된 퇴직을 같은 요청으로 다시 연다(재배치는 이미 끝났으므로 퇴직 확정부터).
+
+    다시 열기도 상태 변경이라 관문을 거치고(시도 번호별 키), 다른 변경이 잠금을 잡았으면 못 연다.
+    """
+    cid = change["change_id"]
+    blocked = _blocking_lock(svc, cid, change["member_id"], change["area"])
     if blocked:
         return refused(request, "LOCKED", f"같은 대상의 다른 변경이 진행 중이다: {blocked}")
-    _take(svc, change["change_id"], change["member_id"], change["area"])
-    _set(svc, change["change_id"], status="confirmed")
-    svc.audit.record(request.meta.context_id, "offboarding.reopened", {"id": change["change_id"]})
-    fresh = get_change(svc, change["change_id"])
+    target = f"{cid}#reopen{change['attempts']}"
+    decision = await svc.gate.execute(
+        "request_assignment_change",
+        {"change_id": cid, "summary": f"퇴직 다시 열기 {change['member_id']}", "target": target},
+        with_key(request.meta, f"request_assignment_change:{target}"),
+        make_evidence(svc.clock, "취소된 퇴직을 다시 연다", [cid]),
+    )
+    if decision.status != "executed":
+        return gate_blocked(request, decision)
+    _take(svc, cid, change["member_id"], change["area"])
+    blocked = _blocking_lock(svc, cid, change["member_id"], change["area"])
+    if blocked:
+        _release(svc, cid)
+        return refused(request, "LOCKED", f"같은 대상의 다른 변경이 진행 중이다: {blocked}")
+    _set(svc, cid, status="confirmed")
+    svc.audit.record(request.meta.context_id, "offboarding.reopened", {"id": cid})
+    fresh = get_change(svc, cid)
     assert fresh is not None
     return completed(
         request,
         _output(fresh, svc),
         outcome="reopened",
-        evidence=make_evidence(svc.clock, "취소된 퇴직을 다시 열었다", [change["change_id"]]),
+        evidence=make_evidence(svc.clock, "취소된 퇴직을 다시 열었다", [cid]),
     )
 
 
@@ -170,8 +217,20 @@ async def request_assignment_change(svc: Services, request: AgentRequest) -> Age
         return refused(request, "UNKNOWN_AREA", f"알 수 없는 영역: {area}")
     change_id = stable_id("chg_", request.meta.context_id, kind, member, area)
     existing = get_change(svc, change_id)
-    if existing is not None and existing["status"] == "cancelled" and kind == "offboarding":
-        return _reopen_offboarding(request, svc, existing)  # 재배치가 끝나 이미 영역에 없다
+    if params.successor_id == member:
+        return invalid_input(request, "본인을 후임으로 지정할 수 없다")
+    if params.successor_id and not roster.active_member(svc.store, params.successor_id):
+        return refused(request, "UNKNOWN_MEMBER", f"재직 중인 사람이 아니다: {params.successor_id}")
+    if existing is not None:  # 같은 요청의 반복: 소속·재직이 이미 바뀌었어도 먼저 알아본다
+        if params.successor_id and existing["successor_id"] not in (None, params.successor_id):
+            return refused(
+                request,
+                "CONFLICT",
+                f"같은 사건에서 이미 다른 후임({existing['successor_id']})으로 요청했다",
+            )
+        if existing["status"] == "cancelled" and kind == "offboarding":
+            return await _reopen_offboarding(request, svc, existing)
+        return _duplicate(request, svc, existing)
     in_area = member in {e.member_id for e in roster.entries(svc.store, area)}
     if kind == "join":
         if in_area:
@@ -181,22 +240,6 @@ async def request_assignment_change(svc: Services, request: AgentRequest) -> Age
             return refused(request, "UNKNOWN_MEMBER", f"재직 중인 사람이 아니다: {member}")
         if not in_area:
             return refused(request, "NOT_IN_AREA", f"{member}은(는) {area} 영역 담당이 아니다")
-    if params.successor_id:
-        if params.successor_id == member:
-            return invalid_input(request, "본인을 후임으로 지정할 수 없다")
-        if not roster.active_member(svc.store, params.successor_id):
-            return refused(
-                request, "UNKNOWN_MEMBER", f"재직 중인 사람이 아니다: {params.successor_id}"
-            )
-
-    if existing is not None:
-        if params.successor_id and existing["successor_id"] not in (None, params.successor_id):
-            return refused(
-                request,
-                "CONFLICT",
-                f"같은 사건에서 이미 다른 후임({existing['successor_id']})으로 요청했다",
-            )
-        return _duplicate(request, svc, existing)
     blocked = _blocking_lock(svc, change_id, member, area)
     if blocked:
         return refused(request, "LOCKED", f"같은 대상의 다른 변경이 진행 중이다: {blocked}")
@@ -341,8 +384,19 @@ async def confirm_reassignment(svc: Services, request: AgentRequest) -> AgentRes
             return invalid_input(request, "입사는 successor_id에 입사자 본인을 넣는다")
     elif not roster.active_member(svc.store, successor) or successor == member:
         return invalid_input(request, "후임이 올바르지 않다(재직 중인 다른 사람이어야 한다)")
+    elif change["successor_id"] and successor != change["successor_id"]:
+        return refused(
+            request,
+            "CONFLICT",
+            f"요청 때 정한 후임({change['successor_id']})과 다르다(새 요청으로 다시 시작한다)",
+        )
+    lost = _hold_lock(svc, change)  # 이 변경이 아직 잠금을 쥐고 있어야 한다
+    if lost:
+        return refused(request, "LOCK_LOST", f"다른 변경이 같은 대상을 잡고 있다: {lost}")
 
     ops = _ops_for(svc, change, successor)
+    if not ops:
+        return refused(request, "NOTHING_TO_APPLY", "적용할 변경이 없다(이미 영역에 없는 사람이다)")
     coverage, _ = rules.simulate(svc.store, ops)
     summary = f"{kind} 재배치 {member} → {successor} ({change['area']})"
     evidence = make_evidence(svc.clock, summary, [change["change_id"]])
@@ -378,6 +432,13 @@ async def confirm_reassignment(svc: Services, request: AgentRequest) -> AgentRes
 
     try:
         with svc.store.transaction():  # 적용 · 적용 뒤 검증 · 상태 변경은 한 묶음이다
+            claimed = svc.store.execute(
+                "UPDATE assignment_changes SET updated_at = ? WHERE change_id = ?"
+                " AND status = 'requested'",
+                (svc.clock().isoformat(), change["change_id"]),
+            )
+            if claimed != 1:  # 그사이 다른 확정이 먼저 끝났다
+                raise _Stale()
             for area, role, who, on in ops:
                 roster.set_active(svc.store, area, role, who, on)
             if kind in ("transfer", "offboarding"):  # 앞으로의 교대도 후임이 이어받는다
@@ -391,6 +452,8 @@ async def confirm_reassignment(svc: Services, request: AgentRequest) -> AgentRes
             if kind == "join":
                 roster.add_member(svc.store, member)
             _set(svc, change["change_id"], status="confirmed", successor_id=successor)
+    except _Stale:
+        return refused(request, "BAD_STATE", "다른 확정이 먼저 처리됐다")
     except _Rollback as rollback:
         svc.audit.record(
             request.meta.context_id, "reassignment.undone", {"id": change["change_id"]}
@@ -466,8 +529,13 @@ async def confirm_offboarding(svc: Services, request: AgentRequest) -> AgentResu
         return _off_result(request, svc, change, "confirmed", None, "duplicate")
     if change["status"] == "cancelled":
         return refused(request, "CANCELLED", "취소된 퇴직 요청이다(새 요청으로 다시 시작한다)")
+    if change["status"] == "expired":
+        return refused(request, "EXPIRED", "오래 방치돼 만료된 변경이다(새 요청으로 다시 시작한다)")
     if change["status"] != "confirmed":
         return refused(request, "REASSIGN_FIRST", "재배치 확정이 먼저 필요하다")
+    lost = _hold_lock(svc, change)
+    if lost:
+        return refused(request, "LOCK_LOST", f"다른 변경이 같은 대상을 잡고 있다: {lost}")
 
     member = change["member_id"]
     summary = f"퇴직 확정 요청: {member} ({change['area']})"
@@ -481,6 +549,12 @@ async def confirm_offboarding(svc: Services, request: AgentRequest) -> AgentResu
     if decision.status == "held":
         svc.audit.record(request.meta.context_id, "offboarding.held", {"id": change["change_id"]})
         return _off_result(request, svc, change, "held", decision.review_id, "held", evidence)
+    if decision.status != "executed" and decision.hold_reason not in _DECIDED_REJECTIONS:
+        # 안전 레이어가 판정하지 못했다(무응답·키 충돌 등): 사람이 거절한 것이 아니므로 그대로 둔다
+        svc.audit.record(
+            request.meta.context_id, "offboarding.gate_unavailable", {"id": change["change_id"]}
+        )
+        return failed(request, "GATE_UNAVAILABLE", "안전 레이어가 판정하지 못해 적용하지 않았다")
     if decision.status != "executed":
         # 사람이 거절했거나 기한이 지났다: 퇴직만 취소하고 잠금을 푼다(넘긴 담당은 그대로)
         _set(svc, change["change_id"], status="cancelled", attempts=change["attempts"] + 1)

@@ -54,7 +54,8 @@ def reask_stale(store: Store, handover_id: str, now: datetime, ttl_minutes: int)
     again: list[str] = []
     for q in store.all(
         "SELECT question_id, question, asked_count, created_at FROM handover_questions"
-        " WHERE handover_id = ? AND status = 'open'",
+        " WHERE handover_id = ? AND status = 'open'"
+        " AND handover_id IN (SELECT handover_id FROM handovers WHERE status != 'confirmed')",
         (handover_id,),
     ):
         if now - datetime.fromisoformat(q["created_at"]) < timedelta(minutes=ttl_minutes):

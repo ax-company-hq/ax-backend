@@ -97,8 +97,15 @@ class HttpMemoryClient:
         self._http = http_client
 
     async def _request(
-        self, method: str, path: str, *, json: Any = None, params: dict[str, Any] | None = None
+        self,
+        method: str,
+        path: str,
+        *,
+        json: Any = None,
+        params: dict[str, Any] | None = None,
+        allow_missing: bool = False,
     ) -> Any:
+        """`{"data": ...}` 봉투의 data를 돌려준다. 404는 `allow_missing`일 때만 None이다."""
         client = self._http or httpx.AsyncClient()
         try:
             response = await client.request(
@@ -113,14 +120,17 @@ class HttpMemoryClient:
         finally:
             if self._http is None:
                 await client.aclose()
-        if response.status_code == 404:
+        if response.status_code == 404 and allow_missing:
             return None
         if response.status_code >= 400:
             raise UpstreamError("memory", f"{method} {path}: http {response.status_code}")
         try:
-            return response.json().get("data")
-        except (ValueError, AttributeError) as exc:
+            envelope = response.json()
+        except ValueError as exc:
             raise UpstreamError("memory", f"{method} {path}: 응답이 JSON이 아니다") from exc
+        if not isinstance(envelope, dict) or "data" not in envelope:
+            raise UpstreamError("memory", f"{method} {path}: 응답에 data가 없다")
+        return envelope["data"]
 
     @staticmethod
     def _card(raw: Any) -> Card:
@@ -137,7 +147,7 @@ class HttpMemoryClient:
         return str(found)
 
     async def get_card(self, card_id: str) -> Card | None:
-        data = await self._request("GET", f"/api/memory/cards/{card_id}")
+        data = await self._request("GET", f"/api/memory/cards/{card_id}", allow_missing=True)
         return None if data is None else self._card(data)
 
     async def list_cards(
@@ -149,7 +159,9 @@ class HttpMemoryClient:
         if states:
             params["states"] = ",".join(states)
         data = await self._request("GET", "/api/memory/cards", params=params)
-        return [self._card(item) for item in (data or [])]
+        if not isinstance(data, list):
+            raise UpstreamError("memory", "카드 목록 형식 오류")
+        return [self._card(item) for item in data]
 
     async def search_cards(
         self,
@@ -168,8 +180,10 @@ class HttpMemoryClient:
         if states:
             params["states"] = ",".join(states)
         data = await self._request("GET", "/api/memory/cards/search", params=params)
+        if not isinstance(data, list):
+            raise UpstreamError("memory", "검색 결과 형식 오류")
         hits = []
-        for item in data or []:
+        for item in data:
             try:
                 hits.append(CardHit(self._card(item["card"]), float(item["score"])))
             except (KeyError, TypeError, ValueError) as exc:

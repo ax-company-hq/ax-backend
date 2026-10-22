@@ -21,6 +21,7 @@ from ax_contracts.schemas import (
     ConfirmHandoverInput,
     ConfirmHandoverOutput,
     HandoverItem,
+    HoldReason,
     ListInProgressInput,
     StartHandoverInput,
     StartHandoverOutput,
@@ -33,6 +34,7 @@ from hr_agent.handover.fields import FIELD_LABEL, FIELDS, question_id
 from hr_agent.narrative import Sentence
 from hr_agent.results import (
     completed,
+    failed,
     gate_blocked,
     input_required,
     invalid_input,
@@ -365,6 +367,12 @@ async def confirm_handover(svc: Services, request: AgentRequest) -> AgentResult:
             "confirmed",
             evidence=evidence,
         )
+    if decision.hold_reason not in (HoldReason.VERIFY_REJECTED, HoldReason.REVIEW_TIMEOUT):
+        # 안전 레이어가 판정하지 못했다(무응답·키 충돌 등): 상태를 바꾸지 않는다
+        svc.audit.record(
+            request.meta.context_id, "confirm_handover.gate_unavailable", {"id": row["handover_id"]}
+        )
+        return failed(request, "GATE_UNAVAILABLE", "안전 레이어가 판정하지 못해 확정하지 않았다")
     hstore.set_status(svc.store, row["handover_id"], "input_required", now)
     missing: list[str] = []
     if decision.grade == "B":  # 검증자(planning)가 거절했다: 무엇이 빠졌는지 읽기 전용으로 확인한다

@@ -49,7 +49,7 @@ def measure(samples: list[dict]) -> dict[str, float]:
 
 def test_samples_seen_while_building_the_rules() -> None:
     samples = _load("decision_samples.json")
-    assert len(samples) == 60
+    assert len(samples) == 68
     assert measure(samples) == {"decision": 1.0, "reason": 1.0, "rejected": 1.0}
 
 

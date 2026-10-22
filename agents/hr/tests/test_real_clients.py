@@ -187,7 +187,13 @@ def bound_meta(context_id: str = "ctx_pl_0001", path: list[str] | None = None) -
 
 
 @pytest.mark.asyncio
-async def test_planning_client_sends_a_contract_shaped_a2a_request() -> None:
+async def test_planning_client_sends_a_contract_shaped_a2a_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ax_agent_template import config as template_config
+
+    # 같은 프로세스에서 다른 서비스 앱이 먼저 이름을 정했을 수 있어 hr로 고정한다
+    monkeypatch.setattr(template_config, "_agent_name", "hr")
     fake = FakePlanning()
     http = httpx.AsyncClient(transport=httpx.MockTransport(fake.handler))
     planning = A2APlanningClient("http://planning.test", http_client=http)

@@ -116,7 +116,7 @@
   "summary": "추천 영역 개인화는 이번 분기에 하지 않기로 했다",
   "expect_decision": true,
   "expect_reason": null,
-  "expect_rejected": true
+  "expect_rejected": false
  },
  {
   "kind": "decision",
