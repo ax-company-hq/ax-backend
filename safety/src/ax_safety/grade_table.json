@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "actions": {
+    "memory.card_write": {
+      "grade": "A",
+      "requesters": ["hr", "support", "marketing", "planning", "finance", "orchestrator", "data"]
+    },
+    "memory.card_link": {
+      "grade": "A",
+      "requesters": ["hr"]
+    }
+  }
+}
