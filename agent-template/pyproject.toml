@@ -6,7 +6,12 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "ax-contracts",
+    "fastapi>=0.115",
+    "httpx>=0.27",
 ]
+
+[project.scripts]
+ax-test-call = "ax_agent_template.testclient:main"
 
 [tool.uv.sources]
 ax-contracts = { workspace = true }
