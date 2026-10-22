@@ -17,6 +17,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from ax_contracts.schemas.common import TENANT_ID_DEFAULT, AxModel, UtcDatetime
+from ax_contracts.schemas.execute import HoldReason
 
 
 class EventType(StrEnum):
@@ -263,6 +264,35 @@ class CouponIssuedData(AxModel):
         return self
 
 
+class SafetyActionExecutedData(AxModel):
+    """`safety.action_executed`. 안전 레이어가 발행한다. 금액은 정수 원이다."""
+
+    execution_id: str
+    action: str
+    requester: str
+    grade: Literal["A", "B", "C"]
+    computed_amount: int | None = None
+    threshold_version: int | None = None
+
+
+class SafetyActionHeldData(SafetyActionExecutedData):
+    """`safety.action_held`. C 보류 건. `review_id`는 승인 대기열 ID다."""
+
+    hold_reason: HoldReason
+    review_id: str
+
+
+class SafetyReviewDecidedData(AxModel):
+    """`safety.review_decided`. `decided_by`는 사람 이름이고 자동 거절이면 `system`이다."""
+
+    review_id: str
+    execution_id: str
+    action: str
+    requester: str
+    decision: Literal["approved", "rejected"]
+    decided_by: str
+
+
 # 이벤트 종류 → data 모델. 발행 담당이 새 data 모델을 추가할 때 여기에 한 줄 더한다.
 EVENT_DATA_MODELS: dict[EventType, type[BaseModel]] = {
     EventType.SHOP_DEGRADED: ShopDegradedData,
@@ -284,4 +314,7 @@ EVENT_DATA_MODELS: dict[EventType, type[BaseModel]] = {
     EventType.NOTICE_PUBLISHED: NoticePublishedData,
     EventType.CAMPAIGN_CREATED: CampaignCreatedData,
     EventType.COUPON_ISSUED: CouponIssuedData,
+    EventType.SAFETY_ACTION_EXECUTED: SafetyActionExecutedData,
+    EventType.SAFETY_ACTION_HELD: SafetyActionHeldData,
+    EventType.SAFETY_REVIEW_DECIDED: SafetyReviewDecidedData,
 }
