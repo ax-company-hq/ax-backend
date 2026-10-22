@@ -179,3 +179,15 @@ class SummarizeInquiryInput(AxModel):
 class SetInquiryStatusInput(AxModel):
     inquiry_id: int
     status: InquiryStatus
+
+
+class RequestCompensationInput(AxModel):
+    """보상 요청. 사유 코드(`late_delivery`, `damaged` 등)로 단가를 코드가 판정한다.
+
+    `buyer_id`는 보상 쿠폰을 받을 구매자다. 문의 원문은 받지 않는다.
+    """
+
+    inquiry_id: int
+    buyer_id: str
+    reason_code: str
+    count: int = 1
