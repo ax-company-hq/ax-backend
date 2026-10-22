@@ -105,7 +105,7 @@ members:
   NYejin:         { name: 예진, token: CLAUDE_TOKEN_YEJIN,     daily_cap: 20 }
   bxbae:          { name: 병환, token: CLAUDE_TOKEN_BYUNGHWAN, daily_cap: 20 }
   areatmadm:      { name: 재헌, token: CLAUDE_TOKEN_JAEHEON,   daily_cap: 20 }
-bot_login: <ax-bot 앱의 실제 login. `gh api /apps/<앱 slug>`로 확인해서 채움, 예: ax-bot[bot]>
+bot_login: ax-company-hq-bot[bot]   # `gh api apps/ax-company-hq-bot`로 확인 (앱 slug: ax-company-hq-bot)
 depts:      # id: { folder, aliases, owners(첫 번째가 실행 토큰), env_prefix }
   data:           { folder: agents/data,          owners: [JangJaehyeonn],  env_prefix: DATA }
   memory:         { folder: memory,               owners: [JangJaehyeonn],  env_prefix: MEMORY }
