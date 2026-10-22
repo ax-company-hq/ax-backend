@@ -1,5 +1,103 @@
 {
   "name": "support",
   "owner": "병환",
-  "skills": []
+  "description": "고객지원 — 고객 문의를 접수하고 분류·근거 검색·답변 초안 3가지와 가드 검사를 만들어 상담원 화면에 제공한다",
+  "url": "http://support:8102/a2a",
+  "version": "0.1.0",
+  "capabilities": {
+    "streaming": true,
+    "push_notifications": false
+  },
+  "skills": [
+    {
+      "id": "list_inquiries",
+      "description": "문의 목록을 최근 수정 순으로 돌려준다. 상태(open, resolved, escalated)로 거를 수 있다. 상태를 바꾸지 않는다.",
+      "input_schema": "agents/support/src/support_agent/schemas.py#ListInquiriesInput",
+      "output_schema": "agents/support/src/support_agent/schemas.py#ConversationListItem",
+      "grade": "read",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "required"
+    },
+    {
+      "id": "get_inquiry",
+      "description": "문의 하나의 메시지 전체와 메시지별 분석(분류, 근거, 초안 3가지, 가드 결과)을 돌려준다.",
+      "input_schema": "agents/support/src/support_agent/schemas.py#GetInquiryInput",
+      "output_schema": "agents/support/src/support_agent/schemas.py#Conversation",
+      "grade": "read",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "required"
+    },
+    {
+      "id": "check_reply",
+      "description": "고객에게 보낼 답변 문장을 코드 규칙으로 검사해 통과 여부와 걸린 규칙(환불 약속, 개인정보, 빈 답변)을 돌려준다. 답변 문장은 untrusted.text로 받는다.",
+      "input_schema": "agents/support/src/support_agent/schemas.py#CheckReplyInput",
+      "output_schema": "agents/support/src/support_agent/schemas.py#Validation",
+      "grade": "read",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "required"
+    },
+    {
+      "id": "summarize_inquiry",
+      "description": "문의 대화를 요약하고 해결 여부, 다음 조치, 사람에게 넘길 필요를 돌려준다. 저장하지 않는다.",
+      "input_schema": "agents/support/src/support_agent/schemas.py#SummarizeInquiryInput",
+      "output_schema": "agents/support/src/support_agent/schemas.py#Summary",
+      "grade": "read",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "create_inquiry",
+      "description": "새 문의를 접수하고 첫 메시지를 분석한다. 제목과 본문은 untrusted.subject, untrusted.message로 받는다. 상태 변경이라 execute()를 거친다.",
+      "input_schema": "agents/support/src/support_agent/schemas.py#CreateInquiryInput",
+      "output_schema": "agents/support/src/support_agent/schemas.py#Conversation",
+      "grade": "A",
+      "allowed_requesters": ["dashboard-api", "shop-api", "orchestrator"],
+      "verifier": null,
+      "priority": "required"
+    },
+    {
+      "id": "add_customer_message",
+      "description": "기존 문의에 고객 메시지를 추가하고 분석한다. 본문은 untrusted.message로 받는다. 상태 변경이라 execute()를 거친다.",
+      "input_schema": "agents/support/src/support_agent/schemas.py#AddCustomerMessageInput",
+      "output_schema": "agents/support/src/support_agent/schemas.py#Conversation",
+      "grade": "A",
+      "allowed_requesters": ["dashboard-api", "shop-api", "orchestrator"],
+      "verifier": null,
+      "priority": "required"
+    },
+    {
+      "id": "send_reply",
+      "description": "상담원이 확정한 답변을 고객에게 보낸다. 가드를 통과하지 못하면 보내지 않고 이유를 돌려준다. 답변은 untrusted.text로 받는다. 상태 변경이라 execute()를 거친다.",
+      "input_schema": "agents/support/src/support_agent/schemas.py#SendReplyInput",
+      "output_schema": "agents/support/src/support_agent/schemas.py#Conversation",
+      "grade": "A",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "required"
+    },
+    {
+      "id": "reject_draft",
+      "description": "상담원이 거절한 답변 초안 스타일을 기록한다 (초안 채택률 지표용). 상태 변경이라 execute()를 거친다.",
+      "input_schema": "agents/support/src/support_agent/schemas.py#RejectDraftInput",
+      "output_schema": "agents/support/src/support_agent/schemas.py#RejectDraftInput",
+      "grade": "A",
+      "allowed_requesters": ["dashboard-api"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "set_inquiry_status",
+      "description": "문의 상태를 open, resolved, escalated 중 하나로 바꾼다. 상태 변경이라 execute()를 거친다.",
+      "input_schema": "agents/support/src/support_agent/schemas.py#SetInquiryStatusInput",
+      "output_schema": "agents/support/src/support_agent/schemas.py#Conversation",
+      "grade": "A",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "required"
+    }
+  ]
 }
