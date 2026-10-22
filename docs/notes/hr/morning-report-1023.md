@@ -49,3 +49,16 @@
 1. 데모(8114)를 열어 탭 7개를 훑어보기 — 특히 인수인계·발령·퇴직 탭의 보류 큐 승인 흐름.
 2. 위 "정한 것" 1·2·5의 기준 확인.
 3. 2단계 검토가 끝나면 3단계(목 → 실제 memory/planning/safety 교체) 진행.
+
+## 6. 덤: 다른 에이전트 Agent Card 읽기 점검 (origin/dev 기준, 읽기만 함)
+
+| 에이전트 | 지금 skill |
+|---|---|
+| planning | 없음 (`list_in_progress`·`verify_handover`가 아직 없어 hr 실제 연동 대기) |
+| infra | agent-card.json 없음 |
+| support | 19개 (조회·상태 변경·`process_claim_queue` B) |
+| marketing | 4개 (`issue_coupon` B 등) |
+| finance | 4개 (`verify_amount` 등) |
+| data | 비어 있음 |
+
+hr 실제 연동(3단계)은 planning 두 skill이 올라온 뒤에 가능하다.
