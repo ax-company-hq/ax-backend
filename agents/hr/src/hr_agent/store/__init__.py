@@ -121,6 +121,7 @@ CREATE TABLE IF NOT EXISTS handover_questions (
   gap_field TEXT NOT NULL,
   status TEXT NOT NULL,
   answer TEXT,
+  asked_count INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   answered_at TEXT
 );
@@ -154,6 +155,7 @@ CREATE TABLE IF NOT EXISTS assignment_changes (
   handover_id TEXT,
   onboarding_id TEXT,
   checklist TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
   previous TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

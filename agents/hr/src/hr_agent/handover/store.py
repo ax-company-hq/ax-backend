@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Any
 
 from ax_contracts.schemas import HandoverItem, HandoverQuestion
@@ -46,6 +47,31 @@ def open_questions(store: Store, handover_id: str) -> list[HandoverQuestion]:
 
 def question(store: Store, question_id: str) -> dict[str, Any] | None:
     return store.one("SELECT * FROM handover_questions WHERE question_id = ?", (question_id,))
+
+
+def reask_stale(store: Store, handover_id: str, now: datetime, ttl_minutes: int) -> list[str]:
+    """답이 없는 질문이 `ttl_minutes`를 넘기면 다시 묻는다(시각을 새로 잡고 횟수를 올린다)."""
+    again: list[str] = []
+    for q in store.all(
+        "SELECT question_id, question, asked_count, created_at FROM handover_questions"
+        " WHERE handover_id = ? AND status = 'open'",
+        (handover_id,),
+    ):
+        if now - datetime.fromisoformat(q["created_at"]) < timedelta(minutes=ttl_minutes):
+            continue
+        base = (
+            q["question"].split(") ", 1)[1]
+            if q["question"].startswith("(다시 묻습니다")
+            else q["question"]
+        )
+        count = q["asked_count"] + 1
+        store.execute(
+            "UPDATE handover_questions SET asked_count = ?, created_at = ?, question = ?"
+            " WHERE question_id = ?",
+            (count, now.isoformat(), f"(다시 묻습니다 {count}번째) {base}", q["question_id"]),
+        )
+        again.append(q["question_id"])
+    return again
 
 
 def set_status(store: Store, handover_id: str, status: str, now: str) -> None:

@@ -278,3 +278,49 @@ def test_card_author_is_the_verified_requester(svc, client) -> None:
 def test_rules_still_block_a_plan_that_leaves_a_gap(svc) -> None:
     ops = rules.plan_ops("transfer", "emp_05", "catalog", "emp_05", [("owner", "emp_05")])
     assert rules.simulate(svc.store, ops)[0].gap_areas == ["catalog"]
+
+
+# ---- 인계자 질문 만료·재질문, 취소된 퇴직 다시 열기 -----------------------------------------
+def test_unanswered_questions_are_asked_again_after_the_ttl(svc, client) -> None:
+    start = post(client, "start_handover", {"owner_id": "emp_01"}, "s")
+    first = {q["question_id"]: q["question"] for q in start["output"]["questions"]}
+    answered = start["output"]["questions"][0]["question_id"]
+    post(client, "answer_handover_question", {"question_id": answered, "answer": "답"}, "a")
+
+    early = post(client, "start_handover", {"owner_id": "emp_01"}, "s")
+    assert all("다시 묻습니다" not in q["question"] for q in early["output"]["questions"])
+
+    svc.clock.advance(minutes=svc.settings.handover_question_ttl_minutes + 1)
+    late = post(client, "start_handover", {"owner_id": "emp_01"}, "s")
+    asked = {q["question_id"]: q["question"] for q in late["output"]["questions"]}
+    assert answered not in asked  # 답한 질문은 다시 묻지 않는다
+    assert all(text.startswith("(다시 묻습니다 2번째)") for text in asked.values())
+    assert all(first[qid] in text for qid, text in asked.items())
+    svc.clock.advance(minutes=svc.settings.handover_question_ttl_minutes + 1)
+    third = post(client, "start_handover", {"owner_id": "emp_01"}, "s")
+    assert all(
+        q["question"].startswith("(다시 묻습니다 3번째)") for q in third["output"]["questions"]
+    )
+    assert "handover.question_reasked" in svc.audit.kinds("ctx_rev_0001")
+
+
+def test_a_cancelled_offboarding_can_be_reopened_and_approved_later(svc, client) -> None:
+    chg = offboard(client, "emp_06", "support-desk", "emp_07", "ctxA", "o")
+    held = post(client, "confirm_offboarding", {"change_id": chg}, "o", "ctxA")
+    svc.gate.decide_hold(held["output"]["hold_id"], approved=False)
+    assert (
+        post(client, "confirm_offboarding", {"change_id": chg}, "o", "ctxA")["output"]["status"]
+        == "rejected"
+    )
+
+    reopened = request_change(
+        client, "offboarding", "emp_06", "support-desk", "emp_07", "o", "ctxA"
+    )
+    assert reopened["outcome"] == "reopened"
+    held_again = post(client, "confirm_offboarding", {"change_id": chg}, "o", "ctxA")
+    assert held_again["output"]["status"] == "held"  # 새 시도라서 새 보류가 생긴다
+    assert held_again["output"]["hold_id"] != held["output"]["hold_id"]
+    svc.gate.decide_hold(held_again["output"]["hold_id"], approved=True)
+    done = post(client, "confirm_offboarding", {"change_id": chg}, "o", "ctxA")
+    assert done["output"]["status"] == "confirmed"
+    assert svc.store.one("SELECT active FROM members WHERE member_id = 'emp_06'")["active"] == 0

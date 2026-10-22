@@ -129,6 +129,26 @@ def _duplicate(request: AgentRequest, svc: Services, change: dict[str, Any]) -> 
     )
 
 
+def _reopen_offboarding(
+    request: AgentRequest, svc: Services, change: dict[str, Any]
+) -> AgentResult:
+    """거절·만료로 취소된 퇴직을 같은 요청으로 다시 연다(재배치는 이미 끝났으므로 퇴직 확정부터)."""
+    blocked = _blocking_lock(svc, change["change_id"], change["member_id"], change["area"])
+    if blocked:
+        return refused(request, "LOCKED", f"같은 대상의 다른 변경이 진행 중이다: {blocked}")
+    _take(svc, change["change_id"], change["member_id"], change["area"])
+    _set(svc, change["change_id"], status="confirmed")
+    svc.audit.record(request.meta.context_id, "offboarding.reopened", {"id": change["change_id"]})
+    fresh = get_change(svc, change["change_id"])
+    assert fresh is not None
+    return completed(
+        request,
+        _output(fresh, svc),
+        outcome="reopened",
+        evidence=make_evidence(svc.clock, "취소된 퇴직을 다시 열었다", [change["change_id"]]),
+    )
+
+
 # ---- 요청 ----------------------------------------------------------------------
 def _sub_request(request: AgentRequest, skill: str, payload: dict[str, Any], suffix: str):
     meta = with_key(request.meta, suffix)
@@ -148,6 +168,10 @@ async def request_assignment_change(svc: Services, request: AgentRequest) -> Age
     kind, member, area = params.change_kind, params.member_id, params.area
     if area not in roster.list_areas(svc.store):
         return refused(request, "UNKNOWN_AREA", f"알 수 없는 영역: {area}")
+    change_id = stable_id("chg_", request.meta.context_id, kind, member, area)
+    existing = get_change(svc, change_id)
+    if existing is not None and existing["status"] == "cancelled" and kind == "offboarding":
+        return _reopen_offboarding(request, svc, existing)  # 재배치가 끝나 이미 영역에 없다
     in_area = member in {e.member_id for e in roster.entries(svc.store, area)}
     if kind == "join":
         if in_area:
@@ -165,8 +189,6 @@ async def request_assignment_change(svc: Services, request: AgentRequest) -> Age
                 request, "UNKNOWN_MEMBER", f"재직 중인 사람이 아니다: {params.successor_id}"
             )
 
-    change_id = stable_id("chg_", request.meta.context_id, kind, member, area)
-    existing = get_change(svc, change_id)
     if existing is not None:
         if params.successor_id and existing["successor_id"] not in (None, params.successor_id):
             return refused(
@@ -453,7 +475,7 @@ async def confirm_offboarding(svc: Services, request: AgentRequest) -> AgentResu
     decision = await svc.gate.execute(
         "confirm_offboarding",
         {"change_id": change["change_id"], "summary": summary, "target": change["change_id"]},
-        with_key(request.meta, f"confirm_offboarding:{change['change_id']}"),
+        with_key(request.meta, f"confirm_offboarding:{change['change_id']}:{change['attempts']}"),
         evidence,
     )
     if decision.status == "held":
@@ -461,7 +483,7 @@ async def confirm_offboarding(svc: Services, request: AgentRequest) -> AgentResu
         return _off_result(request, svc, change, "held", decision.review_id, "held", evidence)
     if decision.status != "executed":
         # 사람이 거절했거나 기한이 지났다: 퇴직만 취소하고 잠금을 푼다(넘긴 담당은 그대로)
-        _set(svc, change["change_id"], status="cancelled")
+        _set(svc, change["change_id"], status="cancelled", attempts=change["attempts"] + 1)
         _release(svc, change["change_id"])
         svc.audit.record(
             request.meta.context_id,

@@ -126,6 +126,13 @@ async def start_handover(svc: Services, request: AgentRequest) -> AgentResult:
         hstore.get(svc.store, handover_id) is not None
     ):  # 같은 요청 반복: 현재 상태를 그대로 돌려준다
         svc.audit.record(request.meta.context_id, "start_handover.duplicate", {"id": handover_id})
+        again = hstore.reask_stale(
+            svc.store, handover_id, svc.clock(), svc.settings.handover_question_ttl_minutes
+        )
+        if again:  # 답이 없는 질문은 기한이 지나면 다시 묻는다
+            svc.audit.record(
+                request.meta.context_id, "handover.question_reasked", {"questions": again}
+            )
         return _result_for(svc, request, handover_id, "이미 만들어진 인수인계 초안", [handover_id])
 
     # 사실 수집: planning 진행 중 항목 + 영역 결정 카드 + 명부 연락처
