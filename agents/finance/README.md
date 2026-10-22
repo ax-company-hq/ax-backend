@@ -31,6 +31,8 @@ uv run ax-test-call --agent http://localhost:8105 --skill loss_aggregation --inp
 ### 가짜 데이터로 돌려 보기 (목 모드)
 safety·finance를 목 모드로 띄운 뒤 `uv run python agents/finance/demo/seed_demo.py`를 실행하면 마케팅·고객지원·통합 에이전트인 척 17건을 보낸다(공지·기록, 보상 쿠폰, 환불, 손실 리포트, 판매자 심사, 정산 보류). 결과는 대시보드 `http://localhost:3001/finance`에서 본다. 가짜 데이터는 `src/finance_agent/mock_seed.json`이다.
 
+관리자 사용법(화면 보는 법, 결정 기준): `docs/notes/finance/admin-guide.md`
+
 ## 3. 입출력 계약
 - 입출력 모델: `src/finance_agent/schemas.py` (Agent Card의 `input_schema`·`output_schema`). safety와 함께 쓰는 `VerifyAmountInput`·`VerifyAmountOutput`은 contracts로 옮길 예정
 - 대시보드 조회 API (GET만, `{data, meta}`): `/api/finance/verifications?context_id=`(교차검증 판정 기록), `/api/finance/ledger`(사건별 보상 지급·주문별 환불 누적), `/api/finance/market-ops`(판매자 심사·정산 보류 결과), `/api/finance/loss-reports`(사건별 마지막 손실 리포트). 출처는 `FINANCE_CORS_ORIGINS`
