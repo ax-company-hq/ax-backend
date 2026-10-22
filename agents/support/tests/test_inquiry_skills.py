@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from ax_agent_template.llm import MockLLMClient
 from ax_contracts.schemas import ExecuteDecision
 from support_agent import drafting, guard, handlers, kb
-from support_agent.main import app, load_card
+from support_agent.main import ALL_HANDLERS, app, load_card
 from support_agent.schemas import LLMClassification, LLMDrafts
 from support_agent.store import InquiryStore
 
@@ -65,7 +65,7 @@ def create(client: TestClient, key: str = "k-create-1", **untrusted: str) -> dic
 def test_agent_card_matches_handlers_and_is_served(client: TestClient) -> None:
     card = load_card()
     assert card.name == "support"
-    assert {s.id for s in card.skills} == set(handlers.HANDLERS)
+    assert {s.id for s in card.skills} == set(ALL_HANDLERS)
     assert client.get("/.well-known/agent-card.json").json()["name"] == "support"
 
 
@@ -188,6 +188,8 @@ def test_write_not_executed_leaves_store_untouched(
 def test_fail_closed_when_safety_unreachable(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # 전체 테스트에서 다른 서비스가 바꿔 둔 공유 에이전트 이름을 되돌린다 (<이름>_MOCK 접두사 때문)
+    monkeypatch.setattr("ax_agent_template.config._agent_name", "support")
     monkeypatch.delenv("AGENT_TEMPLATE_MOCK")
     monkeypatch.setenv("SUPPORT_MOCK", "1")
     monkeypatch.setattr("ax_agent_template.execute._send_to_safety", _raise, raising=True)
