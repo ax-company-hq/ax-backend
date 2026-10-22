@@ -9,7 +9,7 @@
 `docker compose -f infra/compose.yml up support` / 목 모드: `SUPPORT_MOCK=1`
 모델은 `.env`의 `SUPPORT_LLM_MODEL` 또는 `LLM_MODEL`로 정한다 (코드에 모델 이름을 쓰지 않는다).
 ## 3. 입출력 계약
-`agent-card.json`의 skill 10개. 입력·출력 모델은 `src/support_agent/schemas.py`.
+`agent-card.json`의 skill 19개. 문의 skill의 입력·출력 모델은 `src/support_agent/schemas.py`, 클레임 skill은 `src/support_agent/claim_schemas.py`.
 
 | skill | 등급 | 요청 가능 | 내용 |
 | --- | --- | --- | --- |
@@ -23,6 +23,11 @@
 | `reject_draft` | A | dashboard-api | 거절한 초안 기록 |
 | `set_inquiry_status` | A | dashboard-api, orchestrator | 상태 변경 |
 | `request_compensation` | A | dashboard-api, orchestrator | 보상 단가 판정 + 마케팅 `issue_coupon(compensation)` 직렬 요청 (DEP-CS-02) |
+| `list_claims`, `get_claim`, `claim_stats`, `claim_queue` | read | dashboard-api, orchestrator | 클레임 목록·상세(판정 근거·감사 기록)·건수·보상 큐 |
+| `create_claim` | A | dashboard-api, shop-api, orchestrator | 취소·반품·교환 접수 + 규칙 판정 |
+| `decide_claim` | A | dashboard-api | 사람 확인이 필요한 클레임 승인·거절 |
+| `receive_return`, `inspect_return` | A | dashboard-api (입고는 shop-api도) | 반품 입고, 검수 결과 기록 |
+| `process_claim_queue` | B | dashboard-api | 준비된 큐 항목을 `refund_request`(재무 교차검증, 기준 이상 C)로 지급 처리 |
 
 - 상태를 바꾸는 skill은 모두 `execute()`를 거치고, 실행되지 않으면(보류·거부·safety 무응답) 저장소를 바꾸지 않는다.
 - 액션 이름은 skill id와 같다. safety 레지스트리에 등록이 필요하다 (`to:safety`).
@@ -32,7 +37,9 @@
 ## 4. 의존
 ax-contracts, ax-agent-template
 ## 5. 하지 않는 것
-- 클레임 판정·현금 환불은 아직 없다 (5단계). 보상 쿠폰 지급은 마케팅이 한다.
+- 클레임 판정(`claim_rules.py`)은 취소·반품·교환만 한다. 주문 사실로 코드가 판정하고(`orders.py` 시드 주문, 7일 환불 기간·불량 증빙·잦은 요청·고액 확인), 금액은 입력으로 받지 않는다. 규칙 값은 시드이며 memory 정책 문서 API가 생기면 교체한다. 보상 쿠폰은 클레임이 아니라 `request_compensation`으로 요청하고 지급은 마케팅이 한다.
+- 환불 지급은 `refund_request` 실행 허가와 지급 기록까지만 한다. shop-api 환불 API(SHOP-12) 호출은 아직 없다 (TODO).
+- `create_claim`·`decide_claim`·`receive_return`·`inspect_return`은 safety 레지스트리 등록이 필요하다 (`to:safety`). 미등록이면 C로 보류된다.
 - 저장소는 프로세스 메모리다. DB 연결 전까지 재시작하면 사라진다.
 - 정책 문서(KB)는 시드 조각이다. memory의 정책 문서 API가 생기면 교체한다.
 - 외부 API를 직접 호출해 상태를 바꾸지 않는다.
