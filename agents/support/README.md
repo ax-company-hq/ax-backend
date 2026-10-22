@@ -27,6 +27,7 @@
 - 상태를 바꾸는 skill은 모두 `execute()`를 거치고, 실행되지 않으면(보류·거부·safety 무응답) 저장소를 바꾸지 않는다.
 - 액션 이름은 skill id와 같다. safety 레지스트리에 등록이 필요하다 (`to:safety`).
 - 같은 `idempotency_key`의 두 번째 요청은 이전 결과를 돌려준다.
+- `create_inquiry`·`add_customer_message`는 선택 입력 `notice_id`가 있으면 마케팅 `get_notice`로 공지 사실(본문·약속·기간)을 읽어 답변 근거(`notice:<id>`)의 맨 앞에 넣는다. 공지를 찾지 못하거나 마케팅이 응답하지 않으면 근거 없이 진행한다 ("확인할 수 없음").
 - `request_compensation`은 단가를 코드 정책표(`compensation.py`)로 판정하고, 사건(`context_id`)별로 `sequence` 1부터 한 건씩 마케팅에 보낸다. 지급·`execute()`·재무 교차검증은 마케팅 쪽이라 support는 자기 상태를 바꾸지 않고 safety 등록도 필요 없다. 표에 없는 사유는 `not_eligible`. 마케팅이 회신하지 못하면(타임아웃·연결 실패) 번호를 쓰지 않고 같은 번호로 다시 보낸다.
 ## 4. 의존
 ax-contracts, ax-agent-template

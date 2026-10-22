@@ -22,7 +22,7 @@ from ax_agent_template.client import call_agent
 from ax_agent_template.execute import execute
 from ax_agent_template.server import error_result
 from ax_contracts.schemas import AgentRequest, AgentResult, ErrorCode, Evidence, TaskStatus
-from support_agent import compensation, drafting, guard
+from support_agent import compensation, drafting, guard, notices
 from support_agent.schemas import (
     AddCustomerMessageInput,
     CheckReplyInput,
@@ -33,6 +33,7 @@ from support_agent.schemas import (
     RequestCompensationInput,
     SendReplyInput,
     SetInquiryStatusInput,
+    Source,
     SummarizeInquiryInput,
 )
 from support_agent.store import InquiryStore
@@ -161,6 +162,14 @@ async def summarize_inquiry(request: AgentRequest) -> AgentResult:
 
 
 # ---------------------------------------------------------------- 쓰기 (execute 경유)
+async def _notice_sources(request: AgentRequest, notice_id: str | None) -> list[Source]:
+    """문의가 공지를 가리키면 마케팅 `get_notice`로 읽는다. 못 읽으면 근거 없이 진행한다."""
+    if notice_id is None:
+        return []
+    source = await notices.fetch_source(request, notice_id, SEND)
+    return [source] if source else []
+
+
 async def create_inquiry(request: AgentRequest) -> AgentResult:
     parsed = _parse(request, CreateInquiryInput)
     if isinstance(parsed, AgentResult):
@@ -171,8 +180,10 @@ async def create_inquiry(request: AgentRequest) -> AgentResult:
     if message is None:
         return _missing_text(request, "message")
 
+    extra = await _notice_sources(request, parsed.notice_id)
+
     async def apply() -> tuple[dict[str, Any], bool]:
-        analysis, fallback = await drafting.analyze(message, subject)
+        analysis, fallback = await drafting.analyze(message, subject, extra)
         conversation = STORE.create(
             context_id=request.meta.context_id,
             tenant_id=request.meta.tenant_id,
@@ -202,8 +213,10 @@ async def add_customer_message(request: AgentRequest) -> AgentResult:
     if conversation is None:
         return _not_found(request, parsed.inquiry_id)
 
+    extra = await _notice_sources(request, parsed.notice_id)
+
     async def apply() -> tuple[dict[str, Any], bool]:
-        analysis, fallback = await drafting.analyze(message, conversation.subject)
+        analysis, fallback = await drafting.analyze(message, conversation.subject, extra)
         return STORE.add_customer_message(parsed.inquiry_id, message, analysis).model_dump(
             mode="json"
         ), fallback

@@ -145,12 +145,14 @@ class CreateInquiryInput(AxModel):
     customer_name: str
     order_id: int | None = None
     order_no: str | None = None
+    notice_id: str | None = None  # 문의가 가리키는 공지. 있으면 마케팅 get_notice로 사실을 읽는다
 
 
 class AddCustomerMessageInput(AxModel):
     """본문은 `untrusted`의 `message`로 받는다."""
 
     inquiry_id: int
+    notice_id: str | None = None
 
 
 class CheckReplyInput(AxModel):
