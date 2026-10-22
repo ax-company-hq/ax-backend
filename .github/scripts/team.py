@@ -380,13 +380,19 @@ def show(rev: str, path: str) -> str:
 
 
 # ── cap-ok (하루 Claude 실행 상한) ─────────────────────────
-CLAUDE_JOB = re.compile(r"(?:^|/ )claude:([a-z0-9-]+):")
-REPOS = ("ax-company-hq/ax-backend", "ax-company-hq/ax-frontend")
-# 이름에 claude:<부서>:가 붙는 잡이 있는 워크플로만 조회한다 (API 호출 줄이기)
-# 재사용 워크플로 실행은 호출한 워크플로 이름으로 기록되므로 호출자도 넣는다
-CLAUDE_WORKFLOWS = ("_claude-write.yml", "claude-request.yml", "claude-review.yml",
-                    "claude-tasks.yml", "claude-ci-fix.yml", "claude-arbiter.yml",
-                    "claude-plan.yml", "claude-triage.yml")
+# Claude 잡이 있는 워크플로는 run-name(=display_title)에 부서를 남긴다. 그래서 run 목록만 읽으면
+# 셀 수 있다 (run마다 jobs를 읽지 않음). 워크플로 파일당 1회 조회, 100개를 넘으면 다음 페이지.
+#   _claude-write (수동 실행): "claude:<부서>:<모드> #<이슈>"
+#   claude-request:            "claude-request to:<부서> by <라벨 붙인 사람>"
+#   claude-review:             "claude-review <PR 브랜치> by <PR 작성자>"
+#                              → 리뷰 부서는 reviewers_for로 계산해서 센다
+CLAUDE_RUN_WORKFLOWS = {
+    "ax-company-hq/ax-backend": ("_claude-write.yml", "claude-request.yml", "claude-review.yml"),
+    "ax-company-hq/ax-frontend": (),  # F-1단계에서 Claude 워크플로가 생기면 추가
+}
+WRITE_TITLE = re.compile(r"^claude:([a-z0-9-]+):[a-z-]+(?: |$)")
+REQUEST_TITLE = re.compile(r"^claude-request to:([a-z0-9-]+) by (\S+)$")
+REVIEW_TITLE = re.compile(r"^claude-review (\S+) by (\S+)$")
 
 
 def token_depts_of(team: Team, login: str) -> set[str]:
@@ -396,14 +402,79 @@ def token_depts_of(team: Team, login: str) -> set[str]:
     return depts
 
 
-def count_claude_jobs(jobs: list[tuple[str, str | None]], depts: set[str]) -> int:
-    """(잡 이름, conclusion) 중 실제로 실행된 claude:<부서>: 잡 수."""
-    n = 0
-    for name, conclusion in jobs:
-        m = CLAUDE_JOB.search(name)
-        if m and m.group(1) in depts and conclusion != "skipped":
-            n += 1
-    return n
+def run_token_depts(team: Team, title: str) -> list[str]:
+    """run 제목에서 그 실행이 쓴 Claude 토큰의 부서 목록 (부서 하나 = Claude 잡 하나)."""
+    m = WRITE_TITLE.match(title)
+    if m:
+        dept = team.resolve_dept(m.group(1))
+        return [dept] if dept else []
+    m = REQUEST_TITLE.match(title)
+    if m:
+        dept = team.resolve_dept(m.group(1))
+        # 봇이 붙인 요청 라벨은 route가 실행하지 않는다
+        return [dept] if dept and m.group(2) != team.bot_login else []
+    m = REVIEW_TITLE.match(title)
+    if m:
+        branch, author = m.groups()
+        dept = team.dept_of_branch(branch)
+        if not dept:
+            return []  # ci/·docs/ 같은 사람 경로 PR은 리뷰 생략
+        person = team.owners(dept)[0] if author == team.bot_login else author
+        return team.reviewers_for([dept], person) if person in team.members else []
+    return []
+
+
+def usage_by_owner(team: Team, runs: list[tuple[str, str | None]]) -> dict[str, int]:
+    """(display_title, conclusion) 목록 → 토큰 주인별 Claude 잡 수. skipped run은 세지 않는다."""
+    counts: dict[str, int] = {}
+    fronts = team.data.get("frontend_depts", {})
+    for title, conclusion in runs:
+        if conclusion == "skipped":
+            continue
+        for dept in run_token_depts(team, title):
+            owner = team.owners(dept)[0] if dept in team.depts else fronts.get(dept)
+            if owner:
+                counts[owner] = counts.get(owner, 0) + 1
+    return counts
+
+
+def todays_claude_runs(day: str) -> list[tuple[str, str | None]]:
+    """오늘(UTC) Claude 워크플로 run 목록.
+
+    실패하면 예외를 그대로 올린다 (호출한 쪽이 fail-closed).
+    """
+    runs: list[tuple[str, str | None]] = []
+    me = os.environ.get("GITHUB_RUN_ID")
+    for repo, files in CLAUDE_RUN_WORKFLOWS.items():
+        for wf in files:
+            page = 1
+            while True:
+                data = gh_api(f"repos/{repo}/actions/workflows/{wf}/runs"
+                              f"?created=>={day}&per_page=100&page={page}") or {}
+                items = data.get("workflow_runs", [])
+                runs += [(r.get("display_title") or "", r.get("conclusion"))
+                         for r in items if str(r.get("id")) != me]  # 지금 실행 중인 자기 자신 제외
+                if len(items) < 100:
+                    break
+                page += 1
+    return runs
+
+
+def cap_status(team: Team, owners: list[str], day: str | None = None) -> dict[str, dict]:
+    """토큰 주인별 {used, cap, ok}. run 목록을 읽지 못하면 전부 ok=False (fail-closed)."""
+    day = day or datetime.now(UTC).strftime("%Y-%m-%d")
+    try:
+        usage = usage_by_owner(team, todays_claude_runs(day))
+    except subprocess.CalledProcessError:
+        return {o: {"used": None, "cap": None, "ok": False, "reason": "cap 확인 실패"}
+                for o in owners}
+    out = {}
+    for o in owners:
+        cap = int(team.members.get(o, {}).get("daily_cap", 0))
+        used = usage.get(o, 0)
+        out[o] = {"used": used, "cap": cap, "ok": used < cap,
+                  "reason": f"{team.members.get(o, {}).get('name', o)} 오늘 {used}/{cap}"}
+    return out
 
 
 def gh_api(path: str, *extra: str):
@@ -421,6 +492,31 @@ def gh_api(path: str, *extra: str):
     return json.loads(out) if out.strip() else None
 
 
+PR_EVENTS = ("pull_request", "pull_request_target")
+
+
+def event_pull_request(number: int) -> dict | None:
+    """이번 실행을 일으킨 이벤트의 PR 페이로드 (GitHub API 호출 없음).
+
+    PR 이벤트이고 번호가 같을 때만 쓴다. workflow_dispatch처럼 페이로드가 없으면 None
+    → 호출한 쪽이 API로 읽는다.
+    값은 이벤트 시점 기준이다 (그 뒤에 새 커밋이 오면 새 이벤트가 새 실행을 만든다).
+    """
+    if os.environ.get("GITHUB_EVENT_NAME") not in PR_EVENTS:
+        return None
+    path = os.environ.get("GITHUB_EVENT_PATH")
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            pr = json.load(fh).get("pull_request")
+    except (OSError, ValueError):
+        return None
+    if not isinstance(pr, dict) or pr.get("number") != number:
+        return None
+    return pr
+
+
 def post_comment(repo: str, issue: int, body: str) -> None:
     """잠긴 이슈·PR에는 봇도 코멘트를 못 쓴다 → 잠금 해제 → 코멘트 → 같은 이유로 다시 잠금."""
     info = gh_api(f"repos/{repo}/issues/{issue}")
@@ -433,25 +529,6 @@ def post_comment(repo: str, issue: int, body: str) -> None:
     finally:
         if locked:
             gh_api(f"repos/{repo}/issues/{issue}/lock", "-X", "PUT", "-f", f"lock_reason={reason}")
-
-
-def todays_claude_jobs(day: str) -> list[tuple[str, str | None]]:
-    """두 레포에서 오늘(UTC) 만들어진 Claude 워크플로 실행의 잡 목록."""
-    jobs: list[tuple[str, str | None]] = []
-    for repo in REPOS:
-        for wf in CLAUDE_WORKFLOWS:
-            try:
-                runs = gh_api(
-                    f"repos/{repo}/actions/workflows/{wf}/runs?created=>={day}&per_page=100"
-                )
-            except subprocess.CalledProcessError:
-                continue  # 아직 없는 워크플로
-            for run in (runs or {}).get("workflow_runs", []):
-                if str(run["id"]) == os.environ.get("GITHUB_RUN_ID"):
-                    continue  # 지금 실행 중인 자기 자신은 세지 않는다
-                data = gh_api(f"repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100")
-                jobs += [(j["name"], j.get("conclusion")) for j in data.get("jobs", [])]
-    return jobs
 
 
 # ── requeue (모든 재대기는 이 함수 하나로) ───────────────────
@@ -592,11 +669,9 @@ def main(argv: list[str] | None = None) -> int:
         if not team.is_member(args.login):
             print(f"팀원이 아님: {args.login}", file=sys.stderr)
             return 1
-        day = args.day or datetime.now(UTC).strftime("%Y-%m-%d")
-        used = count_claude_jobs(todays_claude_jobs(day), token_depts_of(team, args.login))
-        cap = int(team.members[args.login].get("daily_cap", 0))
-        print(f"{used}/{cap}")
-        return 0 if used < cap else 1
+        st = cap_status(team, [args.login], args.day)[args.login]
+        print(st["reason"])
+        return 0 if st["ok"] else 1
     if cmd == "requeue":
         repo = os.environ["GITHUB_REPOSITORY"]
         print(requeue(repo, team, args.issue, args.reason, args.pr, args.head_sha, args.run_id))
