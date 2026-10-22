@@ -170,8 +170,74 @@ def test_write_post_without_result_fails(team, tmp_path: Path) -> None:
 
 def test_claude_settings_has_deny_and_hook(tmp_path: Path) -> None:
     s = cj.claude_settings("data", tmp_path / "trusted", tmp_path / "ax-out")
-    assert {"Bash", "Read(**/.git/config)", "Read(**/.env)"} <= set(s["permissions"]["deny"])
+    assert {"Bash", "Read(**/.git/**)", "Read(//proc)", "Read(**/.env)"} <= set(
+        s["permissions"]["deny"])
     hook = s["hooks"]["PreToolUse"][0]
     assert hook["matcher"] == "Edit|Write|MultiEdit|NotebookEdit"
     cmd = hook["hooks"][0]["command"]
     assert "guard-folder.mjs" in cmd and "--depts data" in cmd and "ax-out" in cmd
+
+
+def test_title_control_chars_rejected(team) -> None:
+    with pytest.raises(cj.JobError):
+        cj.check_result({"title": "feat\ndiff --git a/x b/x"}, team)
+
+
+@pytest.mark.parametrize(
+    ("text", "out"),
+    [("Fixes #7 and closes #8", "관련 #7 and 관련 #8"), ("resolved: #3", "관련 #3"),
+     ("see #9", "see #9"), ("prefix", "prefix")],
+)
+def test_strip_closing_keywords(text, out) -> None:
+    assert cj.strip_closing_keywords(text) == out
+
+
+# ── auto-merge (fail-closed) ─────────────────────────────
+REQ = ["ci", "folder-guard", "agent-review"]
+
+
+def am_pr(**kw):
+    pr = {"state": "open", "draft": False, "base": {"ref": "dev"}, "_repo": "o/r",
+          "head": {"ref": "data/1-x-r0", "repo": {"full_name": "o/r"}},
+          "user": {"login": BOT}, "labels": []}
+    pr.update(kw)
+    return pr
+
+
+def test_automerge_ok(team) -> None:
+    assert cj.automerge_decision(team, am_pr(), REQ) == (True, "예약")
+    assert cj.automerge_decision(team, am_pr(user={"login": "bxbae"}), REQ)[0]
+
+
+def test_automerge_fail_closed_when_unreadable(team) -> None:
+    ok, reason = cj.automerge_decision(team, am_pr(), None)
+    assert not ok and "fail-closed" in reason
+
+
+def test_automerge_waits_for_agent_review_required(team) -> None:
+    assert not cj.automerge_decision(team, am_pr(), ["ci", "folder-guard"])[0]
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [{"user": {"login": "stranger"}}, {"draft": True}, {"state": "closed"},
+     {"base": {"ref": "main"}}, {"head": {"ref": "gen/x", "repo": {"full_name": "o/r"}}},
+     {"labels": [{"name": "generated-pr"}]}, {"labels": [{"name": "external"}]},
+     {"head": {"ref": "data/x", "repo": {"full_name": "fork/r"}}},
+     {"head": {"ref": "data/x", "repo": None}}],
+)
+def test_automerge_rejects(team, kw) -> None:
+    assert not cj.automerge_decision(team, am_pr(**kw), REQ)[0]
+
+
+def test_required_checks_none_on_api_error(monkeypatch) -> None:
+    def boom(*a, **k):
+        raise cj.subprocess.CalledProcessError(1, "gh")
+    monkeypatch.setattr(cj, "api", boom)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    assert cj.required_checks() is None
+    monkeypatch.setattr(cj, "api", lambda *a, **k: {"protection": {}})
+    assert cj.required_checks() is None
+    monkeypatch.setattr(cj, "api", lambda *a, **k: {
+        "protection": {"required_status_checks": {"contexts": ["ci", "agent-review"]}}})
+    assert cj.required_checks() == ["ci", "agent-review"]

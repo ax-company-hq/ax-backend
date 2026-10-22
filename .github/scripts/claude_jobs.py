@@ -96,6 +96,8 @@ def check_result(data: object, team: team_mod.Team) -> dict:
         out[key] = v
     if not out["title"].strip():
         raise JobError("result.json title이 비어 있음")
+    if any(ord(ch) < 32 for ch in out["title"]):
+        raise JobError("result.json title에 줄바꿈·제어 문자가 있음")
     reqs = data.get("requests", [])
     if not isinstance(reqs, list) or len(reqs) > 5:
         raise JobError("result.json requests는 5개 이하 목록")
@@ -158,7 +160,7 @@ def write_prep(team: team_mod.Team, dept: str, mode: str, issue_no: int, actor: 
         raise JobError("이슈 작성자가 팀원·봇이 아님")
     if hop_of(issue.get("body") or "") > MAX_HOP:
         raise JobError("hop이 3을 넘음")
-    linked = open_prs_for_issue(issue_no)
+    linked = open_prs_for_issue(issue_no, team)
     if linked:
         raise JobError(f"#{issue_no}에 연결된 열린 PR이 있음: #{linked[0]}")
     token_secret = team.owner_token(dept)
@@ -193,11 +195,21 @@ def write_prep(team: team_mod.Team, dept: str, mode: str, issue_no: int, actor: 
     return {"token_secret": token_secret, "owner": owner, **meta}
 
 
-def open_prs_for_issue(issue_no: int) -> list[int]:
-    """본문에 Closes #N을 가진 열린 PR (봇 PR은 항상 이렇게 연결한다)."""
+ISSUE_MARKER = "<!-- ax-issue:{n} -->"
+CLOSING = re.compile(r"(?i)\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)(\s*:?\s+)(#\d+)")
+
+
+def strip_closing_keywords(text: str) -> str:
+    """Claude가 쓴 'Fixes #7' 같은 문구가 다른 이슈를 닫지 않게 '관련 #7'로 바꾼다."""
+    return CLOSING.sub(lambda m: f"관련 {m.group(3)}", text)
+
+
+def open_prs_for_issue(issue_no: int, team: team_mod.Team) -> list[int]:
+    """그 이슈에 연결된 열린 봇 PR (봇만 쓰는 표시로 찾는다)."""
     prs = api(f"repos/{repo()}/pulls?state=open&per_page=100") or []
-    pat = re.compile(rf"(?im)^\s*(?:closes|fixes|resolves)\s+#{issue_no}\b")
-    return [p["number"] for p in prs if pat.search(p.get("body") or "")]
+    marker = ISSUE_MARKER.format(n=issue_no)
+    return [p["number"] for p in prs
+            if p["user"]["login"] == team.bot_login and marker in (p.get("body") or "")]
 
 
 # ── write: post (claude 잡 안, Claude 실행 뒤) ──────────────
@@ -339,8 +351,9 @@ def review_round_label(labels: list[str]) -> str:
 
 
 # ── Claude 실행 설정 (settings 입력) ──────────────────────
-DENY = ["Read(//proc/**)", "Read(**/.git/config)", "Read(**/.env)", "Read(**/.env.*)",
-        "Bash", "WebFetch", "WebSearch"]
+DENY = ["Read(//proc)", "Read(//proc/**)", "Read(**/.git/**)", "Read(**/.env)",
+        "Read(**/.env.*)", "Read(//home/runner/work/_temp/_runner_file_commands/**)",
+        "Read(//home/runner/runners/**)", "Bash", "WebFetch", "WebSearch"]
 
 
 def claude_settings(dept: str, trusted: Path, out_dir: Path) -> dict:
@@ -415,6 +428,10 @@ def write_apply(team: team_mod.Team, dept: str, mode: str, issue_no: int, retry:
         made.append(new["number"])
     for n in notes:
         comment(issue_no, n)
+    if any(n.startswith("hop") for n in notes):
+        team_mod.requeue(repo(), team, issue_no, f"요청 hop이 {MAX_HOP}을 넘음",
+                         run_id=os.environ.get("GITHUB_RUN_ID"))
+        return "requeued (hop)"
 
     if not patch.strip():
         remove_label(issue_no, "in-progress")
@@ -446,15 +463,27 @@ def write_apply(team: team_mod.Team, dept: str, mode: str, issue_no: int, retry:
     team_mod.git("remote", "set-url", "origin",
                  f"https://x-access-token:{token}@github.com/{repo()}.git")
     team_mod.git("push", "-q", "origin", f"HEAD:refs/heads/{branch}")
-    body = f"{result['body']}\n\nCloses #{issue_no}\n\n<!-- by:{dept} mode:{mode} -->"
-    pr = api(f"repos/{repo()}/pulls", "-X", "POST", "-f", f"title={result['title']}",
+    title = strip_closing_keywords(result["title"])
+    body = (f"{strip_closing_keywords(result['body'])}\n\nCloses #{issue_no}\n\n"
+            f"{ISSUE_MARKER.format(n=issue_no)}\n<!-- by:{dept} mode:{mode} -->")
+    pr = api(f"repos/{repo()}/pulls", "-X", "POST", "-f", f"title={title}",
              "-f", f"head={branch}", "-f", "base=dev", "-f", f"body={body}")
-    add_labels(pr["number"], [f"by:{dept}"])
-    lock(pr["number"])
-    lock(issue_no)
+    # 여기부터는 실패해도 PR은 이미 있다. 잡을 실패시키면 finalize가 이슈를 잘못 재대기한다
+    report = ""
     if report_file and report_file.exists():
-        comment(pr["number"], "<!-- test-report -->\n" + report_file.read_text(encoding="utf-8")[
-            :MAX_BODY])
+        report = report_file.read_text(encoding="utf-8")[:MAX_BODY]
+    steps = [
+        lambda: add_labels(pr["number"], [f"by:{dept}"]),
+        lambda: lock(pr["number"]),
+        lambda: lock(issue_no),
+    ]
+    if report:
+        steps.append(lambda: comment(pr["number"], "<!-- test-report -->\n" + report))
+    for step in steps:
+        try:
+            step()
+        except (subprocess.CalledProcessError, OSError) as e:
+            print(f"::warning::PR #{pr['number']} 후속 단계 실패: {e}")
     return f"pr:{pr['number']}"
 
 
@@ -553,6 +582,43 @@ def review_apply(team: team_mod.Team, pr_no: int, plan: dict, verdict_dir: Path)
     return overall
 
 
+# ── auto-merge 판정 (fail-closed) ─────────────────────────
+def automerge_decision(
+    team: team_mod.Team, pr: dict, required: list[str] | None
+) -> tuple[bool, str]:
+    """자동 머지 예약 여부. required는 dev 필수 체크 이름 목록, 읽지 못했으면 None."""
+    if required is None:
+        return False, "dev 필수 체크를 읽지 못해 예약하지 않음 (fail-closed)"
+    if "agent-review" not in required:
+        return False, "agent-review가 아직 dev 필수 체크가 아님"
+    if pr.get("state") != "open" or pr.get("draft"):
+        return False, "열린 PR이 아니거나 draft"
+    if (pr.get("base") or {}).get("ref") != "dev":
+        return False, "base가 dev가 아님"
+    if ((pr.get("head") or {}).get("repo") or {}).get("full_name") != pr.get("_repo"):
+        return False, "포크 PR"
+    author = (pr.get("user") or {}).get("login", "")
+    if not team.is_trusted(author):
+        return False, f"팀원·봇이 아님: {author}"
+    branch = (pr.get("head") or {}).get("ref", "")
+    labels = {lb["name"] for lb in pr.get("labels", [])}
+    if branch.startswith("gen/") or "generated-pr" in labels:
+        return False, "generate_pr이 만든 PR은 사람이 머지"
+    if "external" in labels:
+        return False, "external"
+    return True, "예약"
+
+
+def required_checks() -> list[str] | None:
+    """봇 토큰으로 dev 필수 체크 이름을 읽는다. 어떤 실패든 None."""
+    try:
+        data = api(f"repos/{repo()}/branches/dev")
+        contexts = data["protection"]["required_status_checks"]["contexts"]
+    except (subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+        return None
+    return list(contexts) if isinstance(contexts, list) else None
+
+
 # ── CLI ──────────────────────────────────────────────────
 def main(argv: list[str] | None = None) -> int:  # noqa: C901 - 단계별 분기
     ap = argparse.ArgumentParser(prog="claude_jobs.py")
@@ -586,6 +652,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - 단계별 분기
     p.add_argument("--trusted", type=Path, required=True)
     p.add_argument("--out-dir", type=Path, required=True)
     p.add_argument("--file", type=Path, required=True)
+    p = sub.add_parser("automerge-check")
+    p.add_argument("--pr", type=int, required=True)
     p = sub.add_parser("review-prep")
     p.add_argument("--pr", type=int, required=True)
     p.add_argument("--out", type=Path, required=True)
@@ -596,6 +664,16 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - 단계별 분기
     args = ap.parse_args(argv)
     team = team_mod.Team.load()
     try:
+        if args.cmd == "automerge-check":
+            try:
+                pr = api(f"repos/{repo()}/pulls/{args.pr}")
+                pr["_repo"] = repo()
+            except subprocess.CalledProcessError:
+                pr = None
+            ok, reason = (False, "PR을 읽지 못함") if pr is None else automerge_decision(
+                team, pr, required_checks())
+            set_output(ok="true" if ok else "false", reason=reason)
+            return 0
         if args.cmd == "claude-settings":
             if args.dept not in team.depts:
                 raise JobError(f"알 수 없는 부서: {args.dept}")

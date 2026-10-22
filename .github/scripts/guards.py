@@ -169,7 +169,8 @@ def load_pr(repo: str, number: int) -> PullRequest:
 
 
 def closes_issue(body: str) -> int | None:
-    m = re.search(r"(?im)^\s*(?:closes|fixes|resolves)\s+#(\d+)\b", body)
+    """봇 PR의 연결 이슈. 봇만 쓰는 표시 <!-- ax-issue:N -->만 믿는다 (Claude가 쓴 본문 무시)."""
+    m = re.search(r"<!-- ax-issue:(\d+) -->", body)
     return int(m.group(1)) if m else None
 
 

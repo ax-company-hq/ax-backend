@@ -93,7 +93,7 @@ jobs:
           post() { gh api -X POST "repos/$REPO/statuses/$SHA" -f state="$2" -f context="$1" \
             -f description="$3" -f target_url="$RUN_URL" >/dev/null; }
           if [ "$FAIL" = "true" ]; then post agent-review failure "$SKIP"; exit 0; fi
-          for d in $(jq -r '.[].dept' <<<"$MATRIX"); do post "agent-review/$d" pending "리뷰 중"; done
+          for d in $(jq -r '.[].dept' <<<"$MATRIX"); do post "agent-review/$d" pending "리뷰 중 (attempt 1/3)"; done
           post agent-review pending "리뷰 중: $(jq -r '[.[].dept] | join(", ")' <<<"$MATRIX")"
 
   claude:
@@ -106,6 +106,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      actions: read
     strategy:
       fail-fast: false
       max-parallel: 3
@@ -134,7 +135,8 @@ jobs:
           if git ls-tree -r refs/ax/pr | awk '$1 == "120000"' | grep -q .; then
             echo "::error::PR에 심볼릭 링크가 있음"; exit 1
           fi
-          git worktree add -q _pr refs/ax/pr
+          # PR의 .gitattributes·.lfsconfig가 외부에 접속하지 못하게
+          GIT_LFS_SKIP_SMUDGE=1 git -c filter.lfs.process= -c filter.lfs.smudge= -c filter.lfs.required=false             worktree add -q _pr refs/ax/pr
           mkdir -p "$RUNNER_TEMP/ax-in" "$RUNNER_TEMP/ax-out"
           git diff "$BASE_SHA" refs/ax/pr > "$RUNNER_TEMP/ax-in/pr.diff"
           gh api "repos/$REPO/pulls/$PR" --jq '{title, body, author: .user.login, branch: .head.ref}' \
@@ -170,6 +172,8 @@ jobs:
           github_token: ${{ github.token }}
           allowed_bots: ax-company-hq-bot
           classify_inline_comments: "false"
+          display_report: "false"
+          show_full_output: "false"
           settings: ${{ runner.temp }}/claude-settings.json
           prompt: |
             너는 ax-backend의 `${{ matrix.reviewer.dept }}` 부서 리뷰 에이전트다.
@@ -183,7 +187,7 @@ jobs:
             --add-dir ${{ runner.temp }}/ax-out
             --add-dir ${{ runner.temp }}/ax-in
             --add-dir ${{ runner.temp }}/trusted
-            --allowedTools Read,Glob,Grep,Write
+            --allowedTools Write
             --disallowedTools Bash,Edit,WebFetch,WebSearch
             --max-turns 12
 

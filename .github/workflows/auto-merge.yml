@@ -2,6 +2,7 @@ name: auto-merge
 
 # 팀원·봇 PR을 자동 머지 예약한다 (docs/automation-spec.md 7장). 스위치 무관.
 # 실제 머지 조건은 브랜치 보호(필수 체크 + human_paths면 code owner 승인)가 정한다.
+# agent-review가 dev 필수 체크가 되기 전이거나, 그걸 봇 토큰으로 읽지 못하면 예약하지 않는다 (fail-closed).
 # 제외: planning 에이전트 generate_pr이 만든 PR(gen/ 브랜치, generated-pr 라벨) — 머지는 사람이 누른다.
 on:
   pull_request_target:
@@ -21,25 +22,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { ref: dev, persist-credentials: false, sparse-checkout: .github }
-      - name: 대상인지
-        id: check
-        env:
-          AUTHOR: ${{ github.event.pull_request.user.login }}
-          BRANCH: ${{ github.event.pull_request.head.ref }}
-          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          REPO: ${{ github.repository }}
-          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: team.py 의존성
         run: |
-          set -euo pipefail
-          ok=true
-          jq -e --arg a "$AUTHOR" '(.members | has($a)) or .bot_login == $a' .github/team.json >/dev/null || ok=false
-          [ "$HEAD_REPO" = "$REPO" ] || ok=false
-          case "$BRANCH" in gen/*) ok=false;; esac
-          jq -e 'index("external") or index("generated-pr")' <<<"$LABELS" >/dev/null && ok=false
-          echo "ok=$ok" >> "$GITHUB_OUTPUT"
-          echo "auto-merge 대상: $ok"
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet --require-hashes -r .github/scripts/requirements.txt
       - name: ax-bot token
-        if: steps.check.outputs.ok == 'true'
         id: bot
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         with:
@@ -47,6 +36,13 @@ jobs:
           private-key: ${{ secrets.AX_BOT_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
+      - name: 대상인지 (봇 토큰으로 읽기, 실패하면 예약 안 함)
+        id: check
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          "$RUNNER_TEMP/venv/bin/python" -I .github/scripts/claude_jobs.py automerge-check --pr "$PR"
       - name: 자동 머지 예약 (squash)
         if: steps.check.outputs.ok == 'true'
         env:

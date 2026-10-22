@@ -154,6 +154,8 @@ jobs:
           github_token: ${{ github.token }}
           allowed_bots: ax-company-hq-bot
           classify_inline_comments: "false"
+          display_report: "false"
+          show_full_output: "false"
           settings: ${{ runner.temp }}/claude-settings.json
           prompt: |
             너는 ax-backend의 `${{ needs.prep.outputs.dept }}` 부서 에이전트다.
@@ -170,7 +172,7 @@ jobs:
             --add-dir ${{ runner.temp }}/ax-out
             --add-dir ${{ runner.temp }}/ax-in
             --add-dir ${{ runner.temp }}/trusted
-            --allowedTools Read,Glob,Grep,Edit,Write
+            --allowedTools Edit,Write
             --disallowedTools Bash,WebFetch,WebSearch
             --max-turns 30
 

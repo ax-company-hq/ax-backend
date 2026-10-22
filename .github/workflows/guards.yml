@@ -65,6 +65,7 @@ jobs:
           permission-statuses: write
           permission-issues: write
           permission-pull-requests: write
+          permission-contents: write
 
       - name: Apply (ax-bot 상태·코멘트)
         env:

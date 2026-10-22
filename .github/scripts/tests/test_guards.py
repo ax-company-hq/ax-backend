@@ -149,8 +149,9 @@ def test_bot_ok_does_not_requeue(team) -> None:
 
 @pytest.mark.parametrize(
     ("body", "issue"),
-    [("요약\n\nCloses #12", 12), ("closes #3\n", 3), ("Fixes #7 and more", 7), ("see #9", None),
-     ("", None)],
+    [("Closes #12\n\n<!-- ax-issue:12 -->", 12),
+     ("Fixes #7\n\nCloses #12\n<!-- ax-issue:12 -->", 12),
+     ("Closes #3", None), ("", None)],
 )
-def test_closes_issue(body, issue) -> None:
+def test_closes_issue_uses_bot_marker_only(body, issue) -> None:
     assert guards.closes_issue(body) == issue

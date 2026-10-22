@@ -383,7 +383,9 @@ def show(rev: str, path: str) -> str:
 CLAUDE_JOB = re.compile(r"(?:^|/ )claude:([a-z0-9-]+):")
 REPOS = ("ax-company-hq/ax-backend", "ax-company-hq/ax-frontend")
 # 이름에 claude:<부서>:가 붙는 잡이 있는 워크플로만 조회한다 (API 호출 줄이기)
-CLAUDE_WORKFLOWS = ("_claude-write.yml", "claude-review.yml", "claude-arbiter.yml",
+# 재사용 워크플로 실행은 호출한 워크플로 이름으로 기록되므로 호출자도 넣는다
+CLAUDE_WORKFLOWS = ("_claude-write.yml", "claude-request.yml", "claude-review.yml",
+                    "claude-tasks.yml", "claude-ci-fix.yml", "claude-arbiter.yml",
                     "claude-plan.yml", "claude-triage.yml")
 
 
@@ -424,6 +426,8 @@ def todays_claude_jobs(day: str) -> list[tuple[str, str | None]]:
             except subprocess.CalledProcessError:
                 continue  # 아직 없는 워크플로
             for run in (runs or {}).get("workflow_runs", []):
+                if str(run["id"]) == os.environ.get("GITHUB_RUN_ID"):
+                    continue  # 지금 실행 중인 자기 자신은 세지 않는다
                 data = gh_api(f"repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100")
                 jobs += [(j["name"], j.get("conclusion")) for j in data.get("jobs", [])]
     return jobs
