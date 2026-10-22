@@ -20,6 +20,7 @@ class IdPrefix(StrEnum):
     SELLER = "sel_"
     RETURN = "ret_"
     REFUND = "rfd_"
+    CLAIM = "clm_"  # 고객지원 클레임. 이벤트 data에는 넣지 않는다
     COUPON = "cpn_"
     CAMPAIGN = "cmp_"
     NOTICE = "ntc_"
