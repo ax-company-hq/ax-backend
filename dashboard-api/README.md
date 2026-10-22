@@ -3,7 +3,7 @@
 ## 1. 역할
 상담원 화면(ax-frontend `dashboard-web`)이 쓰는 API 서버. LLM 없이 코드로만 돈다.
 - 문의·클레임·보상 큐는 support 에이전트(A2A skill), 주문·후기는 shop-api, KB는 memory, 집계는 공통 로그 저장소에서 받아 화면 형태로 돌려준다.
-- 현재(1~2단계)는 목 데이터로 읽기 API만 연다. 쓰기(승인·지급 등)는 support의 `execute()`를 거치도록 이후 단계에서 연다.
+- 현재(1~2단계)는 목 데이터로 읽기·쓰기 API를 연다. 쓰기는 목 모드에서 메모리 데이터만 바꾼다. 실제 연결 단계에서 승인·지급 계열은 support의 `execute()`를 거치도록 바꾼다.
 ## 2. 실행 방법
 `docker compose -f infra/compose.yml up dashboard-api` / 목 모드: `DASHBOARD_MOCK=1`
 목 모드가 아니면 `/api/dashboard/*`는 `503 UPSTREAM_NOT_CONNECTED`를 돌려준다.
@@ -23,6 +23,18 @@
 | `/claims?status`, `/claims/stats`, `/claims/{id}` | `/admin/claims...` |
 | `/queue-entries` | `/admin/queue` |
 | `/reviews` | `/admin/reviews` |
+
+### 엔드포인트 (POST, 목 모드)
+| 경로 (`/api/dashboard` 아래) | 동작 |
+| --- | --- |
+| `/conversations` | 새 문의 만들기 (201) |
+| `/conversations/{id}/customer-messages`, `/agent-messages` | 메시지 추가 (201). 상담원 답변은 가드(환불 단정 문구)에 걸리면 422 `REPLY_BLOCKED` |
+| `/conversations/{id}/check`, `/reject-draft`, `/summary`, `/status` | 답변 검사, 초안 거절, 요약, 상태 변경 |
+| `/claims/{id}/approve`, `/reject`, `/receive`, `/inspection` | 클레임 처리. 상태가 맞지 않으면 409 `INVALID_STATE` |
+| `/queue-entries/process` | 준비된 보상 큐 항목 지급 처리 |
+| `/reviews/{id}/status` | 후기 노출·숨김 |
+
+CORS 허용 출처는 `DASHBOARD_CORS_ORIGINS`(쉼표 구분, 기본 `http://localhost:3000,http://localhost:3001`)로 정한다.
 
 ## 4. 의존
 ax-contracts, ax-agent-template
