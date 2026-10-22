@@ -692,7 +692,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - 단계별 분기
             out = team_mod.git("diff", "--name-status", "-z", "--no-renames", f"{args.base}..HEAD")
             parts = [x for x in out.split("\0") if x]
             changes = list(zip(parts[0::2], parts[1::2], strict=False))
-            print("\n".join(ruff_targets(team, args.dept, changes)))
+            targets = ruff_targets(team, args.dept, changes)
+            if targets:  # 대상이 없으면 아무것도 출력하지 않는다 (빈 줄은 빈 파일 이름이 됨)
+                print("\n".join(targets))
             return 0
         if args.cmd == "automerge-check":
             try:
