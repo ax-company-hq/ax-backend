@@ -66,6 +66,23 @@ def test_each_app_reads_its_own_prefixed_env(monkeypatch, real_mode, request_bod
     assert beta_result["outcome"] == "UNAUTHORIZED"
 
 
+def test_app_holds_its_own_name() -> None:
+    alpha = create_agent_app(_card("iso_alpha"), {"whoami": _whoami})
+    beta = create_agent_app(_card("iso_beta"), {"whoami": _whoami})
+    assert (alpha.state.agent_name, beta.state.agent_name) == ("iso_alpha", "iso_beta")
+
+
+def test_reset_state_clears_default_name() -> None:
+    # autouse `reset_state`가 이전 테스트의 이름을 지웠다.
+    assert config._agent_name is None
+    create_agent_app(_card("iso_alpha"), {"whoami": _whoami})
+    assert config.get_agent_name() == "iso_alpha"
+    from ax_agent_template.testing import clear_state
+
+    clear_state()
+    assert config._agent_name is None
+
+
 def test_request_scope_does_not_leak_after_request(monkeypatch, real_mode, request_body) -> None:
     monkeypatch.setenv("ISO_ALPHA_MOCK", "1")
     alpha = TestClient(create_agent_app(_card("iso_alpha"), {"whoami": _whoami}))

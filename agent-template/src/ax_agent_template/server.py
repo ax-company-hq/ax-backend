@@ -133,6 +133,7 @@ def create_agent_app(card: AgentCard, handlers: Mapping[str, Handler]) -> FastAP
 
     set_agent_name(card.name)
     app = FastAPI(title=f"ax-agent-{card.name}")
+    app.state.agent_name = card.name  # 앱이 자기 이름을 들고 있다
 
     @app.get("/health")
     def health() -> dict:

@@ -8,8 +8,8 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 
-from ax_agent_template import config, events, server
 from ax_agent_template.server import create_agent_app
+from ax_agent_template.testing import reset_state  # noqa: F401  (autouse 픽스처)
 from ax_contracts.schemas import AgentCard, AgentRequest, AgentResult, TaskStatus
 
 CARD = AgentCard.model_validate(
@@ -74,13 +74,8 @@ def _request_body(
 
 @pytest.fixture(autouse=True)
 def _mock_env(monkeypatch: pytest.MonkeyPatch):
-    """모든 테스트는 목 모드로 돈다. 전역 상태는 테스트마다 되돌린다."""
+    """모든 테스트는 목 모드로 돈다. 내부 상태 초기화는 `reset_state` 픽스처가 맡는다."""
     monkeypatch.setenv("AGENT_TEMPLATE_MOCK", "1")
-    saved_name = config._agent_name
-    events.reset_mock_bus()
-    server.MOCK_ESCALATIONS.clear()
-    yield
-    config._agent_name = saved_name
 
 
 @pytest.fixture

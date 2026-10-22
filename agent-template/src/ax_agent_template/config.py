@@ -29,7 +29,9 @@ DEFAULT_PORTS: dict[str, int] = {
 # 이 길이를 넘는 path는 이관 큐로 넘긴다.
 MAX_PATH_LENGTH = 3
 
-# 프로세스 기본 이름(마지막 `set_agent_name`). 요청 처리 중에는 `_request_agent_name`이 우선한다.
+# 프로세스 기본 이름(마지막 `set_agent_name`). 요청 밖(핸들러 직접 호출·서비스 시작)에서만 쓰는
+# 호환용 값이다. 요청 처리 중에는 `_request_agent_name`(앱이 들고 있는 이름)이 우선한다.
+# 테스트는 `ax_agent_template.testing.reset_state`로 매번 비운다.
 _agent_name: str | None = None
 # 요청을 받은 앱의 이름. 앱을 여러 개 만들어도 서로 섞이지 않게 요청 단위로 격리한다.
 _request_agent_name: ContextVar[str | None] = ContextVar("ax_request_agent_name", default=None)
@@ -44,6 +46,12 @@ def set_agent_name(name: str) -> None:
     """`create_agent_app`이 호출한다. 이후 `call_agent`·`execute`가 이 이름을 쓴다."""
     global _agent_name
     _agent_name = name
+
+
+def reset_agent_name() -> None:
+    """프로세스 기본 이름을 지운다 (테스트 초기화용). 요청 범위 이름은 건드리지 않는다."""
+    global _agent_name
+    _agent_name = None
 
 
 @contextmanager
