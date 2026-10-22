@@ -1,4 +1,6 @@
 name: _claude-write
+# 수동 실행 run 제목 (cap 계산용, team.py WRITE_TITLE). workflow_call로 불리면 호출한 쪽 제목을 쓴다
+run-name: "claude:${{ inputs.dept }}:${{ inputs.mode }} #${{ inputs.issue }}"
 
 # 모든 "작성" 모드의 단일 구현 (docs/automation-spec.md 3장). 1단계: task · request만.
 # prep(규칙, bot) → claude(Claude 실행, claude, 읽기 전용) → build(비밀값 없음) → apply(규칙, bot) → finalize

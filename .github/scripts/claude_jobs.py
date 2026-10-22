@@ -165,13 +165,11 @@ def write_prep(team: team_mod.Team, dept: str, mode: str, issue_no: int, actor: 
         raise JobError(f"#{issue_no}에 연결된 열린 PR이 있음: #{linked[0]}")
     token_secret = team.owner_token(dept)
     owner = team.owners(dept)[0]
-    used = team_mod.count_claude_jobs(
-        team_mod.todays_claude_jobs(team_mod.datetime.now(team_mod.UTC).strftime("%Y-%m-%d")),
-        team_mod.token_depts_of(team, owner),
-    )
-    cap = int(team.members[owner].get("daily_cap", 0))
-    if used >= cap:
-        raise JobError(f"quota: {team.members[owner]['name']} 오늘 {used}/{cap}")
+    st = team_mod.cap_status(team, [owner])[owner]  # run 목록 3회 조회
+    if st["used"] is None:
+        raise JobError("cap을 확인하지 못해 실행하지 않음 (fail-closed)")
+    if not st["ok"]:
+        raise JobError(f"quota: {st['reason']}")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     # 이슈·코멘트는 데이터다. 팀원·봇 것만 넘긴다
@@ -538,12 +536,15 @@ def review_prep(team: team_mod.Team, pr_no: int) -> dict:
     depts = team.reviewers_for(list(classified.depts), person)
     if not depts:
         return {"skip": "리뷰 부서 없음", "fail": True, "head_sha": head}
+    # cap은 여기서 한 번만 계산해 matrix로 넘긴다 (리뷰어 잡마다 다시 조회하지 않음)
+    caps = team_mod.cap_status(team, sorted({team.owners(d)[0] for d in depts}))
     reviewers = []
     for d in depts:
         owner = team.owners(d)[0]
         reviewers.append({"dept": d, "token_secret": team.owner_token(d),
                           "model_var": review_model_var(d), "name": team.members[owner]["name"],
-                          "owner": owner})
+                          "owner": owner, "cap_ok": caps[owner]["ok"],
+                          "cap_reason": caps[owner]["reason"]})
     return {"head_sha": head, "base_sha": mb, "reviewers": reviewers,
             "changed": list(classified.depts), "labels": labels}
 
@@ -566,7 +567,8 @@ def review_apply(team: team_mod.Team, pr_no: int, plan: dict, verdict_dir: Path)
         quota = verdict_dir / f"verdict-{d}" / "quota.txt"
         if quota.exists():
             states[d] = "error"
-            set_status(head, f"agent-review/{d}", "error", "quota")
+            reason = quota.read_text(encoding="utf-8").strip()[:100] or "quota"
+            set_status(head, f"agent-review/{d}", "error", f"quota — {reason}")
             continue
         try:
             v = check_verdict(json.loads(f.read_text(encoding="utf-8")), head)
@@ -720,7 +722,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - 단계별 분기
             plan = review_prep(team, args.pr)
             args.out.write_text(json.dumps(plan, ensure_ascii=False), encoding="utf-8")
             matrix = [{"dept": r["dept"], "token_secret": r["token_secret"],
-                       "model_var": r["model_var"], "owner": r["owner"]}
+                       "model_var": r["model_var"], "owner": r["owner"],
+                       "cap_ok": r["cap_ok"], "cap_reason": r["cap_reason"]}
                       for r in plan.get("reviewers", [])]
             set_output(skip=plan.get("skip", ""), fail="true" if plan.get("fail") else "false",
                        head_sha=plan.get("head_sha", ""), matrix=json.dumps(matrix),
