@@ -111,8 +111,14 @@ def test_agent_card(client: TestClient) -> None:
         "seller_review",
         "settlement_hold",
         "review_hold",
+        "review_threshold_change",
     }
     assert skills["review_hold"].allowed_requesters == ["safety"]
+    assert skills["review_threshold_change"].allowed_requesters == ["safety"]
+    assert (
+        skills["review_threshold_change"].grade,
+        skills["review_threshold_change"].priority,
+    ) == ("read", "recommended")
     assert skills["verify_amount"].allowed_requesters == ["safety"]
     assert (skills["verify_amount"].priority, skills["loss_aggregation"].priority) == (
         "required",
@@ -120,7 +126,7 @@ def test_agent_card(client: TestClient) -> None:
     )
     assert (skills["seller_review"].grade, skills["seller_review"].verifier) == ("B", "data")
     served = client.get("/.well-known/agent-card.json").json()
-    assert served["name"] == "finance" and len(served["skills"]) == 5
+    assert served["name"] == "finance" and len(served["skills"]) == 6
 
 
 # ---------------------------------------------------------------- verify_amount (DEP-FIN-02)

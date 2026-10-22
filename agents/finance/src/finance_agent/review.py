@@ -43,10 +43,18 @@ class SellerPolicy(_Strict):
     reject_risk_at: int = Field(ge=0, le=100)
 
 
+class ThresholdChangePolicy(_Strict):
+    """기준 바꾸기 판단 (`threshold_review.py`). 사람이 정하는 값."""
+
+    max_step_ratio: float = Field(gt=0, le=1)
+    min_holds_to_raise: int = Field(ge=1)
+
+
 class ReviewPolicy(_Strict):
     coupon: CouponPolicy
     refund: RefundPolicy
     seller: SellerPolicy
+    threshold_change: ThresholdChangePolicy
 
 
 def load_policy() -> ReviewPolicy:

@@ -75,6 +75,11 @@ def add_read_api(app: FastAPI) -> None:
         rows = state().ledger.ai_reviews
         return {"data": list(reversed(rows)), "meta": {"count": len(rows)}}
 
+    @app.get("/api/finance/threshold-reviews")
+    def threshold_reviews() -> dict:
+        rows = state().ledger.threshold_reviews
+        return {"data": list(reversed(rows)), "meta": {"count": len(rows)}}
+
     @app.get("/api/finance/market-ops")
     def market_ops() -> dict:
         rows = state().ledger.market_ops
