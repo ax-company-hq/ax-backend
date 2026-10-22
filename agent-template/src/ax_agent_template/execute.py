@@ -14,15 +14,19 @@
   `github_create_pull` 등)는 이 함수가 `executed`를 돌려준 뒤에만 호출하고, LLM 도구 목록에서 뺀다.
 - `ExecuteRequest.claimed_grade`는 기록만 하고 판정에 쓰지 않는다. 금액은 safety가 다시 계산한다.
 
-TODO: safety 서비스(`safety`, 포트 8001) 호출. 지금은 목 모드(`AGENT_TEMPLATE_MOCK=1`)에서만
-`executed`(A)를 돌려주고, 그 밖에는 거부한다. 테스트에서 다른 결과가 필요하면 이 함수를 대체한다.
+safety 서비스(`safety`, 포트 8001, `AX_SAFETY_URL`)의 `POST /api/safety/executions`를 부른다.
+목 모드(`AGENT_TEMPLATE_MOCK=1`)에서 `AX_SAFETY_URL`이 없으면 `executed`(A)를 돌려준다.
+401·403·400·연결 오류·타임아웃은 `rejected`다.
 """
 
 from __future__ import annotations
 
 import itertools
+import os
 
-from ax_agent_template.config import get_agent_name, is_mock
+import httpx
+
+from ax_agent_template.config import agent_token, agent_url, get_agent_name, is_mock
 from ax_contracts.schemas import (
     Evidence,
     ExecuteDecision,
@@ -32,14 +36,40 @@ from ax_contracts.schemas import (
 
 _mock_counter = itertools.count(1)
 
+# B 교차검증은 동기이고 safety의 verify_timeout_seconds(30초)보다 길게 기다려야 한다.
+SAFETY_TIMEOUT_SECONDS = 35.0
 
-async def _send_to_safety(request: ExecuteRequest) -> ExecuteDecision:
-    """TODO: safety 서비스로 `ExecuteRequest`를 보내고 `ExecuteDecision`을 받는다."""
-    if is_mock():
+
+async def _send_to_safety(
+    request: ExecuteRequest, *, http_client: httpx.AsyncClient | None = None
+) -> ExecuteDecision:
+    """safety 실행 관문(`POST /api/safety/executions`)으로 보내고 `ExecuteDecision`을 받는다.
+
+    목 모드에서 `AX_SAFETY_URL`이 없으면 가짜 `executed`(A)를 돌려준다(CI 단독 테스트).
+    `AX_SAFETY_URL`이 있으면 목 모드여도 HTTP로 safety를 부른다.
+    200이 아니거나 본문이 스키마에 맞지 않으면 예외를 던지고, `execute()`가 `rejected`로 바꾼다.
+    """
+    if is_mock() and not os.getenv("AX_SAFETY_URL"):
         return ExecuteDecision(
             execution_id=f"exe_mock_{next(_mock_counter)}", grade="A", status="executed"
         )
-    raise NotImplementedError("TODO: safety 서비스 호출")
+
+    name = get_agent_name()
+    url = f"{agent_url('safety')}/api/safety/executions"
+    headers = {"Authorization": f"Bearer {agent_token(name)}"}
+    client = http_client or httpx.AsyncClient()
+    try:
+        response = await client.post(
+            url,
+            json=request.model_dump(mode="json"),
+            headers=headers,
+            timeout=SAFETY_TIMEOUT_SECONDS,
+        )
+    finally:
+        if http_client is None:
+            await client.aclose()
+    response.raise_for_status()
+    return ExecuteDecision.model_validate(response.json()["data"])
 
 
 async def execute(
