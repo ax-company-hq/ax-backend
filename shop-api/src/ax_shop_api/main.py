@@ -1,19 +1,25 @@
 """ax-shop-api 서버 진입점.
 
 경로는 `/api/shop/<복수 명사>`, 성공은 `{data, meta}`, 실패는 `{error: {code, message}}`다.
-PR 1 범위: 상품·주문·가짜 결제·시드·이벤트 발행. 인증은 사람 로그인(JWT)과 에이전트 토큰을 붙일
-때(쓰기 API 관문 토큰 등) 추가한다(TODO).
+PR 1: 상품·주문·가짜 결제·시드·이벤트 발행. PR 2: 장애 주입·해제와 `shop.degraded` 측정.
+관리 API(`/api/shop/admin/*`)는 `Authorization: Bearer <토큰>`의 요청자가 허용 목록에 있어야 한다.
+사람 로그인(JWT)은 아직 없어서 관리자는 토큰 이름 `admin`으로 대신한다(TODO).
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import os
+from collections.abc import AsyncIterator, Callable
 from typing import Any, Literal
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Header, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from ax_agent_template.config import set_agent_name
+from ax_agent_template.server import verify_token
 from ax_shop_api import outbox
 from ax_shop_api.db import Db
 from ax_shop_api.seed import seed
@@ -55,6 +61,32 @@ class CancelIn(BaseModel):
     reason_code: Literal["buyer", "seller", "system"] = "buyer"
 
 
+class FaultIn(BaseModel):
+    kind: Literal["latency", "failure"]
+    delay_ms: int = Field(default=2000, ge=0, le=60000)  # kind=latency일 때 더할 지연
+
+
+# 관리 API 허용 요청자. 장애 해제는 infra 롤백이 관문을 거쳐 부른다(후속 결정 15)
+INJECT_ALLOWED = {"admin"}
+RELEASE_ALLOWED = {"admin", "infra"}
+
+
+def _caller(allowed: set[str]) -> Callable[..., str]:
+    def dependency(authorization: str | None = Header(default=None)) -> str:
+        scheme, _, token = (authorization or "").partition(" ")
+        if scheme.lower() != "bearer" or not token.strip():
+            raise ShopError("UNAUTHORIZED", "토큰이 필요하다", 401)
+        try:
+            requester = verify_token(token.strip())  # 요청자는 토큰에서 꺼낸다
+        except PermissionError as error:
+            raise ShopError("UNAUTHORIZED", "토큰을 검증할 수 없다", 401) from error
+        if requester not in allowed:
+            raise ShopError("FORBIDDEN", "이 API를 호출할 수 없는 요청자다", 403)
+        return requester
+
+    return dependency
+
+
 def _ok(data: Any, **meta: Any) -> dict[str, Any]:
     return {"data": data, "meta": meta}
 
@@ -65,7 +97,25 @@ def create_app(db: Db | None = None, seed_data: bool = True) -> FastAPI:
     if seed_data:
         seed(database)
     shop = Shop(database)
-    app = FastAPI(title="ax-shop-api")
+    interval = float(os.getenv("SHOP_MONITOR_INTERVAL_S") or 5)  # 0이면 주기 판정을 끈다
+
+    async def _monitor_loop() -> None:
+        """결제 요청이 없어도 지속 시간을 판정하도록 주기적으로 평가한다."""
+        while True:
+            await asyncio.sleep(interval)
+            shop.evaluate_monitor()
+            await outbox.flush(database)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        task = asyncio.create_task(_monitor_loop()) if interval > 0 else None
+        try:
+            yield
+        finally:
+            if task:
+                task.cancel()
+
+    app = FastAPI(title="ax-shop-api", lifespan=lifespan)
     app.state.shop = shop
 
     @app.exception_handler(ShopError)
@@ -114,6 +164,7 @@ def create_app(db: Db | None = None, seed_data: bool = True) -> FastAPI:
     @app.post("/api/shop/orders/{order_id}/payments")
     async def pay(order_id: str, body: PaymentIn) -> dict:
         order = shop.pay(order_id, body.method_code, body.simulate)
+        shop.evaluate_monitor()
         await outbox.flush(database)
         return _ok(order)
 
@@ -122,6 +173,20 @@ def create_app(db: Db | None = None, seed_data: bool = True) -> FastAPI:
         order = shop.cancel(order_id, body.reason_code)
         await outbox.flush(database)
         return _ok(order)
+
+    @app.get("/api/shop/admin/faults")
+    async def fault_state(_: str = Depends(_caller(INJECT_ALLOWED | RELEASE_ALLOWED))) -> dict:
+        return _ok(shop.fault_state())
+
+    @app.post("/api/shop/admin/faults", status_code=201)
+    async def inject_fault(body: FaultIn, _: str = Depends(_caller(INJECT_ALLOWED))) -> dict:
+        return _ok(shop.inject_fault(body.kind, body.delay_ms))
+
+    @app.delete("/api/shop/admin/faults")
+    async def release_fault(_: str = Depends(_caller(RELEASE_ALLOWED))) -> dict:
+        state = shop.release_fault()
+        await outbox.flush(database)
+        return _ok(state)
 
     return app
 

@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import sqlite3
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -15,6 +17,7 @@ from typing import Any
 from ax_contracts.schemas import EventType, PaymentFailedData
 from ax_shop_api import outbox
 from ax_shop_api.db import TENANT_ID, Db
+from ax_shop_api.monitor import Monitor
 
 CANCELLABLE = ("pending_payment", "payment_failed")
 
@@ -33,21 +36,58 @@ def _now() -> str:
 class PaymentOutcome:
     ok: bool
     failure_code: str | None = None
+    latency_ms: float = 0.0
+    server_error: bool = False  # 카드 거절(PG_DECLINED)은 5xx가 아니다
+
+
+BASELINE_LATENCY_MS = 180.0  # 평소 p95 기준(시연용)
 
 
 class Gateway:
-    """가짜 결제 서버. 요청한 대로(`simulate`) 성공·실패를 돌려준다. 장애 주입은 여기를 바꾼다."""
+    """가짜 결제 서버. 요청한 대로(`simulate`) 성공·실패를 돌려준다.
+
+    장애 주입(SHOP-06): `latency`는 지연(ms)을 더하고, `failure`는 모든 결제를 5xx로 실패시킨다.
+    지연은 값만 기록한다(실제로 기다리지 않는다).
+    """
+
+    def __init__(self) -> None:
+        self.delay_ms = 0
+        self.failing = False
+
+    def inject(self, kind: str, delay_ms: int = 0) -> None:
+        if kind == "latency":
+            self.delay_ms = delay_ms
+        elif kind == "failure":
+            self.failing = True
+
+    def release(self) -> None:
+        self.delay_ms, self.failing = 0, False
+
+    @property
+    def active(self) -> bool:
+        return bool(self.delay_ms or self.failing)
 
     def attempt(self, simulate: str | None) -> PaymentOutcome:
+        latency = BASELINE_LATENCY_MS + self.delay_ms
+        if self.failing:
+            return PaymentOutcome(False, "PG_UNAVAILABLE", latency, server_error=True)
         if simulate == "failure":
-            return PaymentOutcome(False, "PG_DECLINED")
-        return PaymentOutcome(True)
+            return PaymentOutcome(False, "PG_DECLINED", latency)
+        return PaymentOutcome(True, None, latency)
 
 
 class Shop:
-    def __init__(self, db: Db, gateway: Gateway | None = None) -> None:
+    def __init__(
+        self,
+        db: Db,
+        gateway: Gateway | None = None,
+        monitor: Monitor | None = None,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
         self.db = db
         self.gateway = gateway or Gateway()
+        self.monitor = monitor or Monitor(db)
+        self.clock = clock
 
     # --- 조회 -------------------------------------------------------------
     def list_sellers(self) -> list[dict[str, Any]]:
@@ -202,13 +242,14 @@ class Shop:
         return self.get_order(order_id)
 
     def pay(self, order_id: str, method_code: str, simulate: str | None) -> dict[str, Any]:
-        outcome = self.gateway.attempt(simulate)
         with self.db.tx() as conn:
             order = conn.execute("SELECT * FROM orders WHERE order_id = ?", (order_id,)).fetchone()
             if order is None:
                 raise ShopError("ORDER_NOT_FOUND", "주문을 찾을 수 없다", 404)
             if order["status"] not in ("pending_payment", "payment_failed"):
                 raise ShopError("ORDER_NOT_PAYABLE", "결제할 수 없는 주문 상태다", 409)
+            outcome = self.gateway.attempt(simulate)
+            self.monitor.record(self.clock(), outcome.latency_ms, outcome.server_error)
             payment_id = self.db.next_id(conn, "payment", "pay_")
             now = _now()
             amount = order["total_amount"]
@@ -280,3 +321,25 @@ class Shop:
                 f"order.cancelled:{order_id}",
             )
         return self.get_order(order_id)
+
+    # --- 장애 주입·측정 (SHOP-06) -------------------------------------------
+    def fault_state(self) -> dict[str, Any]:
+        return {
+            "active": self.gateway.active,
+            "delay_ms": self.gateway.delay_ms,
+            "failing": self.gateway.failing,
+            "degraded": self.monitor.degraded,
+        }
+
+    def inject_fault(self, kind: str, delay_ms: int = 0) -> dict[str, Any]:
+        self.gateway.inject(kind, delay_ms)
+        return self.fault_state()
+
+    def release_fault(self) -> dict[str, Any]:
+        """장애를 해제한다. 장애 상태였다면 `shop.recovered`가 outbox에 들어간다."""
+        self.gateway.release()
+        self.monitor.reset()
+        return self.fault_state()
+
+    def evaluate_monitor(self) -> None:
+        self.monitor.evaluate(self.clock())
