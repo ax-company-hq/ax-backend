@@ -43,9 +43,7 @@ def _use_transport(monkeypatch: pytest.MonkeyPatch, handler) -> list[httpx.Reque
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("grade", "status"), [("A", "executed"), ("C", "held"), ("B", "rejected")]
-)
+@pytest.mark.parametrize(("grade", "status"), [("A", "executed"), ("C", "held"), ("B", "rejected")])
 async def test_execute_returns_safety_decision(safety_url, monkeypatch, grade, status) -> None:
     decision = ExecuteDecision(execution_id="exe_1", grade=grade, status=status)
 
