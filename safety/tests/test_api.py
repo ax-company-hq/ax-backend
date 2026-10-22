@@ -170,7 +170,16 @@ async def test_safety_events_go_to_the_bus(coupon: Any) -> None:
     await verify.publish_safety_event(
         "safety.action_held",
         coupon(),
-        {"execution_id": "exe_1", "action": "issue_coupon", "review_id": "rev_1"},
+        {
+            "execution_id": "exe_1",
+            "action": "issue_coupon",
+            "requester": "marketing",
+            "grade": "C",
+            "computed_amount": 400000,
+            "threshold_version": 1,
+            "hold_reason": "over_threshold",
+            "review_id": "rev_1",
+        },
     )
     envelope = events.MOCK_PUBLISHED[-1]
     assert envelope.type == EventType.SAFETY_ACTION_HELD
