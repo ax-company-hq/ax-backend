@@ -1,7 +1,7 @@
 import pytest
 
-from ax_safety.registry import GradeTable
 from ax_contracts.schemas.execute import HoldReason
+from ax_safety.registry import GradeTable
 
 WRITERS = ["hr", "support", "marketing", "planning", "finance", "orchestrator", "data"]
 
