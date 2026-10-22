@@ -1,5 +1,53 @@
 {
   "name": "marketing",
   "owner": "재헌",
-  "skills": []
+  "description": "마케팅 — 사건·상품 이벤트로 공지를 만들고, 공지 사실을 조회해 주고, 쿠폰을 지급한다",
+  "url": "http://marketing:8103/a2a",
+  "version": "0.1.0",
+  "capabilities": {
+    "streaming": true,
+    "push_notifications": false
+  },
+  "skills": [
+    {
+      "id": "draft_notice",
+      "description": "사건·상품 사실(kind, component, 기간, 약속 promises[])을 받아 공지 초안을 만든다. 문안은 사실 필드만 쓰고 원인은 적지 않는다. 상태를 바꾸지 않는다.",
+      "input_schema": "agents/marketing/src/marketing_agent/schemas.py#DraftNoticeInput",
+      "output_schema": "agents/marketing/src/marketing_agent/schemas.py#NoticeDraft",
+      "grade": "read",
+      "allowed_requesters": ["orchestrator"],
+      "verifier": null,
+      "priority": "required"
+    },
+    {
+      "id": "publish_notice",
+      "description": "초안(draft_id)을 채널(banner·email·sns)에 게시하고 notice_id를 돌려준다. 게시 뒤 notice.published 이벤트를 발행한다.",
+      "input_schema": "agents/marketing/src/marketing_agent/schemas.py#PublishNoticeInput",
+      "output_schema": "agents/marketing/src/marketing_agent/schemas.py#PublishedNotice",
+      "grade": "A",
+      "allowed_requesters": ["orchestrator"],
+      "verifier": null,
+      "priority": "required"
+    },
+    {
+      "id": "get_notice",
+      "description": "게시된 공지의 사실·약속·기간·공개 문구를 돌려준다. 게시되지 않았거나 없으면 '확인할 수 없음'으로 답한다. 상태를 바꾸지 않는다.",
+      "input_schema": "agents/marketing/src/marketing_agent/schemas.py#GetNoticeInput",
+      "output_schema": "agents/marketing/src/marketing_agent/schemas.py#NoticeView",
+      "grade": "read",
+      "allowed_requesters": ["support", "finance", "orchestrator"],
+      "verifier": null,
+      "priority": "required"
+    },
+    {
+      "id": "issue_coupon",
+      "description": "쿠폰을 지급한다(purpose_code: campaign 또는 compensation). 총액은 건수×단가로 코드가 계산한다. 보상 쿠폰은 sequence 순서대로 한 건씩 처리한다. 기준 이상은 safety 보류 큐로 간다.",
+      "input_schema": "agents/marketing/src/marketing_agent/schemas.py#IssueCouponInput",
+      "output_schema": "agents/marketing/src/marketing_agent/schemas.py#IssuedCoupon",
+      "grade": "B",
+      "allowed_requesters": ["orchestrator", "support"],
+      "verifier": "finance",
+      "priority": "required"
+    }
+  ]
 }
