@@ -158,6 +158,10 @@ CREATE TABLE IF NOT EXISTS assignment_changes (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS members (
+  member_id TEXT PRIMARY KEY,
+  active INTEGER NOT NULL DEFAULT 1
+);
 CREATE TABLE IF NOT EXISTS locks (
   key TEXT PRIMARY KEY,
   owner TEXT NOT NULL,

@@ -14,6 +14,7 @@ from hr_agent.roster import store as roster
 from hr_agent.roster.gaps import compute_gaps
 from hr_agent.roster.service import roster_entries
 from hr_agent.services import Services
+from hr_agent.util import loads
 
 
 async def card_rows(svc: Services) -> list[dict[str, Any]]:
@@ -45,6 +46,10 @@ async def snapshot(svc: Services) -> dict[str, Any]:
                 ),
             }
         )
+    changes = svc.store.all("SELECT * FROM assignment_changes ORDER BY created_at, change_id")
+    for row in changes:
+        row["checklist"] = loads(row["checklist"], [])
+        row.pop("previous", None)
     onboardings = []
     for row in svc.store.all("SELECT * FROM onboardings ORDER BY created_at, onboarding_id"):
         steps = svc.store.all(
@@ -59,6 +64,7 @@ async def snapshot(svc: Services) -> dict[str, Any]:
     gaps = compute_gaps(svc.store, svc.clock())
     return {
         "clock": svc.clock().isoformat(),
+        "changes": changes,
         "handovers": handovers,
         "onboardings": onboardings,
         "roster": [e.model_dump(mode="json") for e in roster_entries(svc)],

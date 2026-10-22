@@ -100,6 +100,7 @@ const TABS = [
   {id: 'roster', label: '명부', render: renderRoster},
   {id: 'handover', label: '인수인계', render: renderHandover},
   {id: 'onboarding', label: '온보딩', render: renderOnboarding},
+  {id: 'assign', label: '발령·퇴직', render: renderAssign},
 ];
 function renderTabs() {
   const nav = $('tabs'); nav.replaceChildren();
@@ -312,6 +313,33 @@ function renderOnboarding(root) {
     o.steps.forEach((s) => c.append(el('div', {}, badge(s.done ? '완료' : '대기', s.done ? 'ok' : ''), ` ${s.step_order}. ${s.title}`, s.card_id ? el('span', {class: 'muted'}, '  ' + s.card_id) : null)));
     root.append(c);
   });
+}
+
+/* ---------- 발령·퇴직 탭 ---------- */
+function renderAssign(root) {
+  const kind = el('select'); [['transfer','발령'],['shift','교대'],['offboarding','퇴직'],['join','입사']].forEach(([v, l]) => kind.append(el('option', {value: v}, l)));
+  const member = el('input', {value: 'emp_01'}); const area = el('input', {value: 'payment'}); const succ = el('input', {value: 'emp_02'}); const ctx = el('input', {value: 'ctx_asg_0001'});
+  root.append(el('h3', {}, '변경 요청 (request_assignment_change)'),
+    el('div', {class: 'form'}, el('div', {}, el('label', {}, '종류'), kind), el('div', {}, el('label', {}, '대상자'), member), el('div', {}, el('label', {}, '영역'), area), el('div', {}, el('label', {}, '후임(선택)'), succ), el('div', {}, el('label', {}, '사건 번호'), ctx)),
+    el('div', {class: 'row'}, el('button', {onclick: () => send('request_assignment_change', 'orchestrator', {change_kind: kind.value, member_id: member.value, area: area.value, successor_id: succ.value || null}, ctx.value, `${ctx.value}:req`)}, '변경 요청')));
+  const skills = ['request_assignment_change', 'confirm_reassignment', 'confirm_offboarding'];
+  if (S.lastCall && S.lastCall.request && skills.includes(S.lastCall.request.skill)) root.append(resultBadges(S.lastCall.result), jsonBox('결과 원문', S.lastCall.result));
+  const list = (S.snap && S.snap.changes) || [];
+  if (!list.length) root.append(el('div', {class: 'empty'}, '아직 변경 요청이 없어요.'));
+  const KIND = {transfer: '발령', shift: '교대', offboarding: '퇴직', join: '입사'};
+  list.forEach((c) => {
+    const card = el('div', {class: 'card'}, el('div', {class: 'badges'}, badge(KIND[c.kind] || c.kind), badge(c.status, c.status === 'requested' ? 'warn' : 'ok'), badge(c.area), badge(c.member_id + (c.successor_id ? ' → ' + c.successor_id : ''))), el('div', {class: 'muted'}, c.change_id));
+    c.checklist.forEach((i) => card.append(el('div', {}, badge(i.done ? '완료' : '대기'), ' ', i.title)));
+    if (c.handover_id) card.append(el('div', {class: 'muted'}, '인수인계: ' + c.handover_id));
+    if (c.onboarding_id) card.append(el('div', {class: 'muted'}, '온보딩: ' + c.onboarding_id));
+    if (c.status === 'requested') {
+      const to = el('input', {value: c.successor_id || (c.kind === 'join' ? c.member_id : '')});
+      card.append(el('div', {class: 'row'}, to, el('button', {class: 'small', onclick: () => send('confirm_reassignment', 'dashboard-api', {change_id: c.change_id, successor_id: to.value}, c.context_id, `${c.context_id}:rea:${c.change_id}`)}, '재배치 확정')));
+    }
+    if (c.kind === 'offboarding' && c.status === 'confirmed') card.append(el('div', {class: 'row'}, el('button', {class: 'small', onclick: () => send('confirm_offboarding', 'dashboard-api', {change_id: c.change_id}, c.context_id, `${c.context_id}:off:${c.change_id}`)}, '퇴직 확정(보류 큐)'), el('span', {class: 'muted'}, '승인한 뒤 같은 버튼을 다시 누르면 적용됩니다.')));
+    root.append(card);
+  });
+  root.append(holdsView('confirm_offboarding'));
 }
 
 /* ---------- 시작 ---------- */

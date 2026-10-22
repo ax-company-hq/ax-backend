@@ -1,0 +1,37 @@
+{
+  "title": "퇴직: 사람이 승인해야 적용",
+  "description": "emp_01 퇴직 요청 → 후임 emp_02로 재배치 확정 → 퇴직 확정은 C 등급이라 보류 큐로 간다. 사람이 승인한 뒤 같은 요청을 다시 보내면 적용된다.",
+  "steps": [
+    {
+      "skill": "request_assignment_change",
+      "requester": "orchestrator",
+      "input": {"change_kind": "offboarding", "member_id": "emp_01", "area": "payment", "successor_id": "emp_02"},
+      "expect": {"status": "completed", "outcome": "requested", "output_has": ["change_id"]}
+    },
+    {
+      "skill": "confirm_reassignment",
+      "requester": "dashboard-api",
+      "input": {"change_id": "${step1.output.change_id}", "successor_id": "emp_02"},
+      "expect": {"status": "completed", "outcome": "confirmed"}
+    },
+    {
+      "skill": "confirm_offboarding",
+      "requester": "dashboard-api",
+      "key": "ctx_demo:confirm_offboarding:off",
+      "input": {"change_id": "${step1.output.change_id}"},
+      "expect": {"status": "completed", "outcome": "held", "output": {"status": "held"}, "output_has": ["hold_id"]}
+    },
+    {
+      "action": "decide_hold",
+      "review_id": "${step3.output.hold_id}",
+      "approved": true
+    },
+    {
+      "skill": "confirm_offboarding",
+      "requester": "dashboard-api",
+      "key": "ctx_demo:confirm_offboarding:off",
+      "input": {"change_id": "${step1.output.change_id}"},
+      "expect": {"status": "completed", "outcome": "confirmed", "output": {"status": "confirmed"}}
+    }
+  ]
+}

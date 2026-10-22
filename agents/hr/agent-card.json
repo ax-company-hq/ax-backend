@@ -85,6 +85,36 @@
       "allowed_requesters": ["orchestrator", "dashboard-api"],
       "verifier": null,
       "priority": "required"
+    },
+    {
+      "id": "request_assignment_change",
+      "description": "교대·발령·퇴직·입사 변경을 요청받아 확인 목록, 후임 후보, 권한 변경 목록(전달만, 실행은 각 부서)을 만들고 인수인계(입사는 온보딩)를 함께 시작한다. 같은 사람·영역의 변경이 진행 중이면 잠금으로 막는다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/hr.py#RequestAssignmentChangeInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/hr.py#RequestAssignmentChangeOutput",
+      "grade": "A",
+      "allowed_requesters": ["orchestrator", "dashboard-api"],
+      "verifier": null,
+      "priority": "required"
+    },
+    {
+      "id": "confirm_reassignment",
+      "description": "재배치(발령·교대·입사)를 확정한다. 변경 뒤 담당이 비거나 겹치는 영역이 없는지 코드 규칙으로 먼저 확인하고, 통과하면 적용한 뒤 다시 검증하며 문제가 있으면 되돌린다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/hr.py#ConfirmReassignmentInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/hr.py#ConfirmReassignmentOutput",
+      "grade": "B",
+      "allowed_requesters": ["orchestrator", "dashboard-api"],
+      "verifier": "safety_rule",
+      "priority": "required"
+    },
+    {
+      "id": "confirm_offboarding",
+      "description": "퇴직을 확정한다. C 등급이라 보류 큐에서 사람이 승인해야 하며, 승인 뒤 같은 요청을 다시 보내면 적용한다. 퇴직으로 담당이 비는 영역이 생기면 적용하지 않는다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/hr.py#ConfirmOffboardingInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/hr.py#ConfirmOffboardingOutput",
+      "grade": "C",
+      "allowed_requesters": ["orchestrator", "dashboard-api"],
+      "verifier": null,
+      "priority": "required"
     }
   ]
 }

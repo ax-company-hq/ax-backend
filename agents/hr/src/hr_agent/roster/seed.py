@@ -48,6 +48,8 @@ def seed_roster(store: Store, clock: Clock) -> bool:
     with store.transaction():
         for area in AREAS:
             store.execute("INSERT INTO areas(area) VALUES (?)", (area,))
+        for n in range(1, 11):  # emp_01 … emp_10 (emp_10은 아직 어느 영역에도 없다)
+            store.execute("INSERT INTO members(member_id) VALUES (?)", (f"emp_{n:02d}",))
         for area, role, member in ENTRIES:
             store.execute(
                 "INSERT INTO roster_entries(area, role, member_id) VALUES (?, ?, ?)",

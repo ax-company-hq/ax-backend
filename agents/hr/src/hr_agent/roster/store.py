@@ -83,3 +83,21 @@ def set_active(store: Store, area: str, role: str, member_id: str, active: bool)
             "INSERT INTO roster_entries(area, role, member_id) VALUES (?, ?, ?)",
             (area, role, member_id),
         )
+
+
+def known_member(store: Store, member_id: str) -> bool:
+    return store.one("SELECT 1 FROM members WHERE member_id = ?", (member_id,)) is not None
+
+
+def active_members(store: Store) -> list[str]:
+    rows = store.all("SELECT member_id FROM members WHERE active = 1 ORDER BY member_id")
+    return [r["member_id"] for r in rows]
+
+
+def add_member(store: Store, member_id: str) -> None:
+    store.execute("INSERT OR IGNORE INTO members(member_id, active) VALUES (?, 1)", (member_id,))
+    store.execute("UPDATE members SET active = 1 WHERE member_id = ?", (member_id,))
+
+
+def deactivate_member(store: Store, member_id: str) -> None:
+    store.execute("UPDATE members SET active = 0 WHERE member_id = ?", (member_id,))

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from ax_contracts.schemas import AgentRequest, AgentResult
+from hr_agent.assignment import service as assignment
 from hr_agent.cards import service as cards
 from hr_agent.handover import service as handover
 from hr_agent.onboarding import service as onboarding
@@ -39,7 +40,22 @@ async def start_onboarding(request: AgentRequest) -> AgentResult:
     return await onboarding.start_onboarding(get_services(), request)
 
 
+async def request_assignment_change(request: AgentRequest) -> AgentResult:
+    return await assignment.request_assignment_change(get_services(), request)
+
+
+async def confirm_reassignment(request: AgentRequest) -> AgentResult:
+    return await assignment.confirm_reassignment(get_services(), request)
+
+
+async def confirm_offboarding(request: AgentRequest) -> AgentResult:
+    return await assignment.confirm_offboarding(get_services(), request)
+
+
 HANDLERS = {
+    "request_assignment_change": request_assignment_change,
+    "confirm_reassignment": confirm_reassignment,
+    "confirm_offboarding": confirm_offboarding,
     "start_onboarding": start_onboarding,
     "record_case": record_case,
     "get_roster": get_roster,
