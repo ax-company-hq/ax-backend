@@ -17,6 +17,15 @@ class ImpactCounts:
     damage_amount: int  # 정수 원
 
 
+def impact_to_response(counts: ImpactCounts) -> dict[str, int]:
+    """집계 결과를 A2A 응답용 dict(snake_case)로 바꾼다. damage_amount는 loss_amount로 내보낸다."""
+    return {
+        "failed_order_count": counts.failed_order_count,
+        "affected_customer_count": counts.affected_customer_count,
+        "loss_amount": counts.damage_amount,
+    }
+
+
 def aggregate_impact(result: ShopFailedOrdersResult) -> ImpactCounts:
     """실패 주문 수, 영향 고객 수(같은 buyer_id는 한 번), 피해 금액 합계를 계산한다.
 
