@@ -253,8 +253,13 @@ async def process_claim_queue(request: AgentRequest) -> AgentResult:
                 )
             )
             continue
+        # 키와 사건은 클레임 단위로 고정한다. 안전 레이어는 C 보류 건을 승인한 뒤 같은 키로 다시
+        # 요청해야 `executed`를 돌려주는데, 호출마다 새 키를 쓰면 승인이 반영되지 않는다.
         meta = request.meta.model_copy(
-            update={"idempotency_key": f"{request.meta.context_id}:refund_request:claim:{claim.id}"}
+            update={
+                "context_id": claim.context_id,
+                "idempotency_key": f"{claim.context_id}:refund_request:claim:{claim.id}",
+            }
         )
         decision = await execute(
             "refund_request",
@@ -268,7 +273,11 @@ async def process_claim_queue(request: AgentRequest) -> AgentResult:
             Evidence(
                 queries=["claim_rules"],
                 data_summary=f"claim {claim.id}: 환불 {claim.expected_refund}원",
-                ref_ids=[f"claim:{claim.id}", f"order:{claim.order_id}"],
+                ref_ids=[
+                    f"claim:{claim.id}",
+                    f"order:{claim.order_id}",
+                    f"request:{request.meta.context_id}",
+                ],
             ),
         )
         if decision.status != "executed":
