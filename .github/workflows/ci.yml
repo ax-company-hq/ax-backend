@@ -1,0 +1,124 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    # 브랜치 보호의 필수 체크 이름. 바꾸지 않는다.
+    name: ci
+    runs-on: ubuntu-latest
+    env:
+      # CI에서는 실제 LLM을 호출하지 않는다: LLM 설정은 비우고 모든 서비스를 목 모드로
+      TENANT_ID: shop-demo
+      LLM_MODEL: ""
+      LLM_BASE_URL: ""
+      LLM_API_KEY: ""
+      ORCHESTRATOR_MOCK: "1"
+      SAFETY_MOCK: "1"
+      MEMORY_MOCK: "1"
+      SHOP_MOCK: "1"
+      DASHBOARD_MOCK: "1"
+      PLANNING_MOCK: "1"
+      SUPPORT_MOCK: "1"
+      MARKETING_MOCK: "1"
+      HR_MOCK: "1"
+      FINANCE_MOCK: "1"
+      DATA_MOCK: "1"
+      INFRA_MOCK: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.1"
+          enable-cache: true
+
+      - name: Sync workspace
+        run: uv sync --all-packages --locked
+
+      - name: Ruff
+        run: uv run ruff check .
+
+      - name: Import boundaries
+        run: uv run lint-imports
+
+      - name: Select tests (path filter)
+        id: select
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        shell: python
+        run: |
+          import os
+          import subprocess
+          from pathlib import Path
+
+          # 이 경로가 바뀌면 전체 테스트
+          SHARED = ("contracts/", "agent-template/")
+          SHARED_FILES = {"pyproject.toml", "uv.lock", ".python-version", ".importlinter",
+                          ".github/workflows/ci.yml"}
+          PACKAGES = ("orchestrator", "safety", "memory", "shop-api", "dashboard-api")
+
+          def out(targets: str) -> None:
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+                  fh.write(f"targets={targets}\n")
+              print(f"targets={targets}")
+
+          event = os.environ["EVENT_NAME"]
+          base = os.environ["PR_BASE_SHA"] if event == "pull_request" else os.environ["PUSH_BEFORE_SHA"]
+          known = bool(base) and set(base) != {"0"} and subprocess.run(
+              ["git", "cat-file", "-e", f"{base}^{{commit}}"], capture_output=True
+          ).returncode == 0
+          if not known:
+              out("all")
+              raise SystemExit(0)
+
+          diff = subprocess.run(
+              ["git", "diff", "--name-only", "-z", f"{base}...HEAD"],
+              capture_output=True, check=True,
+          ).stdout.decode("utf-8")
+          changed = [p for p in diff.split("\0") if p]
+          print("changed files:", *changed, sep="\n  ")
+
+          if any(p.startswith(SHARED) or p in SHARED_FILES for p in changed):
+              out("all")
+              raise SystemExit(0)
+
+          dirs = set()
+          for p in changed:
+              parts = p.split("/")
+              if parts[0] in PACKAGES:
+                  dirs.add(parts[0])
+              elif parts[0] == "agents" and len(parts) > 2:
+                  dirs.add(f"agents/{parts[1]}")
+          tests = sorted(f"{d}/tests" for d in dirs if Path(d, "tests").is_dir())
+          out(" ".join(tests) if tests else "none")
+
+      - name: Test (all)
+        if: steps.select.outputs.targets == 'all'
+        run: uv run pytest
+
+      - name: Test (changed packages)
+        if: steps.select.outputs.targets != 'all' && steps.select.outputs.targets != 'none'
+        env:
+          TARGETS: ${{ steps.select.outputs.targets }}
+        run: uv run pytest $TARGETS
+
+      - name: No package tests to run
+        if: steps.select.outputs.targets == 'none'
+        run: echo "바뀐 패키지가 없어 테스트를 건너뛴다."

@@ -1,0 +1,10 @@
+services:
+  hr:
+    build:
+      context: ../..
+      dockerfile: agents/hr/Dockerfile
+    ports:
+      - "8104:8104"
+    env_file:
+      - path: ../../.env
+        required: false

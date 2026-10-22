@@ -1,0 +1,48 @@
+[importlinter]
+root_packages =
+    ax_contracts
+    ax_agent_template
+    ax_orchestrator
+    ax_safety
+    ax_memory
+    ax_shop_api
+    ax_dashboard_api
+    planning_agent
+    support_agent
+    marketing_agent
+    hr_agent
+    finance_agent
+    data_agent
+    infra_agent
+
+[importlinter:contract:agents-independent]
+name = Department agents must not import each other
+type = independence
+modules =
+    planning_agent
+    support_agent
+    marketing_agent
+    hr_agent
+    finance_agent
+    data_agent
+    infra_agent
+
+[importlinter:contract:contracts-pure]
+name = ax_contracts must not import other AX modules
+type = forbidden
+source_modules =
+    ax_contracts
+forbidden_modules =
+    ax_agent_template
+    ax_orchestrator
+    ax_safety
+    ax_memory
+    ax_shop_api
+    ax_dashboard_api
+    planning_agent
+    support_agent
+    marketing_agent
+    hr_agent
+    finance_agent
+    data_agent
+    infra_agent

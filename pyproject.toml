@@ -1,0 +1,43 @@
+# uv workspace 루트 (가상 루트: 자체 패키지 없음)
+[tool.uv.workspace]
+members = [
+    "contracts",
+    "agent-template",
+    "orchestrator",
+    "safety",
+    "memory",
+    "shop-api",
+    "dashboard-api",
+    "agents/*",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+    "import-linter>=2.1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["*/src", "agents/*/src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+# 패키지마다 tests/test_smoke.py 이름이 겹쳐서 importlib 모드를 쓴다
+addopts = "--import-mode=importlib"
+testpaths = [
+    "contracts/tests",
+    "agent-template/tests",
+    "orchestrator/tests",
+    "safety/tests",
+    "memory/tests",
+    "shop-api/tests",
+    "dashboard-api/tests",
+    "agents",
+]
+asyncio_default_fixture_loop_scope = "function"

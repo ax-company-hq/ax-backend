@@ -1,0 +1,35 @@
+name: ax-backend
+
+include:
+  - ../orchestrator/compose.yml
+  - ../safety/compose.yml
+  - ../memory/compose.yml
+  - ../shop-api/compose.yml
+  - ../dashboard-api/compose.yml
+  - ../agents/planning/compose.yml
+  - ../agents/support/compose.yml
+  - ../agents/marketing/compose.yml
+  - ../agents/hr/compose.yml
+  - ../agents/finance/compose.yml
+  - ../agents/data/compose.yml
+  - ../agents/infra-dejafix/compose.yml
+
+services:
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ax}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ax}
+      POSTGRES_DB: ${POSTGRES_DB:-ax}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

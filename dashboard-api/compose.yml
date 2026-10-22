@@ -1,0 +1,10 @@
+services:
+  dashboard-api:
+    build:
+      context: ..
+      dockerfile: dashboard-api/Dockerfile
+    ports:
+      - "8020:8020"
+    env_file:
+      - path: ../.env
+        required: false

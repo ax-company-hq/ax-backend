@@ -1,0 +1,7 @@
+# 공유 폴더만 owner를 둔다.
+# 부서 폴더는 넣지 않는다 — 본인 PR을 본인이 승인할 수 없어 자동 머지가 막히기 때문.
+/contracts/        @manjo2828-blip @2taeyoon
+/agent-template/   @manjo2828-blip
+/infra/            @manjo2828-blip
+/.github/          @manjo2828-blip
+/pyproject.toml    @manjo2828-blip

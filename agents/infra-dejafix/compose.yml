@@ -1,0 +1,10 @@
+services:
+  infra-dejafix:
+    build:
+      context: ../..
+      dockerfile: agents/infra-dejafix/Dockerfile
+    ports:
+      - "8107:8107"
+    env_file:
+      - path: ../../.env
+        required: false

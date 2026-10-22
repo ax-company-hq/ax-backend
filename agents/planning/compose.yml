@@ -1,0 +1,10 @@
+services:
+  planning:
+    build:
+      context: ../..
+      dockerfile: agents/planning/Dockerfile
+    ports:
+      - "8101:8101"
+    env_file:
+      - path: ../../.env
+        required: false

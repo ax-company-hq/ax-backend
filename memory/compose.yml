@@ -1,0 +1,10 @@
+services:
+  memory:
+    build:
+      context: ..
+      dockerfile: memory/Dockerfile
+    ports:
+      - "8002:8002"
+    env_file:
+      - path: ../.env
+        required: false

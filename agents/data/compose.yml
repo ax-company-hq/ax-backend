@@ -1,0 +1,10 @@
+services:
+  data:
+    build:
+      context: ../..
+      dockerfile: agents/data/Dockerfile
+    ports:
+      - "8106:8106"
+    env_file:
+      - path: ../../.env
+        required: false
