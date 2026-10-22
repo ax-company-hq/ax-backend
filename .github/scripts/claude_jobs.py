@@ -165,13 +165,11 @@ def write_prep(team: team_mod.Team, dept: str, mode: str, issue_no: int, actor: 
         raise JobError(f"#{issue_no}에 연결된 열린 PR이 있음: #{linked[0]}")
     token_secret = team.owner_token(dept)
     owner = team.owners(dept)[0]
-    used = team_mod.count_claude_jobs(
-        team_mod.todays_claude_jobs(team_mod.datetime.now(team_mod.UTC).strftime("%Y-%m-%d")),
-        team_mod.token_depts_of(team, owner),
-    )
-    cap = int(team.members[owner].get("daily_cap", 0))
-    if used >= cap:
-        raise JobError(f"quota: {team.members[owner]['name']} 오늘 {used}/{cap}")
+    st = team_mod.cap_status(team, [owner])[owner]  # run 목록 3회 조회
+    if st["used"] is None:
+        raise JobError("cap을 확인하지 못해 실행하지 않음 (fail-closed)")
+    if not st["ok"]:
+        raise JobError(f"quota: {st['reason']}")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     # 이슈·코멘트는 데이터다. 팀원·봇 것만 넘긴다
@@ -506,7 +504,8 @@ def has_hotfix(team: team_mod.Team, sha: str) -> bool:
 
 def review_prep(team: team_mod.Team, pr_no: int) -> dict:
     """리뷰 대상이면 {head_sha, reviewers:[{dept, token_secret, model_var, name}]}."""
-    pr = api(f"repos/{repo()}/pulls/{pr_no}")
+    # PR 이벤트면 페이로드, 수동 실행(workflow_dispatch)만 API
+    pr = team_mod.event_pull_request(pr_no) or api(f"repos/{repo()}/pulls/{pr_no}")
     head = pr["head"]["sha"]
     if pr["state"] != "open" or pr["base"]["ref"] != "dev":
         return {"skip": "대상 아님"}
@@ -537,17 +536,23 @@ def review_prep(team: team_mod.Team, pr_no: int) -> dict:
     depts = team.reviewers_for(list(classified.depts), person)
     if not depts:
         return {"skip": "리뷰 부서 없음", "fail": True, "head_sha": head}
+    # cap은 여기서 한 번만 계산해 matrix로 넘긴다 (리뷰어 잡마다 다시 조회하지 않음)
+    caps = team_mod.cap_status(team, sorted({team.owners(d)[0] for d in depts}))
     reviewers = []
     for d in depts:
         owner = team.owners(d)[0]
         reviewers.append({"dept": d, "token_secret": team.owner_token(d),
                           "model_var": review_model_var(d), "name": team.members[owner]["name"],
-                          "owner": owner})
+                          "owner": owner, "cap_ok": caps[owner]["ok"],
+                          "cap_reason": caps[owner]["reason"]})
     return {"head_sha": head, "base_sha": mb, "reviewers": reviewers,
             "changed": list(classified.depts), "labels": labels}
 
 
 def review_apply(team: team_mod.Team, pr_no: int, plan: dict, verdict_dir: Path) -> str:
+    # API 유지: 리뷰가 도는 몇 분 사이에 새 커밋이 올라왔을 수 있다. 페이로드의 head는
+    # 이벤트 시점 값이라, 지금 head와 같은지(오래된 결과를 새 head에 쓰지 않는지)
+    # 확인하려면 최신 값이 필요하다
     pr = api(f"repos/{repo()}/pulls/{pr_no}")
     head = plan["head_sha"]
     if pr["head"]["sha"] != head:
@@ -562,7 +567,8 @@ def review_apply(team: team_mod.Team, pr_no: int, plan: dict, verdict_dir: Path)
         quota = verdict_dir / f"verdict-{d}" / "quota.txt"
         if quota.exists():
             states[d] = "error"
-            set_status(head, f"agent-review/{d}", "error", "quota")
+            reason = quota.read_text(encoding="utf-8").strip()[:100] or "quota"
+            set_status(head, f"agent-review/{d}", "error", f"quota — {reason}")
             continue
         try:
             v = check_verdict(json.loads(f.read_text(encoding="utf-8")), head)
@@ -686,12 +692,14 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - 단계별 분기
             out = team_mod.git("diff", "--name-status", "-z", "--no-renames", f"{args.base}..HEAD")
             parts = [x for x in out.split("\0") if x]
             changes = list(zip(parts[0::2], parts[1::2], strict=False))
-            print("\n".join(ruff_targets(team, args.dept, changes)))
+            targets = ruff_targets(team, args.dept, changes)
+            if targets:  # 대상이 없으면 아무것도 출력하지 않는다 (빈 줄은 빈 파일 이름이 됨)
+                print("\n".join(targets))
             return 0
         if args.cmd == "automerge-check":
             try:
-                pr = api(f"repos/{repo()}/pulls/{args.pr}")
-                pr["_repo"] = repo()
+                pr = team_mod.event_pull_request(args.pr) or api(f"repos/{repo()}/pulls/{args.pr}")
+                pr = {**pr, "_repo": repo()}
             except subprocess.CalledProcessError:
                 pr = None
             ok, reason = (False, "PR을 읽지 못함") if pr is None else automerge_decision(
@@ -716,7 +724,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - 단계별 분기
             plan = review_prep(team, args.pr)
             args.out.write_text(json.dumps(plan, ensure_ascii=False), encoding="utf-8")
             matrix = [{"dept": r["dept"], "token_secret": r["token_secret"],
-                       "model_var": r["model_var"], "owner": r["owner"]}
+                       "model_var": r["model_var"], "owner": r["owner"],
+                       "cap_ok": r["cap_ok"], "cap_reason": r["cap_reason"]}
                       for r in plan.get("reviewers", [])]
             set_output(skip=plan.get("skip", ""), fail="true" if plan.get("fail") else "false",
                        head_sha=plan.get("head_sha", ""), matrix=json.dumps(matrix),

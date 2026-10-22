@@ -7,9 +7,9 @@ hr은 사건·결정을 기록(`RecordCase`)으로 받아 카드(`Card`)를 만�
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, StringConstraints, model_validator
 
 from ax_contracts.schemas.common import TENANT_ID_DEFAULT, AxModel, UtcDatetime
 
@@ -75,3 +75,85 @@ class Card(AxModel):
         if self.status != "superseded" and self.superseded_by is not None:
             raise ValueError("superseded_by는 superseded 카드에서만 쓴다")
         return self
+
+
+CardKind = Literal["incident", "decision", "case", "notice", "policy", "fraud"]
+CardId = Annotated[str, StringConstraints(pattern=r"^card_")]
+
+
+class CardDraft(AxModel):
+    """카드 쓰기 입력. `Card`에서 memory가 정하는 `card_id`·`created_at`·`status`·
+    `superseded_by`를 뺀 형태다."""
+
+    kind: CardKind
+    tenant_id: str = TENANT_ID_DEFAULT
+    context_id: str
+    title: str
+    body: str
+    tags: list[str] = Field(default_factory=list)
+    source_refs: list[str] = Field(default_factory=list)
+    author: str
+    confidence: Literal["low", "mid", "high"]
+    extra: dict[str, Any] = Field(default_factory=dict)
+
+
+class CardWriteInput(AxModel):
+    """`memory_write_card` 입력.
+
+    멱등 키는 `context_id + kind + 제목 해시`다. 같은 키의 카드가 이미 있으면
+    새로 만들지 않고 기존 `card_id`를 돌려준다.
+    """
+
+    card: CardDraft
+
+
+class CardWriteOutput(AxModel):
+    """`memory_write_card` 출력. 같은 멱등 키로 이미 있으면 `created`가 false다."""
+
+    card_id: CardId
+    created: bool
+
+
+class CardSearchInput(AxModel):
+    """`memory_search_card` 입력."""
+
+    query: str
+    kind: list[CardKind] = Field(default_factory=list)
+    status: Literal["active", "superseded", "retired"] = "active"
+    since: UtcDatetime | None = None
+    top_k: int = Field(default=5, ge=1, le=20)
+
+
+class CardHit(AxModel):
+    """검색 결과 한 건. `low_confidence`는 카드 confidence가 low일 때 true이며
+    판정 근거로 쓰지 않는다는 표시다."""
+
+    card: Card
+    score: float = Field(ge=0, le=1)
+    low_confidence: bool
+
+
+class CardSearchOutput(AxModel):
+    hits: list[CardHit] = Field(default_factory=list)
+
+
+class CardGetInput(AxModel):
+    """`memory_get_card` 입력."""
+
+    card_id: CardId
+
+
+class CardGetOutput(AxModel):
+    card: Card
+
+
+class CardLinkInput(AxModel):
+    """`memory_link_card` 입력. 옛 카드를 새 카드로 대체하거나 폐기로 연결한다."""
+
+    old_card_id: CardId
+    new_card_id: CardId
+    relation: Literal["superseded", "retired"]
+
+
+class CardLinkOutput(AxModel):
+    old_card: Card
