@@ -122,3 +122,35 @@ def test_description_truncated(team) -> None:
     plan = guards.Plan(sha="a", number=1)
     plan.status("folder-guard", "failure", "x" * 500)
     assert len(plan.statuses[0]["description"]) == 140
+
+
+def test_bot_failure_requeues_linked_issue(team) -> None:
+    p = pr(BOT, "data/12-x-r0")
+    p.issue = 12
+    plan = decide(team, p, [ch("agents/finance/a.py")])
+    assert plan.requeue == {
+        "issue": 12, "reason": "관문 실패 — 다른 폴더 변경은 to:<부서> 요청으로 분리"
+    }
+    plan = decide(team, p, [ch("agents/data/tests/test_a.py")], tests=["감소"])
+    assert plan.requeue["reason"].endswith("테스트 삭제·약화")
+
+
+def test_human_failure_does_not_requeue(team) -> None:
+    p = pr()
+    p.issue = 12
+    assert decide(team, p, [ch("agents/finance/a.py")]).requeue is None
+
+
+def test_bot_ok_does_not_requeue(team) -> None:
+    p = pr(BOT, "data/12-x-r0")
+    p.issue = 12
+    assert decide(team, p, [ch("agents/data/a.py")]).requeue is None
+
+
+@pytest.mark.parametrize(
+    ("body", "issue"),
+    [("요약\n\nCloses #12", 12), ("closes #3\n", 3), ("Fixes #7 and more", 7), ("see #9", None),
+     ("", None)],
+)
+def test_closes_issue(body, issue) -> None:
+    assert guards.closes_issue(body) == issue

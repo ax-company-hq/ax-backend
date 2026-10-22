@@ -1,0 +1,56 @@
+name: auto-merge
+
+# 팀원·봇 PR을 자동 머지 예약한다 (docs/automation-spec.md 7장). 스위치 무관.
+# 실제 머지 조건은 브랜치 보호(필수 체크 + human_paths면 code owner 승인)가 정한다.
+# 제외: planning 에이전트 generate_pr이 만든 PR(gen/ 브랜치, generated-pr 라벨) — 머지는 사람이 누른다.
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review]
+    branches: [dev]
+
+permissions: {}
+
+jobs:
+  auto-merge:
+    name: auto-merge
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    environment: bot
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: dev, persist-credentials: false, sparse-checkout: .github }
+      - name: 대상인지
+        id: check
+        env:
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+          ok=true
+          jq -e --arg a "$AUTHOR" '(.members | has($a)) or .bot_login == $a' .github/team.json >/dev/null || ok=false
+          [ "$HEAD_REPO" = "$REPO" ] || ok=false
+          case "$BRANCH" in gen/*) ok=false;; esac
+          jq -e 'index("external") or index("generated-pr")' <<<"$LABELS" >/dev/null && ok=false
+          echo "ok=$ok" >> "$GITHUB_OUTPUT"
+          echo "auto-merge 대상: $ok"
+      - name: ax-bot token
+        if: steps.check.outputs.ok == 'true'
+        id: bot
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ secrets.AX_BOT_APP_ID }}
+          private-key: ${{ secrets.AX_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: 자동 머지 예약 (squash)
+        if: steps.check.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh pr merge "$PR" -R "$REPO" --auto --squash

@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
@@ -37,6 +38,7 @@ class PullRequest:
     state: str = "open"
     is_fork: bool = False
     labels: list[str] = field(default_factory=list)
+    issue: int | None = None  # 봇 PR 본문의 `Closes #N`
 
 
 @dataclass
@@ -47,6 +49,7 @@ class Plan:
     statuses: list[dict] = field(default_factory=list)
     comment: str | None = None
     remove_hotfix: bool = False
+    requeue: dict | None = None  # 봇 PR이 관문에 걸리면 {issue, reason}: PR 닫고 재대기
 
     def status(self, context: str, state: str, description: str) -> None:
         self.statuses.append(
@@ -124,6 +127,12 @@ def decide(
             note = "리뷰 생략 (human_paths만 변경, code owner 리뷰)"
             plan.status("agent-review", "success", note)
 
+    if is_bot and not rule and (problems or test_violations) and pr.issue:
+        reason = (
+            "다른 폴더 변경은 to:<부서> 요청으로 분리" if problems else "테스트 삭제·약화"
+        )
+        plan.requeue = {"issue": pr.issue, "reason": f"관문 실패 — {reason}"}
+
     lines = []
     if problems:
         lines += ["**folder-guard**", *[f"- {p}" for p in problems], ""]
@@ -155,7 +164,13 @@ def load_pr(repo: str, number: int) -> PullRequest:
         state=d["state"],
         is_fork=(d["head"]["repo"] or {}).get("full_name") != repo,
         labels=[label["name"] for label in d["labels"]],
+        issue=closes_issue(d.get("body") or ""),
     )
+
+
+def closes_issue(body: str) -> int | None:
+    m = re.search(r"(?im)^\s*(?:closes|fixes|resolves)\s+#(\d+)\b", body)
+    return int(m.group(1)) if m else None
 
 
 def hotfix_status_present(team: team_mod.Team, repo: str, sha: str) -> bool:
@@ -238,6 +253,10 @@ def cmd_apply(args) -> int:
                  "-f", f"body={plan['comment']}"],
                 check=True, capture_output=True,
             )
+    if plan.get("requeue"):
+        rq = plan["requeue"]
+        result = team_mod.requeue(repo, team, rq["issue"], rq["reason"], pr=n, head_sha=sha)
+        print(f"requeue #{rq['issue']}: {result}")
     return 0
 
 

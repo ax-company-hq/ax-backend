@@ -1,0 +1,80 @@
+name: claude-request
+
+# 사람(팀원)이 to:<부서> 라벨을 붙이면 그 부서 에이전트가 처리한다 (docs/automation-spec.md 4장).
+# ax-bot이 만든 요청 이슈는 여기서 바로 실행하지 않는다 (부서끼리 무한히 주고받지 않게, claude-tasks 대기열로).
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: 이슈 번호
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  route:
+    if: >-
+      vars.AX_AUTOMATION == 'on' &&
+      (github.event_name == 'workflow_dispatch' || startsWith(github.event.label.name, 'to:'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      ok: ${{ steps.route.outputs.ok }}
+      dept: ${{ steps.route.outputs.dept }}
+      issue: ${{ steps.route.outputs.issue }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: dev, persist-credentials: false, sparse-checkout: .github }
+      - name: 라벨·사람 검사
+        id: route
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          LABEL: ${{ github.event.label.name }}
+          SENDER: ${{ github.event.sender.login }}
+          ISSUE_EVENT: ${{ github.event.issue.number }}
+          ISSUE_INPUT: ${{ inputs.issue }}
+        run: |
+          set -euo pipefail
+          T=.github/team.json
+          issue="${ISSUE_EVENT:-$ISSUE_INPUT}"
+          data=$(gh api "repos/$REPO/issues/$issue")
+          author=$(jq -r .user.login <<<"$data")
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            LABEL=$(jq -r '[.labels[].name | select(startswith("to:"))][0] // ""' <<<"$data")
+          fi
+          dept="${LABEL#to:}"
+          trusted() { jq -e --arg a "$1" '(.members | has($a)) or .bot_login == $a' "$T" >/dev/null; }
+          ok=false
+          if [ -z "$dept" ] || ! jq -e --arg d "$dept" '.depts | has($d)' "$T" >/dev/null; then
+            echo "부서 id가 아님: '$dept'"
+          elif ! trusted "$author"; then
+            echo "이슈 작성자가 팀원·봇이 아님: $author"
+          elif [ "$EVENT" = "issues" ] && ! jq -e --arg a "$SENDER" '.members | has($a)' "$T" >/dev/null; then
+            echo "라벨을 붙인 사람이 팀원(사람)이 아님: $SENDER — 대기열로만"
+          else
+            ok=true
+          fi
+          { echo "ok=$ok"; echo "dept=$dept"; echo "issue=$issue"; } >> "$GITHUB_OUTPUT"
+          echo "ok=$ok dept=$dept issue=#$issue"
+
+  write:
+    needs: route
+    if: needs.route.outputs.ok == 'true'
+    uses: ./.github/workflows/_claude-write.yml
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+      actions: read
+    with:
+      dept: ${{ needs.route.outputs.dept }}
+      mode: request
+      issue: ${{ needs.route.outputs.issue }}
+    secrets: inherit
