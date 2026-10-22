@@ -176,3 +176,18 @@ async def test_safety_events_go_to_the_bus(coupon: Any) -> None:
     assert envelope.type == EventType.SAFETY_ACTION_HELD
     assert (envelope.source, envelope.context_id) == ("safety", "ctx_inc_0001")
     assert envelope.idempotency_key == "safety.action_held:exe_1"
+
+
+def test_dashboard_origin_is_allowed(client: Any) -> None:
+    """dashboard-web(3001)이 보류 큐를 읽고 결정을 보낼 수 있다. 다른 출처는 허용하지 않는다."""
+    ok = client.options(
+        "/api/safety/reviews/rev_1/decision",
+        headers={
+            "Origin": "http://localhost:3001",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
+    )
+    assert ok.headers.get("access-control-allow-origin") == "http://localhost:3001"
+    other = client.get("/api/safety/reviews", headers={"Origin": "http://evil.example"})
+    assert "access-control-allow-origin" not in other.headers

@@ -18,10 +18,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 from collections.abc import AsyncIterator
 from typing import Any, Literal
 
 from fastapi import FastAPI, Header, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -37,6 +39,14 @@ from ax_safety.verify import call_verifier, publish_safety_event
 logger = logging.getLogger("ax.safety")
 
 EXPIRE_INTERVAL_SECONDS = 15
+
+# 대시보드(dashboard-web)가 보류 큐·실행 기록을 읽고 사람 결정을 보낸다
+DEFAULT_CORS_ORIGINS = "http://localhost:3001,http://127.0.0.1:3001"
+
+
+def cors_origins() -> list[str]:
+    raw = os.getenv("SAFETY_CORS_ORIGINS", DEFAULT_CORS_ORIGINS)
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
 
 class ReviewDecisionBody(BaseModel):
@@ -73,6 +83,12 @@ def create_app(
 
     app = FastAPI(title="ax-safety", lifespan=lifespan)
     app.state.gate = gate
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins(),
+        allow_methods=["GET", "POST"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
 
     @app.get("/health")
     def health() -> dict:
