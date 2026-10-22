@@ -1,7 +1,20 @@
-# 공유 폴더만 owner를 둔다.
-# 부서 폴더는 넣지 않는다 — 본인 PR을 본인이 승인할 수 없어 자동 머지가 막히기 때문.
-/contracts/        @manjo2828-blip @2taeyoon
-/agent-template/   @manjo2828-blip
-/infra/            @manjo2828-blip
-/.github/          @manjo2828-blip
-/pyproject.toml    @manjo2828-blip
+*                       @JangJaehyeonn @haakim7
+# 계약은 자동화 1단계(에이전트 리뷰)가 켜질 때까지 사람이 본다 — 1단계 이후 이 줄 삭제
+/contracts/             @haakim7 @2taeyoon
+# 에이전트 리뷰로 머지하는 곳 (소유자 없음)
+/agent-template/
+/orchestrator/
+/safety/
+/memory/
+/shop-api/
+/dashboard-api/
+/agents/planning/
+/agents/support/
+/agents/marketing/
+/agents/hr/
+/agents/finance/
+/agents/data/
+/agents/infra-dejafix/
+/infra/
+/docs/notes/*/
+/uv.lock
