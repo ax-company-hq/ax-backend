@@ -424,26 +424,92 @@ def run_token_depts(team: Team, title: str) -> list[str]:
     return []
 
 
-def usage_by_owner(team: Team, runs: list[tuple[str, str | None]]) -> dict[str, int]:
-    """(display_title, conclusion) 목록 → 토큰 주인별 Claude 잡 수. skipped run은 세지 않는다."""
+# 끝났지만 성공이 아닌 run: Claude 단계까지 갔는지 jobs로 한 번 확인한다 (결과는 캐시)
+FAILED_CONCLUSIONS = {"failure", "cancelled", "timed_out", "startup_failure"}
+CLAUDE_STEPS = ("Claude", "Claude (리뷰)")
+CLAUDE_INSTALL_STEP = "Claude Code 설치"
+CLAUDE_JOB = re.compile(r"(?:^|/ )claude:([a-z0-9-]+):")
+
+
+def job_claude_dept(job: dict) -> str | None:
+    """Claude 단계가 실제로 돈 claude:<부서>: 잡이면 그 부서, 아니면 None.
+
+    Claude 단계 전(설치·토큰 확인·cap 등)에서 끝났으면 Claude 단계는 skipped라 세지 않는다.
+    설치 단계가 따로 없던 옛 run(#115 전)은 설치가 Claude 단계 안에 있어, 그 단계가 실패했으면
+    설치 실패(429)로 보고 세지 않는다.
+    """
+    m = CLAUDE_JOB.search(job.get("name") or "")
+    if not m:
+        return None
+    steps = job.get("steps") or []
+    claude = next((s for s in steps if s.get("name") in CLAUDE_STEPS), None)
+    if not claude or claude.get("conclusion") in (None, "skipped"):
+        return None
+    legacy = not any((s.get("name") or "").startswith(CLAUDE_INSTALL_STEP) for s in steps)
+    if legacy and claude.get("conclusion") == "failure":
+        return None
+    return m.group(1)
+
+
+def load_cap_cache() -> dict[str, list[str]]:
+    path = os.environ.get("AX_CAP_CACHE")
+    try:
+        with open(path, encoding="utf-8") as fh:  # type: ignore[arg-type]
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, TypeError, ValueError):
+        return {}
+
+
+def save_cap_cache(cache: dict[str, list[str]]) -> None:
+    path = os.environ.get("AX_CAP_CACHE")
+    if not path:
+        return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(cache, fh)
+
+
+def resolve_failed_runs(runs: list[tuple], cache: dict[str, list[str]]) -> dict[str, list[str]]:
+    """실패·취소 run마다 Claude 단계가 돈 부서 목록을 채운다 (캐시에 없는 것만 jobs 조회)."""
+    for repo, run_id, _title, conclusion in runs:
+        if conclusion not in FAILED_CONCLUSIONS or str(run_id) in cache:
+            continue
+        data = gh_api(f"repos/{repo}/actions/runs/{run_id}/jobs?per_page=100") or {}
+        cache[str(run_id)] = [d for d in (job_claude_dept(j) for j in data.get("jobs", [])) if d]
+    return cache
+
+
+def usage_by_owner(team: Team, runs: list[tuple], ran: dict[str, list[str]] | None = None
+                   ) -> dict[str, int]:
+    """(repo, run_id, display_title, conclusion) 목록 → 토큰 주인별 Claude 잡 수.
+
+    skipped run은 세지 않는다. 실패·취소 run은 ran(실제로 Claude 단계가 돈 부서)으로 센다.
+    ran에 없으면 제목 기준으로 센다 (보수적으로).
+    """
+    ran = ran or {}
     counts: dict[str, int] = {}
     fronts = team.data.get("frontend_depts", {})
-    for title, conclusion in runs:
+    for _repo, run_id, title, conclusion in runs:
         if conclusion == "skipped":
             continue
-        for dept in run_token_depts(team, title):
+        if conclusion in FAILED_CONCLUSIONS and str(run_id) in ran:
+            depts = [team.resolve_dept(d) or d for d in ran[str(run_id)]]
+        else:
+            depts = run_token_depts(team, title)
+        for dept in depts:
             owner = team.owners(dept)[0] if dept in team.depts else fronts.get(dept)
             if owner:
                 counts[owner] = counts.get(owner, 0) + 1
     return counts
 
 
-def todays_claude_runs(day: str) -> list[tuple[str, str | None]]:
+def todays_claude_runs(day: str) -> list[tuple]:
     """오늘(UTC) Claude 워크플로 run 목록.
 
     실패하면 예외를 그대로 올린다 (호출한 쪽이 fail-closed).
     """
-    runs: list[tuple[str, str | None]] = []
+    runs: list[tuple] = []
     me = os.environ.get("GITHUB_RUN_ID")
     for repo, files in CLAUDE_RUN_WORKFLOWS.items():
         for wf in files:
@@ -452,7 +518,7 @@ def todays_claude_runs(day: str) -> list[tuple[str, str | None]]:
                 data = gh_api(f"repos/{repo}/actions/workflows/{wf}/runs"
                               f"?created=>={day}&per_page=100&page={page}") or {}
                 items = data.get("workflow_runs", [])
-                runs += [(r.get("display_title") or "", r.get("conclusion"))
+                runs += [(repo, r.get("id"), r.get("display_title") or "", r.get("conclusion"))
                          for r in items if str(r.get("id")) != me]  # 지금 실행 중인 자기 자신 제외
                 if len(items) < 100:
                     break
@@ -464,7 +530,10 @@ def cap_status(team: Team, owners: list[str], day: str | None = None) -> dict[st
     """토큰 주인별 {used, cap, ok}. run 목록을 읽지 못하면 전부 ok=False (fail-closed)."""
     day = day or datetime.now(UTC).strftime("%Y-%m-%d")
     try:
-        usage = usage_by_owner(team, todays_claude_runs(day))
+        runs = todays_claude_runs(day)
+        ran = resolve_failed_runs(runs, load_cap_cache())
+        save_cap_cache(ran)
+        usage = usage_by_owner(team, runs, ran)
     except subprocess.CalledProcessError:
         return {o: {"used": None, "cap": None, "ok": False, "reason": "cap 확인 실패"}
                 for o in owners}
