@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "contracts — 담당: 준하·태윤"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pydantic>=2.7",
+]
 
 [build-system]
 requires = ["hatchling"]

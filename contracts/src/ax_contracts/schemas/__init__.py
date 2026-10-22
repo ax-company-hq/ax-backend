@@ -1,1 +1,71 @@
-"""계약 스키마 자리 (Agent Card, 이벤트, A2A 메시지, execute 입출력). 준하 담당."""
+"""계약 스키마 (Agent Card, 이벤트, A2A 메시지, execute 입출력, 기록 카드). 준하 담당.
+
+구현 코드는 넣지 않는다. 모델과 Enum만 둔다.
+"""
+
+from ax_contracts.schemas.agent_card import AgentCard, Capabilities, Skill
+from ax_contracts.schemas.common import TENANT_ID_DEFAULT, AxModel, UtcDatetime
+from ax_contracts.schemas.escalation import Escalation
+from ax_contracts.schemas.event import (
+    EVENT_DATA_MODELS,
+    CampaignCreatedData,
+    CouponIssuedData,
+    EventEnvelope,
+    EventType,
+    IncidentData,
+    MetricAnomalyData,
+    NoticePublishedData,
+    PaymentFailedData,
+    Promise,
+    ShopDegradedData,
+)
+from ax_contracts.schemas.execute import ExecuteDecision, ExecuteRequest, HoldReason
+from ax_contracts.schemas.ids import ContextPrefix, IdPrefix
+from ax_contracts.schemas.mcp import McpEnvelope
+from ax_contracts.schemas.message import (
+    AgentRequest,
+    AgentResult,
+    ErrorCode,
+    Evidence,
+    InputReason,
+    RequestMeta,
+    TaskStatus,
+)
+from ax_contracts.schemas.record import Card, RecordCase, RecordKind
+
+__all__ = [
+    "EVENT_DATA_MODELS",
+    "TENANT_ID_DEFAULT",
+    "AgentCard",
+    "AgentRequest",
+    "AgentResult",
+    "AxModel",
+    "Capabilities",
+    "Card",
+    "CampaignCreatedData",
+    "ContextPrefix",
+    "CouponIssuedData",
+    "Escalation",
+    "ErrorCode",
+    "EventEnvelope",
+    "EventType",
+    "Evidence",
+    "ExecuteDecision",
+    "ExecuteRequest",
+    "HoldReason",
+    "IdPrefix",
+    "IncidentData",
+    "InputReason",
+    "McpEnvelope",
+    "MetricAnomalyData",
+    "NoticePublishedData",
+    "PaymentFailedData",
+    "Promise",
+    "RecordCase",
+    "RecordKind",
+    "RequestMeta",
+    "ShopDegradedData",
+    "Skill",
+    "TaskStatus",
+    "UtcDatetime",
+]
