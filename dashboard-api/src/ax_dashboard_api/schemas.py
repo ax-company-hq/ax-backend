@@ -431,6 +431,7 @@ class Dashboard(BaseModel):
 # ---------------------------------------------------------------- 쓰기 요청
 class ConversationCreate(BaseModel):
     user_id: int
+    customer_name: str | None = None  # 실제 연결에서 support에 넘긴다. 없으면 "고객 <id>"
     subject: str = Field(min_length=1)
     message: str = Field(min_length=1)
     order_id: int | None = None

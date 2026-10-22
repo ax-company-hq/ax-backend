@@ -155,3 +155,61 @@ def test_bot_ok_does_not_requeue(team) -> None:
 )
 def test_closes_issue_uses_bot_marker_only(body, issue) -> None:
     assert guards.closes_issue(body) == issue
+
+
+
+def test_load_pr_uses_payload_without_api(tmp_path, monkeypatch) -> None:
+    payload = {"pull_request": {
+        "number": 9, "state": "open", "body": "x\n<!-- ax-issue:4 -->",
+        "head": {"sha": "b" * 40, "ref": "data/4-x-r0", "repo": {"full_name": "o/r"}},
+        "base": {"ref": "dev"}, "user": {"login": BOT}, "labels": [{"name": "hotfix"}]}}
+    f = tmp_path / "event.json"
+    f.write_text(__import__("json").dumps(payload), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request_target")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(f))
+
+    def no_api(*a, **k):
+        raise AssertionError("API를 부르면 안 됨")
+
+    monkeypatch.setattr(guards, "gh_json", no_api)
+    p = guards.load_pr("o/r", 9)
+    assert (p.head_sha, p.branch, p.author, p.issue, p.is_fork, p.labels) == (
+        "b" * 40, "data/4-x-r0", BOT, 4, False, ["hotfix"])
+
+
+def test_load_pr_falls_back_to_api_on_dispatch(monkeypatch) -> None:
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
+    called = []
+    monkeypatch.setattr(guards, "gh_json", lambda path, *e: called.append(path) or {
+        "state": "open", "body": "", "head": {"sha": "c", "ref": "x", "repo": None},
+        "base": {"ref": "dev"}, "user": {"login": "bxbae"}, "labels": []})
+    p = guards.load_pr("o/r", 3)
+    assert called == ["repos/o/r/pulls/3"] and p.is_fork
+
+
+def test_apply_requeues_even_if_comment_fails_on_locked_pr(tmp_path, monkeypatch) -> None:
+    # 시험 ③: 잠긴 봇 PR에 관문 실패 코멘트를 남기다 실패해도 PR 닫기·requeue는 해야 한다
+    plan = {"sha": "a" * 40, "number": 35, "skip_reason": None, "remove_hotfix": False,
+            "statuses": [{"context": "folder-guard", "state": "failure", "description": "x"}],
+            "comment": "<!-- guards:" + "a" * 40 + " -->\n실패", "requeue": {"issue": 34,
+                                                                         "reason": "관문 실패"}}
+    f = tmp_path / "plan.json"
+    f.write_text(__import__("json").dumps(plan), encoding="utf-8")
+    for k, v in {"GITHUB_REPOSITORY": "o/r", "GITHUB_SERVER_URL": "https://github.com",
+                 "GITHUB_RUN_ID": "1"}.items():
+        monkeypatch.setenv(k, v)
+
+    class Done:
+        stdout = ""
+
+    monkeypatch.setattr(guards.subprocess, "run", lambda *a, **k: Done())
+    monkeypatch.setattr(guards, "hotfix_status_present", lambda t, r, s: False)
+
+    def locked(*a, **k):
+        raise guards.subprocess.CalledProcessError(1, "gh")
+
+    monkeypatch.setattr(team_mod, "post_comment", locked)
+    calls = []
+    monkeypatch.setattr(team_mod, "requeue", lambda *a, **k: calls.append((a[2], k)) or "retry-1")
+    assert guards.main(["apply", str(f)]) == 0
+    assert calls == [(34, {"pr": 35, "head_sha": "a" * 40})]

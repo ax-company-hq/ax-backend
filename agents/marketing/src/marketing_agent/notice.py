@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import itertools
+from collections.abc import Callable
+from datetime import UTC, datetime
 
 from marketing_agent.schemas import DraftNoticeInput, NoticeDraft, NoticeView
 
@@ -44,12 +46,19 @@ def make_draft(context_id: str, data: DraftNoticeInput) -> NoticeDraft:
 
 
 class NoticeStore:
-    """초안·게시 공지를 메모리에 둔다(목 모드). 같은 초안을 두 번 게시하면 같은 `notice_id`다."""
+    """초안·게시 공지를 메모리에 둔다(목 모드). 같은 초안을 두 번 게시하면 같은 `notice_id`다.
 
-    def __init__(self) -> None:
+    공지는 게시되면 `published`이고 다음 둘 중 하나로 `ended`가 된다.
+    - 복구 공지(`incident_resolved`)를 게시하면 같은 `context_id`의 장애 공지가 끝난다.
+    - `valid_to`가 지났다.
+    """
+
+    def __init__(self, now: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
+        self.now = now
         self._drafts: dict[str, NoticeDraft] = {}
         self._published: dict[str, tuple[str, NoticeDraft]] = {}  # notice_id → (context_id, draft)
         self._by_draft: dict[str, str] = {}
+        self._ended: set[str] = set()
         self._counter = itertools.count(1)
 
     def save_draft(self, draft: NoticeDraft) -> None:
@@ -62,12 +71,20 @@ class NoticeStore:
         if draft.draft_id in self._by_draft:
             return self._by_draft[draft.draft_id]
         notice_id = f"ntc_{next(self._counter):04d}"
+        if draft.kind == "incident_resolved":  # 복구 공지가 나가면 같은 사건의 장애 공지는 끝난다
+            for earlier_id, (earlier_context, earlier) in self._published.items():
+                if earlier_context == context_id and earlier.kind == "incident_opened":
+                    self._ended.add(earlier_id)
         self._published[notice_id] = (context_id, draft)
         self._by_draft[draft.draft_id] = notice_id
         return notice_id
 
+    def _status(self, notice_id: str, draft: NoticeDraft) -> str:
+        expired = draft.valid_to is not None and self.now() > draft.valid_to
+        return "ended" if notice_id in self._ended or expired else "published"
+
     def view(self, notice_id: str) -> NoticeView:
-        """게시된 공지만 보여 준다. 없으면 '확인할 수 없음'이다."""
+        """게시된 공지만 보여 준다(끝난 공지는 `status: ended`로). 없으면 '확인할 수 없음'이다."""
         found = self._published.get(notice_id)
         if found is None:
             return NoticeView(found=False, unknown_reason="게시된 공지를 찾을 수 없음")
@@ -75,7 +92,7 @@ class NoticeStore:
         return NoticeView(
             found=True,
             notice_id=notice_id,
-            status="published",
+            status=self._status(notice_id, draft),
             channel_code=draft.channel_code,
             public_text=draft.public_text,
             facts=draft.facts,
