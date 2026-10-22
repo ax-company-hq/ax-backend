@@ -145,12 +145,14 @@ class CreateInquiryInput(AxModel):
     customer_name: str
     order_id: int | None = None
     order_no: str | None = None
+    notice_id: str | None = None  # 문의가 가리키는 공지. 있으면 마케팅 get_notice로 사실을 읽는다
 
 
 class AddCustomerMessageInput(AxModel):
     """본문은 `untrusted`의 `message`로 받는다."""
 
     inquiry_id: int
+    notice_id: str | None = None
 
 
 class CheckReplyInput(AxModel):
@@ -179,3 +181,29 @@ class SummarizeInquiryInput(AxModel):
 class SetInquiryStatusInput(AxModel):
     inquiry_id: int
     status: InquiryStatus
+
+
+class RequestCompensationInput(AxModel):
+    """보상 요청. 사유 코드(`late_delivery`, `damaged` 등)로 단가를 코드가 판정한다.
+
+    `buyer_id`는 보상 쿠폰을 받을 구매자다. 문의 원문은 받지 않는다.
+    """
+
+    inquiry_id: int
+    buyer_id: str
+    reason_code: str
+    count: int = 1
+
+
+class RequestCompensationOutput(AxModel):
+    """`request_compensation` 결과. 마케팅 회신은 상태·outcome·출력을 그대로 담는다."""
+
+    eligible: bool
+    reason: str | None = None  # 대상이 아닐 때 이유
+    sequence: int | None = None
+    count: int | None = None
+    unit_value: int | None = None
+    total_value: int | None = None
+    marketing_status: str | None = None
+    marketing_outcome: str | None = None
+    marketing_output: dict[str, Any] = Field(default_factory=dict)
