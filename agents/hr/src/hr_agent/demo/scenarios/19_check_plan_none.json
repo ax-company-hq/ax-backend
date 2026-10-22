@@ -1,0 +1,16 @@
+{
+  "title": "계획 비교: 관련 카드 없음은 판정하지 않는다",
+  "description": "검색 영역에는 비교할 결정 카드가 없다. 그럴듯하게 판정하지 않고 '기록에 없음'(no_related_cards)으로 답한다.",
+  "steps": [
+    {
+      "skill": "check_plan",
+      "requester": "planning",
+      "input": {"draft": {"title": "검색 색인 재생성 주기 변경", "summary": "색인을 매일 새로 만든다", "area": "search", "kind": "spec"}},
+      "expect": {
+        "status": "completed",
+        "outcome": "ok",
+        "output": {"verdict": "ok", "no_related_cards": true, "findings": []}
+      }
+    }
+  ]
+}

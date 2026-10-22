@@ -12,6 +12,7 @@ from hr_agent.assignment import service as assignment
 from hr_agent.cards import service as cards
 from hr_agent.handover import service as handover
 from hr_agent.onboarding import service as onboarding
+from hr_agent.planning_check import service as planning_check
 from hr_agent.roster import service as roster
 from hr_agent.services import get_services
 
@@ -52,7 +53,12 @@ async def confirm_offboarding(request: AgentRequest) -> AgentResult:
     return await assignment.confirm_offboarding(get_services(), request)
 
 
+async def check_plan(request: AgentRequest) -> AgentResult:
+    return await planning_check.check_plan(get_services(), request)
+
+
 HANDLERS = {
+    "check_plan": check_plan,
     "request_assignment_change": request_assignment_change,
     "confirm_reassignment": confirm_reassignment,
     "confirm_offboarding": confirm_offboarding,

@@ -43,6 +43,14 @@ def similarity(a: str, b: str) -> float:
     return 2 * len(left & right) / (len(left) + len(right))
 
 
+def overlap(a: str, b: str) -> float:
+    """짧은 쪽 2-gram이 긴 쪽에 얼마나 들어 있는지(0~1). 길이가 크게 다른 문장을 비교할 때 쓴다."""
+    left, right = bigrams(a), bigrams(b)
+    if not left or not right:
+        return 0.0
+    return len(left & right) / min(len(left), len(right))
+
+
 _NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
 
 

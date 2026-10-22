@@ -115,6 +115,16 @@
       "allowed_requesters": ["orchestrator", "dashboard-api"],
       "verifier": null,
       "priority": "required"
+    },
+    {
+      "id": "check_plan",
+      "description": "새 계획 초안을 같은 영역의 결정 카드와 비교한다. 기각된 안과 비슷하면 경고(경과 일수는 코드가 계산), 채택하지 않기로 한 대안과 같으면 충돌, 확정된 결정과 같은 방향이면 일치로 알린다. 관련 카드가 없으면 판정하지 않고 '기록에 없음'으로 답한다. 조회 전용이다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/hr.py#CheckPlanInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/hr.py#CheckPlanOutput",
+      "grade": "read",
+      "allowed_requesters": ["orchestrator", "planning", "dashboard-api"],
+      "verifier": null,
+      "priority": "required"
     }
   ]
 }
