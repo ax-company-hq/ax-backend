@@ -1,5 +1,43 @@
 {
   "name": "planning",
   "owner": "예진",
-  "skills": []
+  "description": "기획개발 — 변경 요청을 기획서·작업·PR로 잇고, 장애 사건에 관련 PR·기획 문단 후보를 회신하고 연결한다. 원인 판정은 하지 않는다",
+  "url": "http://planning:8101/a2a",
+  "version": "0.1.0",
+  "capabilities": {
+    "streaming": true,
+    "push_notifications": false
+  },
+  "skills": [
+    {
+      "id": "find_related_prs",
+      "description": "window_from~window_to 안에 머지된 PR 후보를 최근 머지 순으로 돌려준다(component가 있으면 바뀐 경로 접두사로 거른다). 각 후보에 근거 기획서·문단 id를 붙인다. 후보만 주고 원인은 판정하지 않는다. 상태를 바꾸지 않는다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/planning.py#FindRelatedPrsInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/planning.py#FindRelatedPrsOutput",
+      "grade": "read",
+      "allowed_requesters": ["orchestrator", "infra", "data"],
+      "verifier": null,
+      "priority": "required"
+    },
+    {
+      "id": "link_incident",
+      "description": "사건(incident_context_id)을 PR과 그 기획 문단에 연결해 문단에 장애를 표시한다. follow_up_title이 있으면 재발 방지 요청을 등록하고, 같은 제목 요청이 있으면 새로 만들지 않고 그 ID를 돌려준다(outcome linked_duplicate). 자동 머지 PR이 연결되면 자동 처리 범위를 한 단계 줄인다. execute()를 거친다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/planning.py#LinkIncidentInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/planning.py#LinkIncidentOutput",
+      "grade": "A",
+      "allowed_requesters": ["orchestrator", "infra"],
+      "verifier": null,
+      "priority": "required"
+    },
+    {
+      "id": "verify_rollback_target",
+      "description": "infra rollback_deployment(B)의 교차검증. 배포가 사건 뒤면 거절(deploy_after_incident), 배포 직전 구간 안에 머지된 PR이 있으면 승인(deploy_before_incident), 없으면 거절(no_deploy_in_window). 거절도 completed + outcome rejected_by_review. 상태를 바꾸지 않는다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/planning.py#VerifyRollbackTargetInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/planning.py#VerifyRollbackTargetOutput",
+      "grade": "read",
+      "allowed_requesters": ["safety"],
+      "verifier": null,
+      "priority": "required"
+    }
+  ]
 }

@@ -79,6 +79,7 @@ class State:
         self.sources: Sources = sources or (MockSources() if is_mock("finance") else LiveSources())
         self.ledger = Ledger()
         self.policy: ReviewPolicy = load_policy()
+        self.last_self_test: dict[str, Any] | None = None  # 마지막 "재무 AI 테스트" 결과
 
 
 STATE: State | None = None
@@ -154,8 +155,18 @@ SUBSCRIBED_EVENTS = [EventType.COUPON_ISSUED, EventType.PAYMENT_REFUNDED]
 
 
 # ---------------------------------------------------------------- verify_amount
-async def recompute(request: AgentRequest, data: VerifyAmountInput) -> VerifyAmountOutput:
-    """원천 데이터로 다시 계산한다. 근거가 없으면 승인하지 않는다."""
+async def recompute(
+    request: AgentRequest,
+    data: VerifyAmountInput,
+    sources: Sources | None = None,
+    refunds: dict[str, int] | None = None,
+) -> VerifyAmountOutput:
+    """원천 데이터로 다시 계산한다. 근거가 없으면 승인하지 않는다.
+
+    `sources`·`refunds`를 주면 그것을 쓴다(자체 점검용). 없으면 에이전트 상태를 쓴다.
+    """
+    sources = sources or state().sources
+    refunds = state().ledger.refunds if refunds is None else refunds
 
     def reject(reason: str, **recomputed: int) -> VerifyAmountOutput:
         return VerifyAmountOutput(
@@ -177,7 +188,7 @@ async def recompute(request: AgentRequest, data: VerifyAmountInput) -> VerifyAmo
         if any(c != total for c in claimed):
             return reject("amount_mismatch", count=count, unit_value=unit, total_value=total)
         if params.get("purpose_code") == "compensation":
-            impact = await state().sources.impact(meta, meta.context_id, None)
+            impact = await sources.impact(meta, meta.context_id, None)
             if impact is None or not impact.affected_customer_ids:
                 return reject("source_unavailable", total_value=total)
             if params.get("buyer_id") not in impact.affected_customer_ids:
@@ -198,10 +209,10 @@ async def recompute(request: AgentRequest, data: VerifyAmountInput) -> VerifyAmo
             return reject("invalid_params")
         if data.computed_amount is not None and data.computed_amount != amount:
             return reject("amount_mismatch", refund_amount=amount)
-        paid = await state().sources.paid_amount(meta, order_id)
+        paid = await sources.paid_amount(meta, order_id)
         if paid is None:
             return reject("source_unavailable", refund_amount=amount)
-        already = state().ledger.refunds.get(order_id, 0)
+        already = refunds.get(order_id, 0)
         if already + amount > paid:
             return reject(
                 "exceeds_paid", refund_amount=amount, paid_amount=paid, refunded_before=already

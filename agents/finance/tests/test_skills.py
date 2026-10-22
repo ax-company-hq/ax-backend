@@ -618,3 +618,12 @@ def test_every_seller_review_outcome_is_listed(
         ("sel_2", "rejected"),
         ("sel_1", "approved"),
     ]
+
+
+def test_verify_amount_models_come_from_contracts() -> None:
+    """#90: safety와 함께 쓰는 형식은 contracts가 원본이다(중복 정의 없음)."""
+    from ax_contracts import schemas as contract
+    from finance_agent import schemas
+
+    assert schemas.VerifyAmountInput is contract.VerifyAmountInput
+    assert schemas.VerifyAmountOutput is contract.VerifyAmountOutput
