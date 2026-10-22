@@ -20,6 +20,7 @@ from ax_agent_template import call_agent
 from ax_contracts.schemas import AgentRequest, RequestMeta, TaskStatus
 
 DATA_CALL_SECONDS = 10.0
+IMPACT_FIELDS = ("failed_order_count", "affected_customer_count", "damage_amount")
 
 
 @dataclass(frozen=True)
@@ -46,7 +47,8 @@ def _int(value: Any) -> int | None:
 
 
 def _impact_from(output: dict[str, Any], ref: str) -> Impact | None:
-    counts = [_int(output.get(k)) for k in ("failed_orders", "affected_customers", "lost_amount")]
+    # data `ImpactCounts` 필드 이름 (agents/data impact.py, DEP-DATA-02)
+    counts = [_int(output.get(k)) for k in IMPACT_FIELDS]
     if any(c is None for c in counts):
         return None
     ids = output.get("affected_customer_ids") or []

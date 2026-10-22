@@ -390,3 +390,16 @@ def test_execute_failure_does_not_record(
     _call(client, "settlement_hold", body, token="mock:orchestrator")
     _call(client, "settlement_hold", body, token="mock:orchestrator")
     assert len(calls) == 2
+
+
+def test_impact_parser_uses_data_field_names() -> None:
+    """data `ImpactCounts` 필드 이름(failed_order_count 등)을 그대로 읽는다."""
+    from finance_agent.sources import _impact_from
+
+    impact = _impact_from(
+        {"failed_order_count": 2, "affected_customer_count": 1, "damage_amount": 5000}, "r"
+    )
+    assert impact is not None and (impact.failed_orders, impact.lost_amount) == (2, 5000)
+    assert (
+        _impact_from({"failed_orders": 2, "affected_customers": 1, "lost_amount": 1}, "r") is None
+    )

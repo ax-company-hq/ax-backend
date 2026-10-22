@@ -1,9 +1,9 @@
 {
   "impacts": {
     "ctx_inc_0001": {
-      "failed_orders": 3,
-      "affected_customers": 3,
-      "lost_amount": 87000,
+      "failed_order_count": 3,
+      "affected_customer_count": 3,
+      "damage_amount": 87000,
       "affected_customer_ids": ["buy_a1", "buy_b2", "buy_c3"]
     }
   },

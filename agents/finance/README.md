@@ -31,7 +31,7 @@ uv run ax-test-call --agent http://localhost:8105 --skill loss_aggregation --inp
 ## 3. 입출력 계약
 - 입출력 모델: `src/finance_agent/schemas.py` (Agent Card의 `input_schema`·`output_schema`). safety와 함께 쓰는 `VerifyAmountInput`·`VerifyAmountOutput`은 contracts로 옮길 예정
 - 구독 이벤트: `coupon.issued`(보상 쿠폰 지급 누적), `payment.refunded`(환불 누적)
-- 부르는 것: data `impact_analysis`(영향 수치·영향 고객 ID), data `fraud_score`(`risk_score` 0~100), safety `execute()`(판매자 승인·정산 보류)
+- 부르는 것: data `impact_analysis`(`failed_order_count`·`affected_customer_count`·`damage_amount` + 영향 고객 ID `affected_customer_ids`), data `fraud_score`(`risk_score` 0~100), safety `execute()`(판매자 승인·정산 보류)
 
 ## 4. 의존
 ax-contracts, ax-agent-template, data 에이전트(`impact_analysis`, `fraud_score`), safety
