@@ -135,3 +135,24 @@ def test_endpoints_run_and_remember_last(monkeypatch: pytest.MonkeyPatch) -> Non
     assert ran.json()["data"]["result"] == "pass"
     assert ran.headers.get("access-control-allow-origin") == "http://localhost:3001"
     assert client.get("/api/finance/self-test/last").json()["data"]["result"] == "pass"
+
+
+def test_last_result_expires_after_12_hours(monkeypatch: pytest.MonkeyPatch) -> None:
+    """아침마다 새로 테스트하도록 12시간이 지난 결과는 지운다."""
+    from datetime import UTC, datetime, timedelta
+
+    client = TestClient(app)
+    old = (datetime.now(UTC) - timedelta(hours=12, minutes=1)).isoformat()
+    handlers.state().last_self_test = {"result": "pass", "ran_at": old}
+    body = client.get("/api/finance/self-test/last").json()
+    assert body["data"] is None and body["meta"]["ttl_hours"] == 12
+    assert handlers.state().last_self_test is None
+
+    fresh = (datetime.now(UTC) - timedelta(hours=11)).isoformat()
+    handlers.state().last_self_test = {"result": "fail", "ran_at": fresh}
+    assert client.get("/api/finance/self-test/last").json()["data"]["result"] == "fail"
+
+
+@pytest.mark.parametrize("bad", [{}, {"ran_at": "어제"}, {"ran_at": None}])
+def test_strange_timestamps_count_as_old(bad: dict) -> None:
+    assert selftest.is_fresh(bad) is False

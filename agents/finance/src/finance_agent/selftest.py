@@ -26,6 +26,17 @@ from finance_agent.sources import MockSources
 
 CTX = "ctx_selftest"
 CALL_SECONDS = 3.0
+SELF_TEST_TTL_HOURS = 12  # 마지막 결과를 보여 주는 시간. 지나면 기록을 지우고 다시 테스트하게 한다
+
+
+def is_fresh(result: dict[str, Any], now: datetime | None = None) -> bool:
+    """`ran_at`이 12시간 안이면 True. 형식이 이상하면 False(오래된 것으로 본다)."""
+    try:
+        ran_at = datetime.fromisoformat(str(result["ran_at"]))
+    except (KeyError, ValueError):
+        return False
+    return (now or datetime.now(UTC)) - ran_at < timedelta(hours=SELF_TEST_TTL_HOURS)
+
 
 # 테스트 전용 가짜 자료: 장애 피해 고객 2명(피해 100,000원), 결제 30,000원 주문 하나
 SELFTEST_SOURCES = MockSources(

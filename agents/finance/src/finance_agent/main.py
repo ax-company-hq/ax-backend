@@ -13,7 +13,7 @@ from ax_agent_template.events import subscribe
 from ax_agent_template.server import create_agent_app
 from ax_contracts.schemas import AgentCard
 from finance_agent.handlers import HANDLERS, SUBSCRIBED_EVENTS, on_event, recompute, state
-from finance_agent.selftest import run_self_test
+from finance_agent.selftest import SELF_TEST_TTL_HOURS, is_fresh, run_self_test
 
 # 대시보드(dashboard-web)는 조회(GET)만 한다. A2A(`POST /a2a`)는 에이전트끼리만 쓴다
 DEFAULT_CORS_ORIGINS = "http://localhost:3001,http://127.0.0.1:3001"
@@ -80,7 +80,11 @@ def add_read_api(app: FastAPI) -> None:
 
     @app.get("/api/finance/self-test/last")
     def last_self_test() -> dict:
-        return {"data": state().last_self_test, "meta": {}}
+        """마지막 테스트 결과. 12시간이 지나면 지운다(아침마다 새로 테스트하도록)."""
+        last = state().last_self_test
+        if last and not is_fresh(last):
+            state().last_self_test = last = None
+        return {"data": last, "meta": {"ttl_hours": SELF_TEST_TTL_HOURS}}
 
     @app.get("/api/finance/ai-reviews")
     def ai_reviews() -> dict:
