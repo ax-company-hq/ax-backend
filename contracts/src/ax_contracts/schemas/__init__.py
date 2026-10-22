@@ -29,6 +29,7 @@ from ax_contracts.schemas.event import (
     SellerRegisteredData,
     ShipmentDelayedData,
     ShopDegradedData,
+    SupportInquiryReceivedData,
 )
 from ax_contracts.schemas.execute import ExecuteDecision, ExecuteRequest, HoldReason
 from ax_contracts.schemas.ids import ContextPrefix, IdPrefix
@@ -105,6 +106,7 @@ __all__ = [
     "RequestMeta",
     "ShopDegradedData",
     "Skill",
+    "SupportInquiryReceivedData",
     "TaskStatus",
     "UtcDatetime",
     "DiagnoseIncidentInput",
