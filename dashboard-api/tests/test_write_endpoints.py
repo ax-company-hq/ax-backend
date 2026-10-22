@@ -44,7 +44,7 @@ def test_cors_allows_dashboard_web_origin(client: TestClient) -> None:
 def test_write_requires_mock_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DASHBOARD_MOCK", raising=False)
     monkeypatch.delenv("AGENT_TEMPLATE_MOCK", raising=False)
-    response = TestClient(app).post(BASE + "/conversations/1/status", json={"status": "resolved"})
+    response = TestClient(app).post(BASE + "/claims/1/approve", json={"note": ""})
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "UPSTREAM_NOT_CONNECTED"
 

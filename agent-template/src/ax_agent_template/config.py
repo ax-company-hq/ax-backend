@@ -6,6 +6,9 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 # CLAUDE.md 포트 표. 컨테이너에서는 서비스 이름이 호스트 이름이다.
 DEFAULT_PORTS: dict[str, int] = {
@@ -26,7 +29,10 @@ DEFAULT_PORTS: dict[str, int] = {
 # 이 길이를 넘는 path는 이관 큐로 넘긴다.
 MAX_PATH_LENGTH = 3
 
+# 프로세스 기본 이름(마지막 `set_agent_name`). 요청 처리 중에는 `_request_agent_name`이 우선한다.
 _agent_name: str | None = None
+# 요청을 받은 앱의 이름. 앱을 여러 개 만들어도 서로 섞이지 않게 요청 단위로 격리한다.
+_request_agent_name: ContextVar[str | None] = ContextVar("ax_request_agent_name", default=None)
 
 
 def env_prefix(name: str) -> str:
@@ -40,8 +46,22 @@ def set_agent_name(name: str) -> None:
     _agent_name = name
 
 
+@contextmanager
+def agent_name_scope(name: str) -> Iterator[None]:
+    """이 범위 안에서는 전역 이름 대신 `name`을 쓴다 (앱의 요청 처리용)."""
+    token = _request_agent_name.set(name)
+    try:
+        yield
+    finally:
+        _request_agent_name.reset(token)
+
+
+def _current_name() -> str | None:
+    return _request_agent_name.get() or _agent_name or os.getenv("AGENT_NAME")
+
+
 def get_agent_name() -> str:
-    name = _agent_name or os.getenv("AGENT_NAME")
+    name = _current_name()
     if not name:
         raise RuntimeError(
             "에이전트 이름이 없다: create_agent_app을 먼저 만들거나 AGENT_NAME을 설정한다"
@@ -53,7 +73,7 @@ def is_mock(name: str | None = None) -> bool:
     """`AGENT_TEMPLATE_MOCK=1`이거나 `<부서>_MOCK=1`이면 목 모드다 (CI는 항상 1)."""
     if os.getenv("AGENT_TEMPLATE_MOCK") == "1":
         return True
-    name = name or _agent_name or os.getenv("AGENT_NAME")
+    name = name or _current_name()
     return bool(name) and os.getenv(f"{env_prefix(name)}_MOCK") == "1"
 
 

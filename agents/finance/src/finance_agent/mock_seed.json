@@ -4,16 +4,42 @@
       "failed_order_count": 3,
       "affected_customer_count": 3,
       "damage_amount": 87000,
-      "affected_customer_ids": ["buy_a1", "buy_b2", "buy_c3"]
+      "affected_customer_ids": [
+        "buy_a1",
+        "buy_b2",
+        "buy_c3"
+      ]
+    },
+    "ctx_inc_0002": {
+      "failed_order_count": 8,
+      "affected_customer_count": 6,
+      "damage_amount": 214500,
+      "affected_customer_ids": [
+        "buy_d4",
+        "buy_e5",
+        "buy_f6",
+        "buy_g7",
+        "buy_h8",
+        "buy_i9"
+      ]
     }
   },
   "payments": {
     "ord_1001": 24000,
-    "ord_1002": 50000
+    "ord_1002": 50000,
+    "ord_1003": 32000,
+    "ord_1004": 18000,
+    "ord_1005": 150000,
+    "ord_1006": 9900,
+    "101": 33000,
+    "102": 12000
   },
   "fraud_scores": {
     "sel_1": 12,
     "sel_2": 45,
-    "sel_3": 85
-  }
+    "sel_3": 85,
+    "sel_4": 30,
+    "sel_5": 72
+  },
+  "_note": "payments 101·102는 고객지원 시드 주문(agents/support orders.py)의 현금 결제 합계(상품 + 배송비 3,000원, 포인트 제외)"
 }
