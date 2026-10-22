@@ -3,7 +3,8 @@
 - 카드 ID는 `context_id`·종류·대상으로 정해서 같은 기록이 두 번 와도 같은 카드가 된다.
 - 근거 없는 값은 지어내지 않고 "확인할 수 없음"으로 적는다.
 - 확신도 규칙(기획안 세부 기준 미정, 제안값): 이유·대안·근거가 모두 있으면 `high`, 둘이 있으면
-  `mid`, 그 밖에는 `low`. 규칙으로 뽑은 이유(`extracted`)는 항상 `low`다.
+  `mid`, 그 밖에는 `low`. 규칙으로 뽑은 이유(`extracted`)는 항상 `low`, 문장에서 읽은 기각은
+  최대 `mid`다.
   자동 확정은 설정(`card_auto_confirm`, 기본 `high`)과 같은 확신도일 때만이고, 그 밖은 후보다.
 - 계약의 `RecordCase`에는 `area`가 없어서 `source_refs`의 `area:<영역>` 항목에서 읽는다.
 """
@@ -50,8 +51,18 @@ def confidence_of(record: RecordCase, info: DecisionInfo) -> Confidence:
         return "low"
     present = sum([bool(info.reason), bool(info.alternatives), bool(evidence_refs(record))])
     if present == 3:
-        return "high"
+        # 문장에서 읽은 기각 표현은 최대 mid(후보): 잘못 읽은 기각이 경고로 번지지 않게 한다
+        return "mid" if outcome_inferred(record, info) else "high"
     return "mid" if present == 2 else "low"
+
+
+def outcome_inferred(record: RecordCase, info: DecisionInfo) -> bool:
+    """기각 여부를 결정 종류가 아니라 요약 문장에서 읽었다."""
+    return info.rejected and outcome_of(record.kind) != "rejected"
+
+
+def outcome_for(record: RecordCase, info: DecisionInfo) -> Literal["adopted", "rejected"]:
+    return "rejected" if info.rejected else outcome_of(record.kind)
 
 
 def is_candidate(confidence: Confidence, auto_confirm: str = "high") -> bool:
@@ -84,7 +95,7 @@ def build_card(
     candidate = is_candidate(confidence, auto_confirm)
     area = area_of(record)
     refs = evidence_refs(record)
-    outcome = outcome_of(record.kind)
+    outcome = outcome_for(record, info)
     tags = [record.kind.value]
     if area:
         tags.append(f"{AREA_PREFIX}{area}")
@@ -113,6 +124,7 @@ def build_card(
             "alternatives_rejected": info.alternatives,
             "decided_at": now.isoformat(),
             "outcome": outcome,
+            "outcome_inferred": outcome_inferred(record, info),
             "candidate": candidate,
             "extracted": info.extracted,
             "record_kind": record.kind.value,

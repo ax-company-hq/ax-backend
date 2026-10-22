@@ -1,0 +1,142 @@
+[
+ {
+  "kind": "decision",
+  "summary": "환불 승인 한도를 50만원으로 올린다. 처리 대기가 길어져서",
+  "expect_decision": true,
+  "expect_reason": "처리 대기가 길어져서",
+  "expect_rejected": false
+ },
+ {
+  "kind": "spec_confirmed",
+  "summary": "상품 등록 화면에서 필수 항목을 줄였다. 이탈률 때문에",
+  "expect_decision": true,
+  "expect_reason": "이탈률 때문에",
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "새벽 배포 금지 규칙을 유지한다. 사고 이력을 감안해",
+  "expect_decision": true,
+  "expect_reason": "사고 이력을 감안해",
+  "expect_rejected": false
+ },
+ {
+  "kind": "rollback_executed",
+  "summary": "캐시 설정을 직전 값으로 복구했다. 지연이 커졌으므로",
+  "expect_decision": true,
+  "expect_reason": "지연이 커졌으므로",
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "푸시 알림 시간대를 제한한다. 야간 민원을 줄이기 위해서",
+  "expect_decision": true,
+  "expect_reason": "야간 민원을 줄이기 위해서",
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "외부 API 타임아웃을 3초로 한다 (연쇄 지연 방지 목적)",
+  "expect_decision": true,
+  "expect_reason": "연쇄 지연 방지 목적",
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "무료 배송 기준 인하안은 받아들이지 않기로 했다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": true
+ },
+ {
+  "kind": "decision",
+  "summary": "정기 결제 재시도 간격 조정안을 기각했다. 중복 청구 위험 때문에",
+  "expect_decision": true,
+  "expect_reason": "중복 청구 위험 때문에",
+  "expect_rejected": true
+ },
+ {
+  "kind": "decision",
+  "summary": "검색어 자동완성 확대를 반려했다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": true
+ },
+ {
+  "kind": "spec_confirmed",
+  "summary": "리뷰 작성 포인트 제도를 확정했다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "incident",
+  "summary": "배송 조회 API가 간헐적으로 실패한다",
+  "expect_decision": false,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "notice",
+  "summary": "점검 때문에 오늘 밤 결제가 잠시 중단된다",
+  "expect_decision": false,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "case",
+  "summary": "고객이 환불 지연으로 인해 문의했다",
+  "expect_decision": false,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "기각된 줄 알았던 안이 사실은 승인되어 있었다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "재고 동기화 주기를 10분으로 줄인다. 품절 오표시 탓에",
+  "expect_decision": true,
+  "expect_reason": "품절 오표시 탓에",
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "주문 폭주를 대비해 서버를 증설한다",
+  "expect_decision": true,
+  "expect_reason": "주문 폭주를 대비해",
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "추천 영역 개인화는 이번 분기에 하지 않기로 했다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": true
+ },
+ {
+  "kind": "decision",
+  "summary": "로그인 시도 제한을 5회로 정했다. 보안 사고를 막으려고",
+  "expect_decision": true,
+  "expect_reason": "보안 사고를 막으려고",
+  "expect_rejected": false
+ },
+ {
+  "kind": "spec_confirmed",
+  "summary": "쿠폰 중복 적용을 금지한다. 정산 혼선이 생겨서",
+  "expect_decision": true,
+  "expect_reason": "정산 혼선이 생겨서",
+  "expect_rejected": false
+ },
+ {
+  "kind": "pr_merged",
+  "summary": "결제 모듈 리팩터링 PR이 머지됐다. 유지보수를 위해",
+  "expect_decision": false,
+  "expect_reason": null,
+  "expect_rejected": false
+ }
+]
