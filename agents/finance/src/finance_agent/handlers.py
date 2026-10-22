@@ -55,7 +55,9 @@ class Ledger:
         self.refunds: dict[str, int] = {}  # order_id → 환불 누적
         self.seen_events: set[str] = set()
         self.verified: dict[str, AgentResult] = {}  # execution_id → 판정
+        self.verify_log: list[dict[str, Any]] = []  # 대시보드 조회용 판정 기록
         self.done: dict[str, AgentResult] = {}  # 멱등성 키 → 끝난 상태 변경 결과
+        self.market_ops: list[dict[str, Any]] = []  # 판매자 심사·정산 보류 결과 기록
 
     def compensation(self, context_id: str) -> dict[str, int]:
         return self.coupons.get(context_id, {"count": 0, "total": 0})
@@ -219,6 +221,16 @@ async def verify_amount(request: AgentRequest) -> AgentResult:
         ),
     )
     ledger.verified[data.execution_id] = result
+    ledger.verify_log.append(
+        {
+            "execution_id": data.execution_id,
+            "context_id": request.meta.context_id,
+            "action": data.action,
+            "requester": data.requester,
+            **output.model_dump(mode="json"),
+            "at": _now().isoformat(),
+        }
+    )
     return result
 
 
@@ -307,6 +319,12 @@ def _decision_status(decision: ExecuteDecision) -> dict[str, Any]:
     return {"status": TaskStatus.FAILED, "outcome": "execute_failed"}
 
 
+def _log_market_op(request: AgentRequest, skill: str, output: dict[str, Any]) -> None:
+    state().ledger.market_ops.append(
+        {"skill": skill, "context_id": request.meta.context_id, **output, "at": _now().isoformat()}
+    )
+
+
 async def seller_review(request: AgentRequest) -> AgentResult:
     data = _parse(request, SellerReviewInput)
     if isinstance(data, AgentResult):
@@ -365,6 +383,7 @@ async def seller_review(request: AgentRequest) -> AgentResult:
     result = done(output, evidence, **mapped)
     if result.status == TaskStatus.COMPLETED:
         state().ledger.done[key] = result
+    _log_market_op(request, "seller_review", output.model_dump(mode="json"))
     return result
 
 
@@ -394,6 +413,7 @@ async def settlement_hold(request: AgentRequest) -> AgentResult:
     result = _result(request, output=output.model_dump(mode="json"), evidence=evidence, **mapped)
     if result.status == TaskStatus.COMPLETED:
         state().ledger.done[key] = result
+    _log_market_op(request, "settlement_hold", output.model_dump(mode="json"))
     return result
 
 

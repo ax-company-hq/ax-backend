@@ -403,3 +403,39 @@ def test_impact_parser_uses_data_field_names() -> None:
     assert (
         _impact_from({"failed_orders": 2, "affected_customers": 1, "lost_amount": 1}, "r") is None
     )
+
+
+# ---------------------------------------------------------------- 대시보드 조회 API
+def test_read_api_lists_verifications_and_market_ops(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _call(client, "verify_amount", _verify(_coupon(2, 5000)))
+    _call(client, "verify_amount", _verify(_coupon(buyer="buy_zz"), execution_id="exe_2"))
+    rows = client.get("/api/finance/verifications").json()["data"]
+    assert [(r["execution_id"], r["decision"], r["reason_code"]) for r in rows] == [
+        ("exe_2", "rejected", "not_affected"),
+        ("exe_1", "approved", "recomputed_match"),
+    ]
+    assert rows[0]["action"] == "issue_coupon" and rows[0]["requester"] == "marketing"
+
+    _fake_execute(monkeypatch, _decision())
+    _call(
+        client,
+        "settlement_hold",
+        {"seller_id": "sel_3", "reason_code": "fraud_risk"},
+        token="mock:orchestrator",
+    )
+    ops = client.get("/api/finance/market-ops").json()["data"]
+    assert (ops[0]["skill"], ops[0]["status"]) == ("settlement_hold", "held")
+    assert client.get("/api/finance/ledger").json()["data"] == {"compensation": [], "refunds": []}
+
+
+def test_dashboard_can_read_but_not_post(client: TestClient) -> None:
+    """dashboard-web(3001)은 GET만 허용. A2A 쓰기 경로는 브라우저에 열지 않는다."""
+    get = client.get("/api/finance/ledger", headers={"Origin": "http://localhost:3001"})
+    assert get.headers.get("access-control-allow-origin") == "http://localhost:3001"
+    preflight = client.options(
+        "/a2a",
+        headers={"Origin": "http://localhost:3001", "Access-Control-Request-Method": "POST"},
+    )
+    assert preflight.status_code == 400
