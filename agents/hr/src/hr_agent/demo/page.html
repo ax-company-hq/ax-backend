@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>인사 에이전트 데모</title>
+<style>
+:root{
+  --bg:#F6F7FB;--panel:#FFFFFF;--ink:#1B2335;--muted:#5B6478;--line:#D8DBEA;
+  --accent:#4F5BD5;--accent-soft:#EEF0FB;--ok:#1E8A5A;--ok-soft:#E4F5EC;
+  --bad:#C0392B;--bad-soft:#FBE9E7;--warn:#9A6A00;--warn-soft:#FFF4D6;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#12141C;--panel:#1B1F2B;--ink:#E7E9F2;--muted:#9AA3B8;--line:#2D3344;
+    --accent:#8C95F2;--accent-soft:#252A44;--ok:#5CD39B;--ok-soft:#173326;
+    --bad:#F28B7E;--bad-soft:#3A1F1C;--warn:#E8C25A;--warn-soft:#3A311A;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 'Pretendard','Noto Sans KR','Malgun Gothic',system-ui,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:14px 20px;background:var(--panel);border-bottom:1px solid var(--line)}
+h1{font-size:18px;margin:0}
+h1 small{font-weight:400;color:var(--muted);margin-left:8px}
+button{font:inherit;cursor:pointer;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:8px 14px}
+button.ghost{background:transparent;color:var(--accent)}
+button:disabled{opacity:.6;cursor:wait}
+.layout{display:grid;grid-template-columns:320px 1fr;gap:16px;padding:16px 20px;max-width:1200px;margin:0 auto}
+@media (max-width:820px){.layout{grid-template-columns:1fr;padding:12px 16px}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.list{padding:8px}
+.item{display:flex;gap:10px;align-items:flex-start;padding:10px;border-radius:8px;cursor:pointer;border:1px solid transparent}
+.item:hover{background:var(--accent-soft)}
+.item.active{background:var(--accent-soft);border-color:var(--accent)}
+.item b{display:block;font-size:14px}
+.item span{font-size:12px;color:var(--muted)}
+.dot{width:10px;height:10px;border-radius:50%;margin-top:6px;background:var(--line);flex:none}
+.dot.ok{background:var(--ok)}.dot.bad{background:var(--bad)}
+.main{padding:18px 20px;min-height:300px}
+.main h2{margin:0 0 4px;font-size:18px}
+.muted{color:var(--muted)}
+.badges{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;background:var(--accent-soft);color:var(--accent)}
+.badge.ok{background:var(--ok-soft);color:var(--ok)}
+.badge.bad{background:var(--bad-soft);color:var(--bad)}
+.badge.warn{background:var(--warn-soft);color:var(--warn)}
+.notice{background:var(--warn-soft);color:var(--warn);border-radius:8px;padding:8px 12px;margin:10px 0;font-size:13px}
+.card{border:1px solid var(--line);border-radius:12px;padding:16px;margin:12px 0;background:var(--panel)}
+.card h3{margin:6px 0 10px;font-size:16px}
+.card dt{font-size:12px;color:var(--muted);margin-top:10px}
+.card dd{margin:2px 0 0}
+.card ul{margin:2px 0 0;padding-left:18px}
+.reject{border:1px solid var(--bad);background:var(--bad-soft);color:var(--bad);border-radius:12px;padding:14px 16px;margin:12px 0}
+details{margin-top:12px}
+summary{cursor:pointer;color:var(--muted);font-size:13px}
+pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;font:12px/1.5 Consolas,monospace}
+.empty{padding:40px 12px;text-align:center;color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <h1>인사 에이전트 데모<small>localhost · 개발 전용 · 목 모드</small></h1>
+  <div>
+    <span id="total" class="badge" hidden></span>
+    <button id="runAll">전체 실행</button>
+  </div>
+</header>
+<div class="layout">
+  <aside class="panel list" id="list" aria-label="시나리오 목록"></aside>
+  <section class="panel main" id="main"><div class="empty">왼쪽에서 시나리오를 고르거나 <b>전체 실행</b>을 눌러 보세요.</div></section>
+</div>
+<script>
+const KIND = {incident:'사건',decision:'결정',case:'사례',notice:'공지',rollback_executed:'롤백 실행',
+  spec_confirmed:'기획 확정',pr_merged:'PR 머지',decision_extracted:'결정 추출',request_closed:'요청 종료'};
+const state = {scenarios: [], runs: {}, current: null};
+const $ = (id) => document.getElementById(id);
+const el = (tag, attrs = {}, ...kids) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) { if (k === 'class') n.className = v; else n.setAttribute(k, v); }
+  for (const kid of kids) n.append(kid instanceof Node ? kid : document.createTextNode(kid ?? ''));
+  return n;
+};
+async function api(path, body) {
+  const res = await fetch(path, body ? {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)} : undefined);
+  if (!res.ok) throw new Error(path + ' ' + res.status);
+  return res.json();
+}
+function renderList() {
+  const box = $('list'); box.replaceChildren();
+  for (const s of state.scenarios) {
+    const run = state.runs[s.name];
+    const ok = run && run.passed && run.deterministic;
+    const dot = el('i', {class: 'dot' + (run ? (ok ? ' ok' : ' bad') : '')});
+    const item = el('div', {class: 'item' + (state.current === s.name ? ' active' : ''), tabindex: '0'},
+      dot, el('div', {}, el('b', {}, s.title), el('span', {}, `${s.requester} · 기대: ${s.expect.status}${s.expect.outcome ? ' / ' + s.expect.outcome : ''}`)));
+    item.onclick = () => select(s.name);
+    item.onkeydown = (e) => { if (e.key === 'Enter') select(s.name); };
+    box.append(item);
+  }
+}
+function cardView(output) {
+  // 카드(H2 이후)면 카드 모양으로, 아직 v0 스텁(입력 그대로)이면 기록 모양으로 보여 준다.
+  const isCard = output && output.card_id && output.body;
+  const card = el('div', {class: 'card'});
+  const kind = output.kind;
+  card.append(el('span', {class: 'badge'}, isCard ? '카드 · ' + (KIND[kind] || kind) : '기록 · ' + (KIND[kind] || kind)));
+  card.append(el('h3', {}, isCard ? output.title : output.summary));
+  const dl = el('dl');
+  const add = (label, value) => { dl.append(el('dt', {}, label), el('dd', {}, value)); };
+  if (isCard) {
+    add('본문', output.body);
+    if ((output.tags || []).length) add('태그', output.tags.join(', '));
+    add('확신도', output.confidence);
+    add('상태', output.status);
+  } else {
+    add('결정 이유', output.decision_reason || '확인할 수 없음');
+    const alts = output.alternatives_considered || [];
+    const dd = el('dd'); if (alts.length) { const ul = el('ul'); alts.forEach(a => ul.append(el('li', {}, a))); dd.append(ul); } else dd.append('없음');
+    dl.append(el('dt', {}, '검토한 대안'), dd);
+  }
+  const refs = output.source_refs || [];
+  const refDd = el('dd');
+  if (refs.length) { const ul = el('ul'); refs.forEach(r => ul.append(el('li', {}, r))); refDd.append(ul); }
+  else refDd.append(el('span', {class: 'badge warn'}, '근거 없음 · 확인할 수 없음'));
+  dl.append(el('dt', {}, '근거'), refDd);
+  card.append(dl);
+  return card;
+}
+function renderMain() {
+  const run = state.runs[state.current];
+  const s = state.scenarios.find(x => x.name === state.current);
+  const box = $('main'); box.replaceChildren();
+  if (!s) { box.append(el('div', {class: 'empty'}, '시나리오를 고르세요.')); return; }
+  box.append(el('h2', {}, s.title), el('div', {class: 'muted'}, s.description));
+  if (!run) {
+    const b = el('button', {}, '이 시나리오 실행'); b.onclick = () => runOne(s.name);
+    box.append(el('div', {style: 'margin-top:16px'}, b)); return;
+  }
+  const res = run.result;
+  box.append(el('div', {class: 'badges'},
+    el('span', {class: 'badge ' + (run.passed ? 'ok' : 'bad')}, run.passed ? '기대 결과와 일치' : '기대 결과와 다름'),
+    el('span', {class: 'badge ' + (run.deterministic ? 'ok' : 'bad')}, `결정성 ${run.repeat}회: ${run.deterministic ? '동일' : '다름'}`),
+    el('span', {class: 'badge'}, `상태 ${res.status}${res.outcome ? ' / ' + res.outcome : ''}`),
+    el('span', {class: 'badge'}, `${run.elapsed_ms}ms`)));
+  if (res.status === 'completed' && res.output) {
+    if (!(res.output.card_id && res.output.body))
+      box.append(el('div', {class: 'notice'}, '현재 v0 스텁: 입력을 그대로 돌려줍니다. 카드 조립기(H2)가 완성되면 카드로 표시됩니다.'));
+    box.append(cardView(res.output));
+  } else {
+    box.append(el('div', {class: 'reject'}, `거부됨: ${res.outcome || res.status}`));
+  }
+  const d = el('details'); d.append(el('summary', {}, '요청·응답 원문(JSON)'));
+  d.append(el('pre', {}, JSON.stringify({request: run.request, response: res}, null, 2)));
+  box.append(d);
+  const again = el('button', {class: 'ghost', style: 'margin-top:12px'}, '다시 실행'); again.onclick = () => runOne(s.name);
+  box.append(again);
+}
+function select(name) { state.current = name; renderList(); renderMain(); }
+async function runOne(name) {
+  state.runs[name] = await api('/api/run', {name, repeat: 2});
+  renderList(); renderMain(); updateTotal();
+}
+function updateTotal() {
+  const done = Object.values(state.runs);
+  if (!done.length) return;
+  const ok = done.filter(r => r.passed && r.deterministic).length;
+  const t = $('total'); t.hidden = false; t.textContent = `${ok} / ${state.scenarios.length} 통과`;
+  t.className = 'badge ' + (ok === state.scenarios.length ? 'ok' : 'bad');
+}
+$('runAll').onclick = async (e) => {
+  e.target.disabled = true;
+  try {
+    const all = await api('/api/run-all', {});
+    all.runs.forEach(r => { state.runs[r.name] = r; });
+    renderList(); renderMain(); updateTotal();
+  } finally { e.target.disabled = false; }
+};
+(async () => {
+  state.scenarios = await api('/api/scenarios');
+  state.current = state.scenarios[0]?.name ?? null;
+  renderList(); renderMain();
+})();
+</script>
+</body>
+</html>

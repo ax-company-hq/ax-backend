@@ -1,0 +1,13 @@
+{
+  "title": "권한 없는 부서의 요청",
+  "description": "record_case를 요청할 수 없는 부서(finance)가 보낸다. Agent Card의 allowed_requesters 때문에 거부(rejected, FORBIDDEN_SKILL)되어야 한다.",
+  "requester": "finance",
+  "expect": { "status": "rejected", "outcome": "FORBIDDEN_SKILL" },
+  "input": {
+    "context_id": "ctx_inc_0004",
+    "kind": "case",
+    "summary": "재무가 보낸 기록 시도",
+    "source_refs": [],
+    "author": "finance"
+  }
+}

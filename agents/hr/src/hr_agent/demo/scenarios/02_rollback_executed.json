@@ -1,0 +1,15 @@
+{
+  "title": "롤백 실행 기록 (infra)",
+  "description": "infra가 롤백을 실행한 뒤 남기는 기록. rollback_executed는 infra만 보낸다.",
+  "requester": "infra",
+  "expect": { "status": "completed" },
+  "input": {
+    "context_id": "ctx_inc_0001",
+    "kind": "rollback_executed",
+    "summary": "shop-api v1.4.0 → v1.3.2 롤백을 실행했고 결제 지연이 해소됐다.",
+    "decision_reason": "장애 직전 배포(v1.4.0)가 유력한 원인 후보였고 롤백 검증을 통과했다.",
+    "alternatives_considered": ["설정만 되돌리기"],
+    "source_refs": ["execution:exe_0007", "review:rev_0003"],
+    "author": "infra"
+  }
+}
