@@ -21,7 +21,13 @@ from ax_contracts.schemas import (
     RequestMeta,
     TaskStatus,
 )
-from ax_safety.gate import ReviewOutcome, ReviewTask, VerifyOutcome, VerifyTask
+from ax_safety.gate import (
+    ReviewOutcome,
+    ReviewTask,
+    ThresholdReviewTask,
+    VerifyOutcome,
+    VerifyTask,
+)
 from ax_safety.store import Review
 
 
@@ -61,6 +67,34 @@ async def call_reviewer(task: ReviewTask) -> ReviewOutcome:
         ),
         skill=task.skill,
         input=task.input,
+    )
+    result = await call_agent(task.reviewer, request)
+    if result.status != TaskStatus.COMPLETED:
+        return ReviewOutcome("escalate", f"reviewer_{result.status.value}")
+    out = result.output
+    decision = out.get("decision")
+    if decision not in ("approve", "reject", "escalate"):
+        return ReviewOutcome("escalate", "reviewer_invalid_output")
+    return ReviewOutcome(decision, str(out.get("reason_code", "")), str(out.get("explanation", "")))
+
+
+async def call_threshold_reviewer(task: ThresholdReviewTask) -> ReviewOutcome:
+    """재무 AI의 `review_threshold_change`에 기준 바꾸기를 묻는다.
+
+    요청한 사람이 쓴 이유는 `untrusted`로만 넘긴다. 완료가 아니거나 모르는 답이면 사람에게.
+    """
+    request = AgentRequest(
+        meta=RequestMeta(
+            context_id=task.context_id,
+            tenant_id=task.tenant_id,
+            token="",  # call_agent가 safety 토큰으로 바꾼다
+            path=[],
+            deadline=datetime.now(UTC) + timedelta(seconds=task.timeout_seconds),
+            idempotency_key=f"threshold:{task.change_id}",
+        ),
+        skill=task.skill,
+        input=task.input,
+        untrusted=task.untrusted,
     )
     result = await call_agent(task.reviewer, request)
     if result.status != TaskStatus.COMPLETED:

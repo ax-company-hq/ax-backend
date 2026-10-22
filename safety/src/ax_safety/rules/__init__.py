@@ -1,6 +1,7 @@
 """액션 등급 레지스트리와 기준 금액 등급표 (SAF-02).
 
 설정 파일(`registry.toml`, `thresholds.toml`)은 사람만 바꾼다. 여기는 읽고 검증만 한다.
+실행 중 숫자 기준 바꾸기는 `gate.Gate.request_threshold_change`가 메모리에서 한다.
 `SAFETY_REGISTRY_PATH`·`SAFETY_THRESHOLDS_PATH`로 다른 파일을 쓸 수 있다(테스트용).
 """
 
