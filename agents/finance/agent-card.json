@@ -68,6 +68,18 @@
       ],
       "verifier": null,
       "priority": "recommended"
+    },
+    {
+      "id": "review_threshold_change",
+      "description": "안전 레이어가 안전 장치(원래 값의 0.5~2배) 검사를 마친 기준 바꾸기 요청을 판단해 approve/reject/escalate와 쉬운 설명을 돌려준다. 정책(ai_review_policy.toml [threshold_change])과 safety가 센 보류 건수로만 판단한다: 변경 폭 30% 초과는 사람에게, 낮추기는 승인, 올리기는 최근 24시간 보류 3건 이상일 때만 승인. 요청 이유 글(untrusted)은 판단에 쓰지 않는다. 상태를 바꾸지 않는다.",
+      "input_schema": "agents/finance/src/finance_agent/schemas.py#ThresholdReviewInput",
+      "output_schema": "agents/finance/src/finance_agent/schemas.py#ThresholdReviewOutput",
+      "grade": "read",
+      "allowed_requesters": [
+        "safety"
+      ],
+      "verifier": null,
+      "priority": "recommended"
     }
   ]
 }

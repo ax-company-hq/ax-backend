@@ -6,6 +6,8 @@
 | `loss_aggregation` | read | orchestrator | data 영향 분석 + 지급 보상 = 손실 리포트 (DEP-FIN-01) |
 | `seller_review` | B | orchestrator | 마켓운영: 서류·위험 점수로 판매자 승인 요청 (DEP-FIN-03) |
 | `settlement_hold` | B | orchestrator | 마켓운영: 위험 판매자 정산 보류 요청 (DEP-FIN-04) |
+| `review_hold` | read | safety | 사람 확인(C) 건 AI 1차 판단 |
+| `review_threshold_change` | read | safety | 기준 바꾸기 판단 (`threshold_review.py`) |
 
 - 숫자는 전부 코드로 계산한다. 요청 쪽이 적은 총액·등급은 믿지 않는다.
 - 상태 변경(판매자 승인, 정산 보류)은 `execute()`가 `executed`를 돌려준 뒤에만 기록한다.
@@ -41,10 +43,12 @@ from finance_agent.schemas import (
     SellerReviewOutput,
     SettlementHoldInput,
     SettlementHoldOutput,
+    ThresholdReviewInput,
     VerifyAmountInput,
     VerifyAmountOutput,
 )
 from finance_agent.sources import LiveSources, MockSources, Sources, order_key
+from finance_agent.threshold_review import decide_threshold
 
 CLAIMED_TOTAL_FIELDS = ("total_value", "claimed_total")
 
@@ -63,6 +67,8 @@ class Ledger:
         self.loss_reports: dict[str, dict[str, Any]] = {}  # context_id → 마지막 손실 리포트
         self.reviewed: dict[str, AgentResult] = {}  # review_id → AI 1차 판단
         self.ai_reviews: list[dict[str, Any]] = []  # 대시보드 조회용 AI 판단 기록
+        self.threshold_reviewed: dict[str, AgentResult] = {}  # change_id → 기준 바꾸기 판단
+        self.threshold_reviews: list[dict[str, Any]] = []  # 대시보드 조회용 기준 바꾸기 판단
 
     def compensation(self, context_id: str) -> dict[str, int]:
         return self.coupons.get(context_id, {"count": 0, "total": 0})
@@ -478,10 +484,49 @@ async def review_hold(request: AgentRequest) -> AgentResult:
     return result
 
 
+# ---------------------------------------------------------------- review_threshold_change
+async def review_threshold_change(request: AgentRequest) -> AgentResult:
+    """safety의 기준 바꾸기 요청 판단. 요청 이유(`request.untrusted`)는 읽지 않는다."""
+    data = _parse(request, ThresholdReviewInput)
+    if isinstance(data, AgentResult):
+        return data
+    ledger = state().ledger
+    if data.change_id in ledger.threshold_reviewed:  # 같은 요청은 같은 판단
+        return ledger.threshold_reviewed[data.change_id].model_copy(update={"meta": request.meta})
+    output = decide_threshold(data, state().policy.threshold_change)
+    result = _result(
+        request,
+        TaskStatus.COMPLETED,
+        outcome=output.decision,
+        output=output.model_dump(mode="json"),
+        evidence=_evidence(
+            ["ai_review_policy:threshold_change", f"safety:stats:{data.key}"],
+            output.explanation,
+            [data.change_id],
+        ),
+    )
+    ledger.threshold_reviewed[data.change_id] = result
+    ledger.threshold_reviews.append(
+        {
+            "change_id": data.change_id,
+            "context_id": request.meta.context_id,
+            "key": data.key,
+            "current_value": data.current_value,
+            "new_value": data.new_value,
+            "baseline": data.baseline,
+            "stats": data.stats,
+            **output.model_dump(mode="json"),
+            "at": _now().isoformat(),
+        }
+    )
+    return result
+
+
 HANDLERS = {
     "verify_amount": verify_amount,
     "loss_aggregation": loss_aggregation,
     "seller_review": seller_review,
     "settlement_hold": settlement_hold,
     "review_hold": review_hold,
+    "review_threshold_change": review_threshold_change,
 }
