@@ -102,11 +102,17 @@ base_grade = "B"
 verifier = "data"
 verify_skill = "fraud_score"
 
-# ---- 회사 기억 (재현). 카드 쓰기는 여러 부서가 요청한다
+# ---- 회사 기억 (재현, #41). 카드 쓰기는 여러 부서가, 대체·폐기 연결은 hr만 요청한다
 [[actions]]
-action = "memory_write_card"
+action = "memory.card_write"
 owner = "memory"
-requesters = ["hr", "planning", "infra", "support", "marketing", "finance", "data", "orchestrator"]
+requesters = ["hr", "support", "marketing", "planning", "finance", "orchestrator", "data"]
+base_grade = "A"
+
+[[actions]]
+action = "memory.card_link"
+owner = "memory"
+requesters = ["hr"]
 base_grade = "A"
 
 # ---- 기획개발 (예진). 검증자 = 안전 레이어 코드 규칙(변경 크기·허용 경로, thresholds.toml)

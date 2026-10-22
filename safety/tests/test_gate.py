@@ -263,14 +263,31 @@ def test_threshold_rules_must_reference_registered_actions(verifier: Any, sent: 
         Gate(load_registry(), bad, Store(), verifier, sent)
 
 
+WRITERS = ["hr", "support", "marketing", "planning", "finance", "orchestrator", "data"]
+
+
 @pytest.mark.asyncio
-async def test_shared_action_accepts_listed_requesters(gate: Gate, act) -> None:
-    """memory 카드 쓰기(A)는 여러 부서가 요청한다. 목록에 없는 요청자는 미등록과 같다."""
-    for requester in ("hr", "finance", "support"):
-        decision = await gate.execute(act("memory_write_card", requester, f"card-{requester}"))
-        assert (decision.grade, decision.status) == ("A", "executed")
-    outsider = await gate.execute(act("memory_write_card", "shop-api", "card-x"))
-    assert outsider.hold_reason == HoldReason.UNREGISTERED_ACTION
+@pytest.mark.parametrize("requester", WRITERS)
+async def test_memory_card_write_is_a_for_listed_writers(gate: Gate, act, requester: str) -> None:
+    """#41: `memory.card_write`는 A, 요청 가능 부서는 7곳."""
+    decision = await gate.execute(act("memory.card_write", requester, f"card-{requester}"))
+    assert (decision.grade, decision.status) == ("A", "executed")
+
+
+@pytest.mark.asyncio
+async def test_memory_card_link_only_hr(gate: Gate, act) -> None:
+    ok = await gate.execute(act("memory.card_link", "hr", "link-1"))
+    assert (ok.grade, ok.status) == ("A", "executed")
+    other = await gate.execute(act("memory.card_link", "support", "link-2"))
+    assert (other.status, other.hold_reason) == ("held", HoldReason.UNREGISTERED_ACTION)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["memory.card_write", "memory.card_link"])
+async def test_memory_actions_reject_unlisted_requester(gate: Gate, act, action: str) -> None:
+    decision = await gate.execute(act(action, "shop-api", f"x-{action}"))
+    assert decision.status == "held"
+    assert decision.hold_reason == HoldReason.UNREGISTERED_ACTION
 
 
 @pytest.mark.asyncio
