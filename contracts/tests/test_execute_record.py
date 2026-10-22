@@ -58,6 +58,7 @@ def test_hold_reason_members() -> None:
         "verify_timeout",
         "schema_invalid",
         "review_timeout",
+        "policy_always_c",
     }
 
 
