@@ -1,4 +1,6 @@
 name: claude-review
+# cap 계산이 run 목록의 제목으로 리뷰 부서를 센다 (team.py cap-ok). 형식을 바꾸면 team.py도 같이
+run-name: "claude-review ${{ github.event.pull_request.head.ref || format('dispatch #{0}', inputs.pr) }} by ${{ github.event.pull_request.user.login || github.actor }}"
 
 # 다른 부서 에이전트 리뷰 (docs/automation-spec.md 6장). 결과는 ax-bot 커밋 상태 agent-review/<부서>·agent-review.
 # 1단계 임시 동작: changes가 나오면 review-round 라벨과 blocking 코멘트까지만 (address는 2단계, 사람이 보고 닫는다).
@@ -152,22 +154,17 @@ jobs:
             '{reviewer_dept: $d, head_sha: $h, pr: ($p | tonumber)}' > "$RUNNER_TEMP/ax-in/meta.json"
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - name: 도구 · cap-ok
+      - name: 도구 · cap (prep에서 계산한 값)
         id: cap
         env:
-          GH_TOKEN: ${{ github.token }}
-          OWNER: ${{ matrix.reviewer.owner }}
+          CAP_OK: ${{ matrix.reviewer.cap_ok }}
         run: |
           python -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install --quiet --require-hashes -r "$RUNNER_TEMP/trusted/.github/scripts/requirements.txt"
           "$RUNNER_TEMP/venv/bin/python" -I "$RUNNER_TEMP/trusted/.github/scripts/claude_jobs.py" claude-settings \
             --dept "$DEPT" --trusted "$RUNNER_TEMP/trusted" --out-dir "$RUNNER_TEMP/ax-out" \
             --file "$RUNNER_TEMP/claude-settings.json"
-          if "$RUNNER_TEMP/venv/bin/python" -I "$RUNNER_TEMP/trusted/.github/scripts/team.py" cap-ok "$OWNER"; then
-            echo "ok=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-          fi
+          if [ "$CAP_OK" = "true" ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; else echo "ok=false" >> "$GITHUB_OUTPUT"; fi
 
       - name: 토큰 확인 (값은 출력하지 않고 길이만)
         env:
@@ -221,10 +218,11 @@ jobs:
           T1: ${{ (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_JAEHYEON' && secrets.CLAUDE_TOKEN_JAEHYEON) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_TAEYOON' && secrets.CLAUDE_TOKEN_TAEYOON) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_JUNHA' && secrets.CLAUDE_TOKEN_JUNHA) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_YEJIN' && secrets.CLAUDE_TOKEN_YEJIN) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_BYUNGHWAN' && secrets.CLAUDE_TOKEN_BYUNGHWAN) || (matrix.reviewer.token_secret == 'CLAUDE_TOKEN_JAEHEON' && secrets.CLAUDE_TOKEN_JAEHEON) || '' }}
           T2: ${{ github.token }}
           CAP_OK: ${{ steps.cap.outputs.ok }}
+          CAP_REASON: ${{ matrix.reviewer.cap_reason }}
         run: |
           set -euo pipefail
           final="$RUNNER_TEMP/final"; mkdir -p "$final"
-          if [ "$CAP_OK" != "true" ]; then echo quota > "$final/quota.txt"; exit 0; fi
+          if [ "$CAP_OK" != "true" ]; then printf '%s\n' "$CAP_REASON" > "$final/quota.txt"; exit 0; fi
           "$RUNNER_TEMP/venv/bin/python" -I "$RUNNER_TEMP/trusted/.github/scripts/claude_jobs.py" check-verdict \
             "$RUNNER_TEMP/ax-out/verdict.json" --head-sha "$HEAD_SHA" > "$final/verdict.json"
           curl -sSL -o "$RUNNER_TEMP/gl.tgz" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
