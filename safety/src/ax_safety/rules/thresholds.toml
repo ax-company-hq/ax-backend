@@ -19,6 +19,17 @@ verify_timeout_seconds = 30
 # C 보류 건을 사람이 결정하지 않으면 자동 거절하는 시간(초). 24시간 (태윤, 2026-10-22: 10분은 너무 짧음)
 review_timeout_seconds = 86400
 
+# 심각하지 않은 건은 사람 대신 AI가 결정한다 (태윤, 2026-10-22). 끄면 모든 C 건을 사람이 결정
+[auto_review]
+enabled = true
+reviewer = "finance"
+skill = "review_hold"
+# 재무 AI가 먼저 판단하는 액션 (재량 한도·판단 기준은 finance의 ai_review_policy.toml)
+actions = ["issue_coupon", "refund_request", "seller_review"]
+# 요청 자체가 잘못된 건은 안전 장치가 바로 거절 (요청한 AI가 고쳐서 다시 요청)
+auto_reject_reasons = ["amount_mismatch", "unregistered_action", "schema_invalid"]
+timeout_seconds = 10
+
 [[rules]]
 key = "coupon_total"
 action = "issue_coupon"

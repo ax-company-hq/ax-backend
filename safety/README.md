@@ -7,6 +7,7 @@
 - 레지스트리·기준표 (SAF-02): `src/ax_safety/rules/registry.toml`, `thresholds.toml`. 사람만 PR로 바꾼다
 - A 즉시 실행 (SAF-03), B 교차검증 (SAF-04): 레지스트리의 검증자 skill(재무 `verify_amount` 등)을 A2A로 부른다
 - C 보류 큐 (SAF-05): 근거 리포트와 함께 보류, 사람 토큰으로만 결정, 24시간 동안 결정이 없으면 자동 거절(`review_timeout_seconds`)
+- AI 1차 판단: C 건 중 요청이 잘못된 것(금액 불일치·미등록·형식 오류)은 규칙이 바로 거절하고, 쿠폰·환불·판매자 심사는 재무 AI `review_hold`에 먼저 묻는다(승인·거절·사람에게). 재무 AI가 답하지 않거나 사람에게라고 하면 사람이 결정한다. 정산 확정은 항상 사람. 설정: `thresholds.toml`의 `[auto_review]`(사람만 변경, 끄면 모든 C 건을 사람이 결정)
 - 감사 로그 (SAF-06): 접수·검증·판정·인증 거부·보류 결정을 `context_id`와 함께 남긴다
 - fail-closed (SAF-08): 미등록 액션·금액 필드 오류·총액 불일치·검증 무응답은 실행하지 않는다
 - 누적 한도 (SAF-10): 일일(UTC)·사건별·고객별 누적 금액 규칙

@@ -105,11 +105,28 @@ class Rule(_Strict):
         return [p for p in paths if not any(p.startswith(prefix) for prefix in self.allowed)]
 
 
+class AutoReview(_Strict):
+    """사람 확인(C)으로 넘어온 건을 사람보다 먼저 판단하는 설정.
+
+    - `auto_reject_reasons`: 이 이유로 멈춘 건은 안전 장치 규칙이 바로 거절한다(요청이 잘못된 경우)
+    - `actions`: 이 액션은 `reviewer`의 `skill`(재무 AI)에게 먼저 묻는다. 승인·거절·사람에게 중 하나
+    - 재무 AI가 답하지 않거나 "사람에게"라고 하면 지금처럼 사람이 결정한다
+    """
+
+    enabled: bool = False
+    reviewer: str = "finance"
+    skill: str = "review_hold"
+    actions: list[str] = Field(default_factory=list)
+    auto_reject_reasons: list[str] = Field(default_factory=list)
+    timeout_seconds: float = Field(default=10, gt=0)
+
+
 class ThresholdTable(_Strict):
     version: int = Field(ge=1)
     verify_timeout_seconds: float = Field(gt=0)
     review_timeout_seconds: float = Field(gt=0)
     rules: list[Rule] = Field(default_factory=list)
+    auto_review: AutoReview = Field(default_factory=AutoReview)
 
     def rules_for(self, action: str) -> list[Rule]:
         return [rule for rule in self.rules if rule.action == action]

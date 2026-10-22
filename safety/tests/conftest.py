@@ -79,7 +79,12 @@ def sent() -> Events:
 
 @pytest.fixture
 def gate(clock: Clock, verifier: FakeVerifier, sent: Events) -> Gate:
-    return Gate(load_registry(), load_thresholds(), Store(), verifier, sent, now=clock)
+    # 기본 테스트는 사람 확인 흐름을 본다. AI 1차 판단은 test_auto_review.py에서 켠다
+    table = load_thresholds()
+    table = table.model_copy(
+        update={"auto_review": table.auto_review.model_copy(update={"enabled": False})}
+    )
+    return Gate(load_registry(), table, Store(), verifier, sent, now=clock)
 
 
 @pytest.fixture

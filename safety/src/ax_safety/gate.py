@@ -52,8 +52,47 @@ class VerifyTask:
     input: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class ReviewOutcome:
+    """AI 1차 판단 결과. `escalate`면 사람이 결정한다."""
+
+    result: Literal["approve", "reject", "escalate"]
+    reason_code: str = ""
+    explanation: str = ""
+
+
+@dataclass(frozen=True)
+class ReviewTask:
+    reviewer: str
+    skill: str
+    context_id: str
+    tenant_id: str
+    review_id: str
+    timeout_seconds: float
+    input: dict[str, Any]
+
+
 Verifier = Callable[[VerifyTask], Awaitable[VerifyOutcome]]
+Reviewer = Callable[[ReviewTask], Awaitable[ReviewOutcome]]
+
+AI_REVIEWER = "finance-ai"  # 재무 AI가 결정한 보류 건의 decided_by
+RULE_REVIEWER = "auto-rule"  # 안전 장치 규칙이 바로 거절한 보류 건의 decided_by
 Publisher = Callable[[str, ExecuteRequest | Review, dict[str, Any]], Awaitable[None]]
+
+
+AUTO_REJECT_NOTE = {
+    "amount_mismatch": (
+        "적어 낸 금액과 계산이 달라 자동으로 거절했습니다. "
+        "요청한 AI가 금액을 고쳐 다시 요청해야 합니다."
+    ),
+    "unregistered_action": (
+        "등록되지 않은 일이라 자동으로 거절했습니다. "
+        "필요한 일이면 재무 담당자에게 등록을 요청하세요."
+    ),
+    "schema_invalid": (
+        "요청 내용이 잘못되어 자동으로 거절했습니다. 요청한 AI가 고쳐 다시 요청해야 합니다."
+    ),
+}
 
 
 class AmountError(ValueError):
@@ -103,6 +142,7 @@ class Gate:
         verifier: Verifier,
         publisher: Publisher,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        reviewer: Reviewer | None = None,
     ) -> None:
         unknown = {r.action for r in thresholds.rules} - {s.action for s in registry.actions}
         if unknown:
@@ -111,6 +151,7 @@ class Gate:
         self.thresholds = thresholds
         self.store = store
         self._verifier = verifier
+        self._reviewer = reviewer
         self._publish = publisher
         self._now = now
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
@@ -151,6 +192,11 @@ class Gate:
 
         customer = self._param_str(spec.customer_field, request.params)
         report: dict[str, Any] = {"calculation": formula, "computed_amount": amount}
+        if amount is not None:  # 이번 금액을 더한 누적. AI 1차 판단과 근거 리포트에 쓴다
+            report["totals"] = {
+                metric: self._amount_metric(metric, spec, request, amount, unit, customer)
+                for metric in ("daily_total", "context_total", "customer_total")
+            }
         if amount is not None:
             mismatched = claimed_mismatches(spec, request.params, amount)
             if mismatched:
@@ -387,9 +433,66 @@ class Gate:
             review_id=review_id,
         )
         result = await self._finish(request, decision, customer, full_report, "safety.action_held")
-        if result.status == "held":
-            self.store.add_review(review)
-        return result
+        if result.status != "held":
+            return result
+        self.store.add_review(review)
+        return await self._auto_review(request, review, result)
+
+    async def _auto_review(
+        self, request: ExecuteRequest, review: Review, held: ExecuteDecision
+    ) -> ExecuteDecision:
+        """심각하지 않은 C 건을 사람보다 먼저 판단한다. 판단하지 못하면 사람에게 둔다."""
+        cfg = self.thresholds.auto_review
+        if not cfg.enabled:
+            return held
+        reason = review.report.get("hold_reason", "")
+        if reason in cfg.auto_reject_reasons:
+            note = AUTO_REJECT_NOTE.get(reason, "요청이 잘못되어 자동으로 거절했습니다.")
+            self._close_review(review, "rejected", RULE_REVIEWER, note)
+            await self._emit_review(review)
+            return self._current(review, held)
+        if self._reviewer is None or request.action not in cfg.actions:
+            return held
+
+        task = ReviewTask(
+            reviewer=cfg.reviewer,
+            skill=cfg.skill,
+            context_id=request.context_id,
+            tenant_id=request.tenant_id,
+            review_id=review.review_id,
+            timeout_seconds=cfg.timeout_seconds,
+            input={
+                "review_id": review.review_id,
+                "execution_id": review.execution_id,
+                "action": request.action,
+                "requester": request.requester,
+                "params": request.params,
+                "computed_amount": held.computed_amount,
+                "hold_reason": reason,
+                "rules": review.report.get("rules", []),
+                "totals": review.report.get("totals", {}),
+            },
+        )
+        try:
+            outcome = await asyncio.wait_for(self._reviewer(task), timeout=cfg.timeout_seconds)
+        except Exception as exc:  # AI가 답하지 않으면 사람에게 둔다
+            outcome = ReviewOutcome("escalate", "reviewer_unavailable", type(exc).__name__)
+        review.report["ai_review"] = {
+            "result": outcome.result,
+            "reason_code": outcome.reason_code,
+            "explanation": outcome.explanation,
+        }
+        self._audit(request, "ai_review", review.execution_id, dict(review.report["ai_review"]))
+        if outcome.result == "escalate":
+            return held
+        status = "approved" if outcome.result == "approve" else "rejected"
+        self._close_review(review, status, AI_REVIEWER, outcome.explanation or None)
+        await self._emit_review(review)
+        return self._current(review, held)
+
+    def _current(self, review: Review, fallback: ExecuteDecision) -> ExecuteDecision:
+        record = self.store.get_execution(review.execution_id)
+        return record.decision if record else fallback
 
     async def _finish(
         self,
