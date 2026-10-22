@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 from ax_agent_template import events
 from ax_contracts.schemas import EventEnvelope, EventType, PaymentFailedData
+from ax_shop_api import outbox
 from ax_shop_api.db import Db
 from ax_shop_api.main import create_app
 
@@ -139,12 +140,18 @@ def test_unsent_events_are_kept_and_redelivered_without_duplicates(
     db = Db(":memory:")
     app = create_app(db)
     client = TestClient(app)
-    monkeypatch.delenv("AGENT_TEMPLATE_MOCK")  # 목 모드가 아니면 publish는 TODO 스텁 → 미발행
+    real_publish = outbox.publish
+
+    async def not_connected(envelope):  # noqa: ANN001
+        raise NotImplementedError("Redis 연동 전")
+
+    # CI는 환경변수로 목 모드를 항상 켜므로, 목 모드 해제 대신 발행 함수를 직접 바꾼다
+    monkeypatch.setattr(outbox, "publish", not_connected)
     order = _order(client)
     with db.tx() as conn:
         unsent = conn.execute("SELECT COUNT(*) FROM outbox_events WHERE sent_at IS NULL")
         assert unsent.fetchone()[0] == 1
-    monkeypatch.setenv("AGENT_TEMPLATE_MOCK", "1")
+    monkeypatch.setattr(outbox, "publish", real_publish)
     client.post(
         f"/api/shop/orders/{order['order_id']}/payments", json={}
     )  # flush가 밀린 것까지 보낸다
