@@ -4,10 +4,11 @@
 
 ## 실행 방법
 
-레포 루트에서 실행한다. 먼저 `.env.example`을 `.env`로 복사해 값을 채운다 (`.env`가 없어도 compose는 뜬다).
+레포 루트에서 실행한다. 먼저 루트 `.env.example`(공통 변수)을 `.env`로, 필요한 서비스 폴더의 `.env.example`(부서 변수)을 그 폴더의 `.env`로 복사해 값을 채운다. 각 서비스는 [루트 `.env`, 자기 폴더 `.env`] 순서로 읽고, 둘 다 없어도 compose는 뜬다 (Docker Compose 2.24 이상 필요).
 
 ```bash
 cp .env.example .env
+cp agents/data/.env.example agents/data/.env   # 예: data를 띄울 때
 docker compose -f infra/compose.yml up              # 전체
 docker compose -f infra/compose.yml up redis postgres data   # 필요한 것만
 docker compose -f infra/compose.yml config          # 설정 검사
@@ -15,7 +16,7 @@ docker compose -f infra/compose.yml config          # 설정 검사
 
 - 각 서버 패키지의 `compose.yml`을 `infra/compose.yml`이 `include:`로 불러온다. 서비스 이름은 폴더 이름이다.
 - 공용 서비스: `redis`(이벤트 버스, Redis Streams), `postgres`(pgvector, memory·공통 로그·각 서비스 DB, 볼륨 `pgdata`).
-- Postgres 기본 계정은 `ax` / `ax` / DB `ax`. compose 안에서의 주소는 `postgresql://ax:ax@postgres:5432/ax`, Redis는 `redis://redis:6379/0`.
+- Postgres 기본 계정은 `ax` / `ax` / DB `ax`. 바꾸려면 `infra/.env`에 `COMPOSE_POSTGRES_*`를 적는다. compose 안에서의 주소는 `postgresql://ax:ax@postgres:5432/ax`, Redis는 `redis://redis:6379/0`.
 - 목 모드: 서비스별 `<부서>_MOCK=1` (예: `DATA_MOCK=1`).
 
 ## 포트

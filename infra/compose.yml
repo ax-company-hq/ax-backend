@@ -25,9 +25,9 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-ax}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ax}
-      POSTGRES_DB: ${POSTGRES_DB:-ax}
+      POSTGRES_USER: ${COMPOSE_POSTGRES_USER:-ax}
+      POSTGRES_PASSWORD: ${COMPOSE_POSTGRES_PASSWORD:-ax}
+      POSTGRES_DB: ${COMPOSE_POSTGRES_DB:-ax}
     volumes:
       - pgdata:/var/lib/postgresql/data
 

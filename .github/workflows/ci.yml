@@ -24,6 +24,7 @@ jobs:
       LLM_MODEL: ""
       LLM_BASE_URL: ""
       LLM_API_KEY: ""
+      AGENT_TEMPLATE_MOCK: "1"
       ORCHESTRATOR_MOCK: "1"
       SAFETY_MOCK: "1"
       MEMORY_MOCK: "1"
@@ -61,7 +62,6 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PUSH_BEFORE_SHA: ${{ github.event.before }}
         shell: python
         run: |
           import os
@@ -79,9 +79,13 @@ jobs:
                   fh.write(f"targets={targets}\n")
               print(f"targets={targets}")
 
-          event = os.environ["EVENT_NAME"]
-          base = os.environ["PR_BASE_SHA"] if event == "pull_request" else os.environ["PUSH_BEFORE_SHA"]
-          known = bool(base) and set(base) != {"0"} and subprocess.run(
+          # dev push는 경로 필터 없이 전체 테스트
+          if os.environ["EVENT_NAME"] != "pull_request":
+              out("all")
+              raise SystemExit(0)
+
+          base = os.environ["PR_BASE_SHA"]
+          known = bool(base) and subprocess.run(
               ["git", "cat-file", "-e", f"{base}^{{commit}}"], capture_output=True
           ).returncode == 0
           if not known:
