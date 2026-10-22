@@ -1,5 +1,53 @@
 {
   "name": "data",
   "owner": "재현",
-  "skills": []
+  "description": "데이터분석 — 이상 징후를 탐지하고, 장애 영향(실패 주문·영향 고객·피해 금액)을 계산하고, 사기 위험 점수와 KPI 요약을 돌려준다",
+  "url": "http://data:8106/a2a",
+  "version": "0.1.0",
+  "capabilities": {
+    "streaming": true,
+    "push_notifications": false
+  },
+  "skills": [
+    {
+      "id": "anomaly_detection",
+      "description": "업무 지표(결제 실패율, 주문 실패 건수, 주문 수, 문의량)를 5분 단위로 집계해 지난 7일 같은 시간대 기준선과 비교하고, 지표별 이상 여부·배수·심각도를 돌려준다. 숫자는 코드로 계산하고 원인은 판정하지 않는다. 상태를 바꾸지 않는다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/data.py#AnomalyDetectionInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/data.py#AnomalyDetectionOutput",
+      "grade": "read",
+      "allowed_requesters": ["orchestrator", "infra"],
+      "verifier": null,
+      "priority": "required"
+    },
+    {
+      "id": "impact_analysis",
+      "description": "장애 구간(시작·종료 시각)을 받아 실패 주문 수, 영향 고객 수와 고객 ID 목록, 피해 금액(정수 원), 카테고리별 분포를 계산해 돌려준다. 영향 원천 숫자의 유일한 출처다. 숫자는 shop-api 조회 결과로 코드가 계산한다. 상태를 바꾸지 않는다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/data.py#ImpactAnalysisInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/data.py#ImpactAnalysisOutput",
+      "grade": "read",
+      "allowed_requesters": ["orchestrator", "infra", "support", "finance", "planning"],
+      "verifier": null,
+      "priority": "required"
+    },
+    {
+      "id": "fraud_score",
+      "description": "신규 판매자 ID를 받아 사기 위험 점수(0~100)·등급과 규칙 근거, 유사 사기 카드를 돌려준다. 점수는 규칙 코드가 계산하며 승인·보류는 결정하지 않는다(재무/정산이 판단). 상태를 바꾸지 않는다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/data.py#FraudScoreInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/data.py#FraudScoreOutput",
+      "grade": "read",
+      "allowed_requesters": ["orchestrator", "finance"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "kpi_summary",
+      "description": "공통 로그 저장소를 읽어 사건별 MTTR, 자동 처리율, 등급별 처리·차단 건수, 이관 건수, 1차·2차 유사 사건 처리 시간 비교를 돌려준다. 숫자는 코드가 산출한다. 상태를 바꾸지 않는다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/data.py#KpiSummaryInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/data.py#KpiSummaryOutput",
+      "grade": "read",
+      "allowed_requesters": ["orchestrator", "dashboard-api"],
+      "verifier": null,
+      "priority": "recommended"
+    }
+  ]
 }
