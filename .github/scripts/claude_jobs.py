@@ -277,6 +277,13 @@ def patch_paths(patch: bytes) -> list[str]:
     return sorted(paths)
 
 
+def ruff_targets(team: team_mod.Team, dept: str, changes: list[tuple[str, str]]) -> list[str]:
+    """(status, path) 중 이번 패치에서 추가·수정된 부서 폴더 안 .py 파일."""
+    folder = team.depts[dept]["folder"].rstrip("/") + "/"
+    return sorted(p for st, p in changes
+                  if st[:1] in ("A", "M") and p.startswith(folder) and p.endswith(".py"))
+
+
 def request_marker(issue_no: int, to: str, text: str) -> str:
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
     return f"<!-- req:{issue_no}:{to}:{digest} -->"
@@ -380,7 +387,7 @@ def remove_label(issue_no: int, label: str) -> None:
 
 
 def comment(issue_no: int, body: str) -> None:
-    api(f"repos/{repo()}/issues/{issue_no}/comments", "-X", "POST", "-f", f"body={body}")
+    team_mod.post_comment(repo(), issue_no, body)
 
 
 def lock(issue_no: int) -> None:
@@ -548,6 +555,7 @@ def review_apply(team: team_mod.Team, pr_no: int, plan: dict, verdict_dir: Path)
     if has_hotfix(team, head):
         return "hotfix 상태가 있어 쓰지 않음"
     states: dict[str, str] = {}
+    verdicts: dict[str, tuple[str, dict]] = {}
     for r in plan["reviewers"]:
         d = r["dept"]
         f = verdict_dir / f"verdict-{d}" / "verdict.json"
@@ -566,15 +574,22 @@ def review_apply(team: team_mod.Team, pr_no: int, plan: dict, verdict_dir: Path)
         states[d] = state
         desc = "승인" if state == "success" else f"변경 요청 {len(v['blocking'])}건"
         set_status(head, f"agent-review/{d}", state, f"{r['name']}: {desc}")
-        marker = f"<!-- agent-review:{d}:{head} -->"
-        if not any(marker in b for b in bot_bodies(pr_no, team)):
-            comment(pr_no, review_comment(d, r["name"], v))
+        verdicts[d] = (r["name"], v)
     overall = aggregate(states)
     summary = ", ".join(f"{d}={s}" for d, s in states.items())
     if overall == "pending":
         set_status(head, "agent-review", "pending", f"재시도 필요 ({summary})")
     else:
         set_status(head, "agent-review", overall, summary)
+    # 코멘트는 상태 뒤에. 실패해도 상태는 이미 남아 있다
+    bodies = bot_bodies(pr_no, team)
+    for d, (name, v) in verdicts.items():
+        if f"<!-- agent-review:{d}:{head} -->" in "\n".join(bodies):
+            continue
+        try:
+            comment(pr_no, review_comment(d, name, v))
+        except subprocess.CalledProcessError:
+            print(f"::warning::agent-review/{d} 코멘트를 남기지 못함 (상태는 기록됨)")
     if overall == "failure":
         labels = [lb["name"] for lb in pr["labels"]]
         add_labels(pr_no, [review_round_label(labels)])
@@ -652,6 +667,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - 단계별 분기
     p.add_argument("--trusted", type=Path, required=True)
     p.add_argument("--out-dir", type=Path, required=True)
     p.add_argument("--file", type=Path, required=True)
+    p = sub.add_parser("ruff-targets")
+    p.add_argument("--dept", required=True)
+    p.add_argument("--base", required=True)
     p = sub.add_parser("automerge-check")
     p.add_argument("--pr", type=int, required=True)
     p = sub.add_parser("review-prep")
@@ -664,6 +682,12 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - 단계별 분기
     args = ap.parse_args(argv)
     team = team_mod.Team.load()
     try:
+        if args.cmd == "ruff-targets":
+            out = team_mod.git("diff", "--name-status", "-z", "--no-renames", f"{args.base}..HEAD")
+            parts = [x for x in out.split("\0") if x]
+            changes = list(zip(parts[0::2], parts[1::2], strict=False))
+            print("\n".join(ruff_targets(team, args.dept, changes)))
+            return 0
         if args.cmd == "automerge-check":
             try:
                 pr = api(f"repos/{repo()}/pulls/{args.pr}")

@@ -407,11 +407,32 @@ def count_claude_jobs(jobs: list[tuple[str, str | None]], depts: set[str]) -> in
 
 
 def gh_api(path: str, *extra: str):
-    out = subprocess.run(
-        ["gh", "api", path, *extra], check=True, capture_output=True, text=True,
-        encoding="utf-8",
-    ).stdout
+    try:
+        out = subprocess.run(
+            ["gh", "api", path, *extra], check=True, capture_output=True, text=True,
+            encoding="utf-8",
+        ).stdout
+    except subprocess.CalledProcessError as e:
+        # GitHub 에러 메시지만 남긴다 (요청 본문·토큰은 출력하지 않음)
+        method = next((extra[i + 1] for i, x in enumerate(extra[:-1]) if x == "-X"), "GET")
+        detail = (e.stderr or "").strip().replace("\n", " ")[:500]
+        print(f"::warning::gh api {method} {path} 실패: {detail}", file=sys.stderr)
+        raise
     return json.loads(out) if out.strip() else None
+
+
+def post_comment(repo: str, issue: int, body: str) -> None:
+    """잠긴 이슈·PR에는 봇도 코멘트를 못 쓴다 → 잠금 해제 → 코멘트 → 같은 이유로 다시 잠금."""
+    info = gh_api(f"repos/{repo}/issues/{issue}")
+    locked = bool(info and info.get("locked"))
+    reason = (info or {}).get("active_lock_reason") or "resolved"
+    if locked:
+        gh_api(f"repos/{repo}/issues/{issue}/lock", "-X", "DELETE")
+    try:
+        gh_api(f"repos/{repo}/issues/{issue}/comments", "-X", "POST", "-f", f"body={body}")
+    finally:
+        if locked:
+            gh_api(f"repos/{repo}/issues/{issue}/lock", "-X", "PUT", "-f", f"lock_reason={reason}")
 
 
 def todays_claude_jobs(day: str) -> list[tuple[str, str | None]]:
@@ -488,8 +509,7 @@ def requeue(repo: str, team: Team, issue: int, reason: str, pr: int | None = Non
     gh_api(f"repos/{repo}/issues/{issue}/labels", "-X", "POST",
            *[x for lb in add for x in ("-f", f"labels[]={lb}")])
     where = f" (PR #{pr} 닫음)" if pr else ""
-    gh_api(f"repos/{repo}/issues/{issue}/comments", "-X", "POST", "-f",
-           f"body={marker}\n재대기{where}: {reason}\n→ {', '.join(add)}")
+    post_comment(repo, issue, f"{marker}\n재대기{where}: {reason}\n→ {', '.join(add)}")
     return ",".join(add)
 
 
