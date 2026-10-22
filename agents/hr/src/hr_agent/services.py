@@ -82,6 +82,10 @@ def build_services(
         audit=AuditLog(store, clock),
         idem=IdempotencyStore(store, clock),
     )
+    if seed and settings.mock:
+        from hr_agent.roster.seed import seed_roster
+
+        seed_roster(store, clock)
     return services
 
 

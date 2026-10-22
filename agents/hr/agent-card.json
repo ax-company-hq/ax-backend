@@ -26,6 +26,25 @@
       ],
       "verifier": null,
       "priority": "required"
+    },
+    {
+      "id": "get_roster",
+      "description": "영역별 담당자·역할·교대 일정과, 담당이 없거나 교대 시각에 비는 공백 영역을 조회한다(조회 전용, 개인 인사 정보 없음).",
+      "input_schema": "contracts/src/ax_contracts/schemas/hr.py#GetRosterInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/hr.py#GetRosterOutput",
+      "grade": "read",
+      "allowed_requesters": [
+        "orchestrator",
+        "planning",
+        "support",
+        "marketing",
+        "finance",
+        "data",
+        "infra",
+        "dashboard-api"
+      ],
+      "verifier": null,
+      "priority": "required"
     }
   ]
 }

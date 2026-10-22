@@ -8,6 +8,9 @@ from __future__ import annotations
 from typing import Any
 
 from hr_agent.clients.memory import card_state
+from hr_agent.roster import store as roster
+from hr_agent.roster.gaps import compute_gaps
+from hr_agent.roster.service import roster_entries
 from hr_agent.services import Services
 
 
@@ -22,8 +25,15 @@ async def card_rows(svc: Services) -> list[dict[str, Any]]:
 
 async def snapshot(svc: Services) -> dict[str, Any]:
     holds = svc.gate.list_holds() if hasattr(svc.gate, "list_holds") else []
+    gaps = compute_gaps(svc.store, svc.clock())
     return {
         "clock": svc.clock().isoformat(),
+        "roster": [e.model_dump(mode="json") for e in roster_entries(svc)],
+        "roster_gaps": {
+            "no_owner": gaps.no_owner_areas,
+            "shift": [{"area": a, "at": t.isoformat()} for a, t in gaps.shift_gaps],
+        },
+        "areas": roster.list_areas(svc.store),
         "cards": await card_rows(svc),
         "records": svc.store.all(
             "SELECT record_id, context_id, kind, summary, source_refs FROM records ORDER BY rowid"

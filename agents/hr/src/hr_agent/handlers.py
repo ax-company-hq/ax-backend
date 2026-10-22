@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from ax_contracts.schemas import AgentRequest, AgentResult
 from hr_agent.cards import service as cards
+from hr_agent.roster import service as roster
 from hr_agent.services import get_services
 
 
@@ -16,4 +17,8 @@ async def record_case(request: AgentRequest) -> AgentResult:
     return await cards.record_case(get_services(), request)
 
 
-HANDLERS = {"record_case": record_case}
+async def get_roster(request: AgentRequest) -> AgentResult:
+    return await roster.get_roster(get_services(), request)
+
+
+HANDLERS = {"record_case": record_case, "get_roster": get_roster}
