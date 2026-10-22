@@ -5,6 +5,10 @@ from ax_contracts.schemas import (
     AnomalyDetectionInput,
     AnomalyDetectionOutput,
     CategoryImpact,
+    DiagnoseIncidentInput,
+    DiagnoseIncidentOutput,
+    FindRelatedPrsInput,
+    FindRelatedPrsOutput,
     FraudScoreInput,
     FraudScoreOutput,
     ImpactAnalysisInput,
@@ -12,13 +16,9 @@ from ax_contracts.schemas import (
     IncidentKpi,
     KpiSummaryInput,
     KpiSummaryOutput,
-    MetricVerdict,
-    DiagnoseIncidentInput,
-    DiagnoseIncidentOutput,
-    FindRelatedPrsInput,
-    FindRelatedPrsOutput,
     LinkIncidentInput,
     LinkIncidentOutput,
+    MetricVerdict,
     RelatedPr,
     RollbackDeploymentParams,
     SuspectDeployment,
@@ -121,7 +121,9 @@ def test_data_impact_analysis() -> None:
     with pytest.raises(ValidationError):  # 음수 금액
         ImpactAnalysisOutput.model_validate({**IMPACT, "damage_amount": -1})
     with pytest.raises(ValidationError):
-        CategoryImpact.model_validate({"category": "x", "failed_order_count": 1, "damage_amount": -5})
+        CategoryImpact.model_validate(
+            {"category": "x", "failed_order_count": 1, "damage_amount": -5}
+        )
     with pytest.raises(ValidationError):  # camelCase 거부
         ImpactAnalysisInput.model_validate({"windowFrom": T0, "window_to": T1})
     with pytest.raises(ValidationError):  # 모르는 필드 거부
