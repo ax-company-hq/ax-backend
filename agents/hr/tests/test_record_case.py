@@ -42,7 +42,16 @@ def test_agent_card_matches_template_format() -> None:
     assert card.name == "hr"
     skill = next(s for s in card.skills if s.id == "record_case")
     assert (skill.grade, skill.priority) == ("A", "required")
-    assert "orchestrator" in skill.allowed_requesters and "planning" in skill.allowed_requesters
+    # 요청자 목록은 정확히 이 일곱 곳이다(넓히거나 좁히면 이 테스트가 먼저 알려 준다)
+    assert skill.allowed_requesters == [
+        "orchestrator",
+        "planning",
+        "support",
+        "marketing",
+        "finance",
+        "data",
+        "infra",
+    ]
     served = TestClient(app).get("/.well-known/agent-card.json").json()
     assert served["name"] == "hr"
 
