@@ -8,6 +8,8 @@ v0은 skill `record_case` 하나이고, 핸들러는 카드를 만들지 않고 
 - 서버: `docker compose -f infra/compose.yml up hr`, 또는 `uv run uvicorn hr_agent.main:app --port 8104`
 - 목 모드: `HR_MOCK=1` (LLM·외부 호출 대신 가짜 응답. CI는 항상 1)
 - 단독 테스트: `uv run pytest agents/hr`
+- 눈으로 확인(localhost 데모, 개발 전용): `uv run --package ax-agent-hr python -m hr_agent.demo` → http://localhost:8114
+  (샘플 시나리오 `src/hr_agent/demo/scenarios/*.json`을 hr에 보내 결과 카드·결정성·권한 거부를 화면으로 본다. `HR_DEMO_PORT`로 포트 변경)
 - 요청 보내 보기: `uv run ax-test-call --agent http://localhost:8104 --skill record_case --input input.json`
   (목 모드에서는 `orchestrator`인 것처럼 보낸다. 요청자는 `--as planning`처럼 바꾼다)
 ## 3. 입출력 계약

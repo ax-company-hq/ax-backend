@@ -1,0 +1,13 @@
+{
+  "title": "PR 머지 기록 (planning)",
+  "description": "결정 이유가 없는 기록. 이런 기록은 카드를 만들더라도 확정하지 않고 기록만 남겨야 한다.",
+  "requester": "planning",
+  "expect": { "status": "completed" },
+  "input": {
+    "context_id": "ctx_req_0124",
+    "kind": "pr_merged",
+    "summary": "결제 재시도 로직 PR이 머지됐다.",
+    "source_refs": ["pr:412"],
+    "author": "planning"
+  }
+}
