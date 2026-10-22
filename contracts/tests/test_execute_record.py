@@ -136,10 +136,13 @@ def test_data_access_example() -> None:
                     "failed_at": "2026-10-22T05:30:00Z",
                     "reason": "payment_timeout",
                 }
-            ]
+            ],
+            "collected_at": "2026-10-22T06:00:00Z",
         }
     )
     assert result.orders[0].tenant_id == "shop-demo"
+    assert result.truncated is False
+    assert query.limit == 1000
 
 
 def test_id_prefixes() -> None:

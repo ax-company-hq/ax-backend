@@ -16,4 +16,5 @@
 
 | 파일 | 제공 | 사용 | 내용 |
 | --- | --- | --- | --- |
-| `shop_failed_orders.py` | shop-api (재헌) | data | 실패 주문 목록. 입력 `from`, `to`, `category` → 출력 `order_id`, `buyer_id`, `amount`, `category`, `failed_at`, `reason`, `tenant_id` (예시 스텁) |
+| `shop_failed_orders.py` | shop-api (재헌) | data | 실패 주문 목록. 입력 `from`, `to`, `category` → 출력 `order_id`, `buyer_id`, `amount`, `category`, `failed_at`, `reason`, `tenant_id` (예시 스텁). 입력에 `limit`(기본 1000), 출력에 `collected_at`·`truncated` 추가 |
+| `shop_metric_series.py` | shop-api (재헌) | data | 지표 시계열. 입력 `metric`(`order_count`·`payment_fail_rate`·`order_fail_count`), `from`, `to`, `bucket`(`1m`·`5m`·`15m`·`1h`, 기본 `5m`) → 출력 `points[{ts, value}]`(표본 없으면 `value=None`), `collected_at`, `truncated` |
