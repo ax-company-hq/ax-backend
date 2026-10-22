@@ -6,7 +6,7 @@
 필드를 추가하면 `version`은 그대로 두고, 삭제·이름 변경은 `version`을 올린다.
 
 대표 이벤트의 data 모델만 여기에 둔다. 나머지는 발행 담당이 PR로 추가한다
-(shop 이벤트는 재헌, safety 이벤트는 태윤).
+(safety 이벤트는 태윤). shop 이벤트 data 모델은 이슈 #11 요청으로 준하·태윤이 추가했다.
 """
 
 from __future__ import annotations
@@ -95,6 +95,88 @@ class PaymentFailedData(AxModel):
     order_id: str
     amount: int
     failure_code: str
+
+
+class OrderItem(AxModel):
+    """`order.created`의 주문 항목. 금액은 정수 원이다."""
+
+    product_id: str
+    seller_id: str
+    qty: int = Field(ge=1)
+    unit_price: int
+
+
+class OrderCreatedData(AxModel):
+    """`order.created`. `buyer_id`는 가명 ID다."""
+
+    order_id: str
+    buyer_id: str
+    items: list[OrderItem]
+    total_amount: int
+
+
+class OrderCancelledData(AxModel):
+    """`order.cancelled`."""
+
+    order_id: str
+    reason_code: Literal["buyer", "seller", "system"]
+    cancelled_amount: int
+
+
+class OrderDeliveredData(AxModel):
+    """`order.delivered`."""
+
+    order_id: str
+    delivered_at: UtcDatetime
+
+
+class PaymentSucceededData(AxModel):
+    """`payment.succeeded`."""
+
+    payment_id: str
+    order_id: str
+    amount: int
+    method_code: str
+
+
+class PaymentRefundedData(AxModel):
+    """`payment.refunded`."""
+
+    payment_id: str
+    order_id: str
+    refund_id: str
+    refund_amount: int
+
+
+class ShipmentDelayedData(AxModel):
+    """`shipment.delayed`. 배송 예정일은 이벤트가 아니라 `shop_get_order` 응답으로 준다."""
+
+    order_id: str
+    delay_minutes: int = Field(ge=0)
+
+
+class ReturnReceivedData(AxModel):
+    """`return.received`. 클레임 ID(`clm_`)는 이벤트에 넣지 않고 `return_id`(`ret_`)로 통일한다."""
+
+    return_id: str
+    order_id: str
+    received_at: UtcDatetime
+
+
+class SellerRegisteredData(AxModel):
+    """`seller.registered`. 판매자 소개 문장은 `untrusted`로 준다."""
+
+    seller_id: str
+    category_codes: list[str]
+
+
+class ProductCreatedData(AxModel):
+    """`product.created`. 상품명·설명은 `untrusted`로 준다."""
+
+    product_id: str
+    seller_id: str
+    category_code: str
+    price: int
 
 
 class MetricAnomalyData(AxModel):
@@ -186,6 +268,15 @@ EVENT_DATA_MODELS: dict[EventType, type[BaseModel]] = {
     EventType.SHOP_DEGRADED: ShopDegradedData,
     EventType.SHOP_RECOVERED: ShopDegradedData,
     EventType.PAYMENT_FAILED: PaymentFailedData,
+    EventType.PAYMENT_SUCCEEDED: PaymentSucceededData,
+    EventType.PAYMENT_REFUNDED: PaymentRefundedData,
+    EventType.ORDER_CREATED: OrderCreatedData,
+    EventType.ORDER_CANCELLED: OrderCancelledData,
+    EventType.ORDER_DELIVERED: OrderDeliveredData,
+    EventType.SHIPMENT_DELAYED: ShipmentDelayedData,
+    EventType.RETURN_RECEIVED: ReturnReceivedData,
+    EventType.SELLER_REGISTERED: SellerRegisteredData,
+    EventType.PRODUCT_CREATED: ProductCreatedData,
     EventType.METRIC_ANOMALY: MetricAnomalyData,
     EventType.INFRA_ANOMALY_DETECTED: InfraAnomalyData,
     EventType.INCIDENT_OPENED: IncidentData,

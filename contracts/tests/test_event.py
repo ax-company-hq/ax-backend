@@ -13,7 +13,16 @@ from ax_contracts.schemas import (
     InfraAnomalyData,
     MetricAnomalyData,
     NoticePublishedData,
+    OrderCancelledData,
+    OrderCreatedData,
+    OrderDeliveredData,
     PaymentFailedData,
+    PaymentRefundedData,
+    PaymentSucceededData,
+    ProductCreatedData,
+    ReturnReceivedData,
+    SellerRegisteredData,
+    ShipmentDelayedData,
     ShopDegradedData,
 )
 
@@ -174,3 +183,86 @@ def test_infra_anomaly_data_rejects_unknown_and_naive_time() -> None:
         InfraAnomalyData.model_validate({**base, "cause": "deploy"})  # 원인 판단 필드는 없다
     with pytest.raises(ValidationError):
         InfraAnomalyData.model_validate({**base, "detected_at": "2026-10-22T05:39:30"})
+
+
+SHOP_EVENT_SAMPLES: dict[EventType, dict] = {
+    EventType.ORDER_CREATED: {
+        "order_id": "ord_1",
+        "buyer_id": "buy_a1",
+        "items": [{"product_id": "prd_1", "seller_id": "sel_1", "qty": 2, "unit_price": 12000}],
+        "total_amount": 24000,
+    },
+    EventType.ORDER_CANCELLED: {
+        "order_id": "ord_1",
+        "reason_code": "buyer",
+        "cancelled_amount": 24000,
+    },
+    EventType.ORDER_DELIVERED: {"order_id": "ord_1", "delivered_at": "2026-10-22T05:00:00Z"},
+    EventType.PAYMENT_SUCCEEDED: {
+        "payment_id": "pay_1",
+        "order_id": "ord_1",
+        "amount": 24000,
+        "method_code": "card",
+    },
+    EventType.PAYMENT_REFUNDED: {
+        "payment_id": "pay_1",
+        "order_id": "ord_1",
+        "refund_id": "rfd_1",
+        "refund_amount": 24000,
+    },
+    EventType.SHIPMENT_DELAYED: {"order_id": "ord_1", "delay_minutes": 1440},
+    EventType.RETURN_RECEIVED: {
+        "return_id": "ret_1",
+        "order_id": "ord_1",
+        "received_at": "2026-10-22T05:00:00Z",
+    },
+    EventType.SELLER_REGISTERED: {"seller_id": "sel_1", "category_codes": ["book", "stationery"]},
+    EventType.PRODUCT_CREATED: {
+        "product_id": "prd_1",
+        "seller_id": "sel_1",
+        "category_code": "book",
+        "price": 12000,
+    },
+}
+
+
+@pytest.mark.parametrize("event_type", list(SHOP_EVENT_SAMPLES))
+def test_shop_event_data_models_accept_samples(event_type: EventType) -> None:
+    model = EVENT_DATA_MODELS[event_type]
+    data = SHOP_EVENT_SAMPLES[event_type]
+    assert model.model_validate(data).model_dump(mode="json", exclude_none=True)
+    with pytest.raises(ValidationError):
+        model.model_validate({**data, "unknown_field": 1})  # 모르는 필드는 거부
+
+
+def test_shop_event_models_are_the_expected_classes() -> None:
+    assert EVENT_DATA_MODELS[EventType.ORDER_CREATED] is OrderCreatedData
+    assert EVENT_DATA_MODELS[EventType.ORDER_CANCELLED] is OrderCancelledData
+    assert EVENT_DATA_MODELS[EventType.ORDER_DELIVERED] is OrderDeliveredData
+    assert EVENT_DATA_MODELS[EventType.PAYMENT_SUCCEEDED] is PaymentSucceededData
+    assert EVENT_DATA_MODELS[EventType.PAYMENT_REFUNDED] is PaymentRefundedData
+    assert EVENT_DATA_MODELS[EventType.SHIPMENT_DELAYED] is ShipmentDelayedData
+    assert EVENT_DATA_MODELS[EventType.RETURN_RECEIVED] is ReturnReceivedData
+    assert EVENT_DATA_MODELS[EventType.SELLER_REGISTERED] is SellerRegisteredData
+    assert EVENT_DATA_MODELS[EventType.PRODUCT_CREATED] is ProductCreatedData
+
+
+def test_shop_event_models_reject_bad_values() -> None:
+    cancelled = SHOP_EVENT_SAMPLES[EventType.ORDER_CANCELLED]
+    with pytest.raises(ValidationError):
+        OrderCancelledData.model_validate({**cancelled, "reason_code": "customer"})
+    created = SHOP_EVENT_SAMPLES[EventType.ORDER_CREATED]
+    with pytest.raises(ValidationError):
+        OrderCreatedData.model_validate({**created, "total_amount": 100.5})  # 금액은 정수 원
+    with pytest.raises(ValidationError):
+        OrderCreatedData.model_validate({**created, "items": [{**created["items"][0], "qty": 0}]})
+    with pytest.raises(ValidationError):
+        ShipmentDelayedData.model_validate({"order_id": "ord_1", "delay_minutes": -1})
+    with pytest.raises(ValidationError):  # 시간대 없는 시각은 거부
+        OrderDeliveredData.model_validate(
+            {"order_id": "ord_1", "delivered_at": "2026-10-22T05:00:00"}
+        )
+    with pytest.raises(ValidationError):  # claim_id는 이벤트에 넣지 않는다
+        ReturnReceivedData.model_validate(
+            {**SHOP_EVENT_SAMPLES[EventType.RETURN_RECEIVED], "claim_id": "clm_1"}
+        )
