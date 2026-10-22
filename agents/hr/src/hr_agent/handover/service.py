@@ -30,6 +30,7 @@ from hr_agent.clients.memory import card_state
 from hr_agent.clients.safety import VerifyOutcome
 from hr_agent.handover import store as hstore
 from hr_agent.handover.fields import FIELD_LABEL, FIELDS, question_id
+from hr_agent.narrative import Sentence
 from hr_agent.results import (
     completed,
     failed,
@@ -61,13 +62,13 @@ async def _area_cards(svc: Services, area: str) -> list[HandoverItem]:
     return out
 
 
-async def _question_text(svc: Services, field: str, area: str) -> str:
+async def _question_text(svc: Services, field: str, area: str) -> Sentence:
     label = FIELD_LABEL[field]
     template = f"{area} 영역의 '{label}'이(가) 비어 있어요. 후임이 알아야 할 내용을 알려 주세요."
     sentence = await svc.narrator.sentence(
         "인계자에게 빈 항목을 채워 달라고 묻는 질문", {"area": area, "field": label}, template
     )
-    return sentence.text
+    return sentence
 
 
 def _output(svc: Services, handover_id: str) -> StartHandoverOutput:
@@ -85,13 +86,18 @@ def _output(svc: Services, handover_id: str) -> StartHandoverOutput:
 
 
 def _result_for(
-    svc: Services, request: AgentRequest, handover_id: str, summary: str, refs: list[str]
+    svc: Services,
+    request: AgentRequest,
+    handover_id: str,
+    summary: str,
+    refs: list[str],
+    fallback: bool = False,
 ) -> AgentResult:
     output = _output(svc, handover_id)
     evidence = make_evidence(svc.clock, summary, refs)
     if output.gap_count:
-        return input_required(request, output, evidence=evidence)
-    return completed(request, output, outcome="ready", evidence=evidence)
+        return input_required(request, output, evidence=evidence, fallback=fallback)
+    return completed(request, output, outcome="ready", evidence=evidence, fallback=fallback)
 
 
 async def start_handover(svc: Services, request: AgentRequest) -> AgentResult:
@@ -151,6 +157,13 @@ async def start_handover(svc: Services, request: AgentRequest) -> AgentResult:
         return gate_blocked(request, decision)
 
     now = svc.clock().isoformat()
+    # 질문 문장은 DB 트랜잭션 밖에서 만든다(LLM 호출이 느려도 잠금을 오래 잡지 않는다)
+    texts: dict[str, Sentence] = {
+        field: await _question_text(svc, field, area)
+        for field, _label in FIELDS
+        if not auto.get(field, False)
+    }
+    fallback = any(t.fallback for t in texts.values())
     with svc.store.transaction():
         svc.store.execute(
             "INSERT INTO handovers(handover_id, context_id, owner_id, successor_id, area, reason,"
@@ -191,7 +204,7 @@ async def start_handover(svc: Services, request: AgentRequest) -> AgentResult:
                         handover_id,
                         request.meta.context_id,
                         owner,
-                        await _question_text(svc, field, area),
+                        texts[field].text,
                         field,
                         now,
                     ),
@@ -202,7 +215,7 @@ async def start_handover(svc: Services, request: AgentRequest) -> AgentResult:
         "start_handover",
         {"id": handover_id, "completeness": pct, "status": status},
     )
-    return _result_for(svc, request, handover_id, summary, refs)
+    return _result_for(svc, request, handover_id, summary, refs, fallback)
 
 
 async def answer_handover_question(svc: Services, request: AgentRequest) -> AgentResult:
