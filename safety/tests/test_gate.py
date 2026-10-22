@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -14,7 +15,7 @@ from ax_safety.rules import ActionSpec, load_registry, load_thresholds
 def test_rule_files_load_and_match_agreed_values() -> None:
     registry, table = load_registry(), load_thresholds()
     assert table.version == 1
-    assert table.review_timeout_seconds == 600  # 데모 10분 자동 거절
+    assert table.review_timeout_seconds == 24 * 3600  # 사람 확인 기한 24시간
     values = {rule.key: rule.value for rule in table.rules if rule.metric != "param"}
     values.pop("pr_allowed_paths")
     assert values == {
@@ -229,7 +230,7 @@ async def test_review_approval_turns_replay_into_executed(gate: Gate, sent: Any,
 @pytest.mark.asyncio
 async def test_review_auto_rejects_after_timeout(gate: Gate, clock: Any, sent: Any, coupon) -> None:
     held = await gate.execute(coupon(20, 20_000, purpose_code="campaign", key="slow"))
-    clock.advance(599)
+    clock.advance(24 * 3600 - 1)
     assert await gate.expire_reviews() == []
     clock.advance(1)
     expired = await gate.expire_reviews()
@@ -356,3 +357,59 @@ async def test_seller_review_risk_score(gate: Gate, verifier: Any, act) -> None:
         act("seller_review", "finance", "sel-2", seller_id="sel_2", risk_score=70)
     )
     assert (high.grade, high.status) == ("C", "held")
+
+
+@pytest.mark.asyncio
+async def test_review_is_still_pending_after_ten_minutes(gate: Gate, clock: Any, coupon) -> None:
+    """기한이 24시간이라 10분·12시간 뒤에는 아직 사람 결정을 기다린다."""
+    held = await gate.execute(coupon(20, 20_000, purpose_code="campaign", key="wait"))
+    review = gate.store.get_review(held.review_id or "")
+    assert review is not None
+    assert review.expires_at - review.created_at == timedelta(hours=24)
+    for seconds in (600, 12 * 3600):
+        clock.now = review.created_at + timedelta(seconds=seconds)
+        assert await gate.expire_reviews() == []
+    assert gate.store.get_review(held.review_id or "").status == "pending"  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_decision_after_expiry_is_refused(gate: Gate, clock: Any, coupon) -> None:
+    held = await gate.execute(coupon(20, 20_000, purpose_code="campaign", key="late"))
+    clock.advance(24 * 3600)
+    with pytest.raises(ValueError, match="expired"):
+        await gate.decide_review(held.review_id or "", "approved", "태윤", None)
+
+
+@pytest.mark.asyncio
+async def test_slow_verifier_times_out(gate: Gate, monkeypatch: pytest.MonkeyPatch, coupon) -> None:
+    """검증자가 마감(기준표 verify_timeout_seconds)보다 늦으면 실행하지 않고 보류한다."""
+    import asyncio
+
+    async def slow(task: Any) -> Any:
+        await asyncio.sleep(1)
+
+    gate._verifier = slow
+    gate.thresholds = gate.thresholds.model_copy(update={"verify_timeout_seconds": 0.05})
+    decision = await gate.execute(coupon(key="slow-verify"))
+    assert (decision.status, decision.hold_reason) == ("held", HoldReason.VERIFY_TIMEOUT)
+    assert gate.store.executed_total("shop-demo", "issue_coupon") == 0
+
+
+@pytest.mark.asyncio
+async def test_rejected_and_held_amounts_do_not_count_toward_limits(
+    gate: Gate, verifier: Any, coupon
+) -> None:
+    """누적 한도는 실제로 실행된 금액만 센다. 거절·보류된 금액은 쪼개기 계산에 넣지 않는다."""
+    verifier.result = "rejected"
+    for i in range(4):
+        await gate.execute(coupon(25, 10_000, purpose_code="campaign", key=f"rej-{i}"))
+    verifier.result = "approved"
+    decision = await gate.execute(coupon(25, 10_000, purpose_code="campaign", key="after"))
+    assert decision.status == "executed"
+
+
+@pytest.mark.asyncio
+async def test_same_key_different_tenant_is_separate(gate: Gate, coupon) -> None:
+    a = await gate.execute(coupon(key="shared-key"))
+    b = await gate.execute(coupon(key="shared-key").model_copy(update={"tenant_id": "other-shop"}))
+    assert a.execution_id != b.execution_id
