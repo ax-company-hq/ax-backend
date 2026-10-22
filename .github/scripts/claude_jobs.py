@@ -506,7 +506,8 @@ def has_hotfix(team: team_mod.Team, sha: str) -> bool:
 
 def review_prep(team: team_mod.Team, pr_no: int) -> dict:
     """리뷰 대상이면 {head_sha, reviewers:[{dept, token_secret, model_var, name}]}."""
-    pr = api(f"repos/{repo()}/pulls/{pr_no}")
+    # PR 이벤트면 페이로드, 수동 실행(workflow_dispatch)만 API
+    pr = team_mod.event_pull_request(pr_no) or api(f"repos/{repo()}/pulls/{pr_no}")
     head = pr["head"]["sha"]
     if pr["state"] != "open" or pr["base"]["ref"] != "dev":
         return {"skip": "대상 아님"}
@@ -548,6 +549,9 @@ def review_prep(team: team_mod.Team, pr_no: int) -> dict:
 
 
 def review_apply(team: team_mod.Team, pr_no: int, plan: dict, verdict_dir: Path) -> str:
+    # API 유지: 리뷰가 도는 몇 분 사이에 새 커밋이 올라왔을 수 있다. 페이로드의 head는
+    # 이벤트 시점 값이라, 지금 head와 같은지(오래된 결과를 새 head에 쓰지 않는지)
+    # 확인하려면 최신 값이 필요하다
     pr = api(f"repos/{repo()}/pulls/{pr_no}")
     head = plan["head_sha"]
     if pr["head"]["sha"] != head:
@@ -690,8 +694,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - 단계별 분기
             return 0
         if args.cmd == "automerge-check":
             try:
-                pr = api(f"repos/{repo()}/pulls/{args.pr}")
-                pr["_repo"] = repo()
+                pr = team_mod.event_pull_request(args.pr) or api(f"repos/{repo()}/pulls/{args.pr}")
+                pr = {**pr, "_repo": repo()}
             except subprocess.CalledProcessError:
                 pr = None
             ok, reason = (False, "PR을 읽지 못함") if pr is None else automerge_decision(

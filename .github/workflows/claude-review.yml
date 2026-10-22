@@ -139,8 +139,15 @@ jobs:
           GIT_LFS_SKIP_SMUDGE=1 git -c filter.lfs.process= -c filter.lfs.smudge= -c filter.lfs.required=false             worktree add -q _pr refs/ax/pr
           mkdir -p "$RUNNER_TEMP/ax-in" "$RUNNER_TEMP/ax-out"
           git diff "$BASE_SHA" refs/ax/pr > "$RUNNER_TEMP/ax-in/pr.diff"
-          gh api "repos/$REPO/pulls/$PR" --jq '{title, body, author: .user.login, branch: .head.ref}' \
-            > "$RUNNER_TEMP/ax-in/pr.json"
+          # PR 이벤트면 페이로드 파일에서 읽는다 (API 호출 없음, 값은 셸에 넣지 않고 jq가 파일로만 옮긴다).
+          # 수동 실행(workflow_dispatch)에는 PR 페이로드가 없어 API로 읽는다
+          if [ "$GITHUB_EVENT_NAME" = "pull_request_target" ]; then
+            jq '.pull_request | {title, body, author: .user.login, branch: .head.ref}' "$GITHUB_EVENT_PATH" \
+              > "$RUNNER_TEMP/ax-in/pr.json"
+          else
+            gh api "repos/$REPO/pulls/$PR" --jq '{title, body, author: .user.login, branch: .head.ref}' \
+              > "$RUNNER_TEMP/ax-in/pr.json"
+          fi
           jq -n --arg d "$DEPT" --arg h "$HEAD_SHA" --arg p "$PR" \
             '{reviewer_dept: $d, head_sha: $h, pr: ($p | tonumber)}' > "$RUNNER_TEMP/ax-in/meta.json"
       - uses: actions/setup-python@v5
