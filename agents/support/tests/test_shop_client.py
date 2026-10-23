@@ -100,6 +100,7 @@ def shop() -> FakeShop:
 @pytest.fixture(autouse=True)
 def _fresh(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setenv("AGENT_TEMPLATE_MOCK", "1")
+    monkeypatch.delenv("SUPPORT_MOCK", raising=False)
     monkeypatch.delenv("SUPPORT_ORDER_SOURCE", raising=False)
     monkeypatch.setattr(handlers, "STORE", InquiryStore())
     monkeypatch.setattr(claim_handlers, "CLAIMS", ClaimStore())
@@ -190,6 +191,7 @@ def test_order_source_defaults_to_seed_in_mock_mode(monkeypatch: pytest.MonkeyPa
     assert shop_client.order_source() == "shop-api"
     monkeypatch.setenv("SUPPORT_ORDER_SOURCE", "seed")
     monkeypatch.delenv("AGENT_TEMPLATE_MOCK")
+    monkeypatch.delenv("SUPPORT_MOCK", raising=False)
     assert shop_client.order_source() == "seed"
     monkeypatch.delenv("SUPPORT_ORDER_SOURCE")
     assert shop_client.order_source() == "shop-api"  # 목 모드가 아니면 shop-api
