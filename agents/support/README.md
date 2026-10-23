@@ -44,10 +44,18 @@
 - 알려진 한계: 일반전화(지역번호), "계좌" 단서 없는 계좌번호, 이름·주소 같은 개인정보는 가리지 않는다. 규칙 기반이라 새 표현은 놓칠 수 있어, 막아야 할 문장과 통과해야 할 문장을 `tests/test_guard.py`에 함께 두고 규칙을 바꿀 때 양쪽을 본다.
 - 고객 원문(제목·본문)은 프롬프트의 데이터 블록에만 들어가고(닫는 태그를 넣어도 탈출하지 못함), 접수만으로는 쿠폰·환불 같은 상태 변경이 실행되지 않는다 (`tests/test_injection.py`).
 
+## 문의와 기획개발 변경 요청의 연결 (`change_requests.py`)
+고객지원이 기획개발에 변경을 요청하면(직통, 통합 에이전트를 거치지 않음) 기획개발이 변경 요청 사건 `ctx_req_…`를 **발급**한다 (`ContextPrefix.REQUEST`). 처리 결과를 받았을 때 어느 문의에 답할지 알려면 문의와 이 사건을 이어 둬야 해서 연결 저장소를 먼저 만들어 뒀다 (`handlers.CHANGES`). **요청을 보내는 skill과 결과를 받는 skill은 아직 없다** — 기획개발 접수 skill과 결과 통지 형식 계약이 정해진 뒤에 붙인다.
+- 한 문의에 변경 요청이 여러 건일 수 있고, 한 변경 요청(`ctx_req_…`)은 문의 하나에만 묶인다 (다른 문의에 다시 이으면 충돌).
+- 상태: `requested`(결과 대기) → `completed` 또는 `declined`. 같은 결과를 다시 받으면 재전송으로 보고 그대로 두며, 이미 끝난 요청에 다른 결과가 오면 충돌이다. 상태 이름은 계약에 맞춰 `CHANGE_STATUSES` 한 곳에서 바꾼다.
+- 처리가 끝난(`completed`) 요청에는 고객 공지가 필요했을 때 마케팅 `notice_id`를 한 번 붙일 수 있다 (공지 조회 후 답변은 이미 `notice_id` 입력으로 동작한다).
+- 결과 통지는 기획개발이 **`path`를 비운 새 요청**으로 보내야 한다. 원래 요청의 `meta`를 재사용하면 `path`에 support가 남아 `LOOP_DETECTED`로 거부된다.
+- `DB`가 있으면 `change_requests` 테이블에 저장되어 재시작해도 이어진다.
+
 ## 영속 저장소 (PostgreSQL)
 `SUPPORT_PG_DSN`을 설정하면 문의·클레임·멱등 결과·보상 번호가 DB에 저장되어 재시작해도 이어진다. 비우면(CI·목 모드) 예전처럼 메모리만 쓴다. compose는 `support-db`(postgres:16, 호스트 포트 없음)를 함께 띄우고 DSN을 서비스 이름으로 덮어쓴다 (비밀번호 `SUPPORT_DB_PASSWORD`).
 - 메모리 저장소(`InquiryStore`, `ClaimStore`, `SequenceLedger`)를 상속한 영속 저장소가 읽기는 메모리 캐시, 쓰기는 같은 호출 안에서 DB에 반영한다. 시작할 때 DB에서 모두 읽어 와 ID 번호(문의·메시지·클레임)와 보상 `sequence`도 이어 간다.
-- 테이블(모두 `tenant_id`·`context_id` 포함, 본문은 `doc` jsonb): `inquiries`, `inquiry_results`(멱등 결과), `draft_events`(초안 채택·수정·거절 기록), `claims`, `compensation_sequences`, `compensation_results`. 스키마는 시작할 때 `CREATE TABLE IF NOT EXISTS`로 만든다 (별도 마이그레이션 도구 없음).
+- 테이블(모두 `tenant_id`·`context_id` 포함, 본문은 `doc` jsonb): `inquiries`, `inquiry_results`(멱등 결과), `draft_events`(초안 채택·수정·거절 기록), `claims`, `change_requests`(문의·변경 요청 연결), `compensation_sequences`, `compensation_results`. 스키마는 시작할 때 `CREATE TABLE IF NOT EXISTS`로 만든다 (별도 마이그레이션 도구 없음).
 - 보상 `sequence`를 저장하는 이유: 재시작하면 번호가 1로 돌아가 마케팅이 `SEQUENCE_GAP`으로 거절하고 이후가 계속 막힌다.
 - 한계: 단일 인스턴스를 가정한다 (여러 프로세스가 같은 DB를 쓰면 캐시가 어긋난다). 쓰기 실패는 예외로 올린다 — 안전 레이어가 이미 허가한 뒤라면 같은 `idempotency_key`로 다시 요청해야 하고, 메모리에는 이미 반영돼 있을 수 있다. 연결이 끊기면 한 번 다시 연결해 재시도한다.
 - 테스트: DB 없이 도는 테스트(메모리 구현으로 "저장 → 재시작 → 이어짐")와, `SUPPORT_PG_DSN`이 있을 때만 도는 PostgreSQL 테스트가 `tests/test_persistence.py`에 있다.
