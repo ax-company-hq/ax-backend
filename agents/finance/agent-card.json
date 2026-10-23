@@ -60,8 +60,8 @@
     {
       "id": "review_hold",
       "description": "안전 레이어의 사람 확인(C) 건을 먼저 판단해 approve/reject/escalate와 쉬운 설명을 돌려준다. 재량 한도(ai_review_policy.toml)와 원천 데이터(피해 고객, 결제 금액, 위험 점수)로만 판단하고, 큰 금액이나 자료가 없으면 escalate로 사람에게 넘긴다. 상태를 바꾸지 않는다.",
-      "input_schema": "agents/finance/src/finance_agent/schemas.py#ReviewHoldInput",
-      "output_schema": "agents/finance/src/finance_agent/schemas.py#ReviewHoldOutput",
+      "input_schema": "contracts/src/ax_contracts/schemas/finance.py#ReviewHoldInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/finance.py#ReviewHoldOutput",
       "grade": "read",
       "allowed_requesters": [
         "safety"

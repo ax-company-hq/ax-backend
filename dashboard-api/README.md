@@ -66,7 +66,7 @@ support 출력은 `claim_mapping.py`에서 화면 모델로 바꾼다 (값을 �
 - 검수 값: 화면 `ok`·`mismatch`·`pending` ↔ support `pass`·`fail`·`partial`·없음 (`mismatch` 요청은 `fail`로 보낸다, 모르는 값은 422).
 - 규칙·공제 코드와 감사 액션 이름은 화면 라벨 표(`RULE_KO`, `AUDIT_KO`)의 키에 맞춘다 (대응이 없는 코드는 그대로 둔다).
 - 거절된 클레임은 환불 예정액·적립금을 0으로 보낸다.
-- support 클레임의 `order_id`·`order_item_id`·`buyer_id`는 문자열이다. 화면 모델은 주문·품목 ID를 숫자 또는 문자열로 받고, `user_id`는 `buyer_id`가 `usr_<숫자>`일 때만 그 숫자로 채운다(아니면 비움).
+- support 클레임의 `order_id`·`order_item_id`·`buyer_id`는 문자열이다. 화면 모델은 주문·품목 ID를 숫자 또는 문자열로 받고, `user_id`는 `buyer_id`가 `buy_<4자리>`일 때만 그 숫자로 채운다(아니면 비움, `claim_mapping.buyer_id_for`가 반대 방향: 1 → `buy_0001`).
 - 비어 있는 값: `description`(고객 원문은 저장하지 않는다), `tracking`, `compensation`(보상 쿠폰은 `request_compensation`), `hold_reason`.
 - 지급 연동이 막힌 항목(재무 검증 중·보류·거부)은 `process` 결과에서 `held`와 `ON_HOLD` 이유로 보인다. 같은 큐를 다시 처리해도 지급 요청(`refund_request`)의 키는 support가 클레임을 접수한 사건 기준으로 고정하므로(`<claim.context_id>:refund_request:claim:<id>`), 검증 중인 건이나 승인된 보류 건을 다시 처리하면 같은 판정이 이어지고 중복 지급되지 않는다. dashboard-api 호출마다 새 `ctx_ui_`를 붙여도 상관없다.
 - 감사 기록의 `agent_override`(상담원 승인) 라벨은 화면 표기에 맞춘 이름이다. `claim_stats.agent_overrides`는 자동 판정을 뒤집는 경우만 세는데 지금은 자동 판정을 바꿀 수 없어 항상 0이다.

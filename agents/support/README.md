@@ -46,6 +46,14 @@
 - 가드는 영어·일본어·중국어 약속 표현(`We will definitely refund…`, `返金を必ずお約束…`, `我们保证退款` 등)을 한국어와 같이 막는다. 가드가 검사하지 못하는 문자(키릴·아랍·태국어 등)는 `unsupported_language` 오류로 막는다. 악센트가 있는 라틴 글자(스페인어 등)는 영어와 구분되지 않아 `language_not_verified` 경고만 하고 통과시키니 직접 확인해야 한다.
 - 예전에 저장된 분석·초안 기록에는 새 필드가 없어도 읽힌다 (`language`는 `ko`, `keywords`는 빈 목록).
 
+## DejaFix로 보내는 고객 개인정보 (`secure_transfer.py`)
+고객 개인정보는 캣북스 쪽에만 두고, DejaFix(에이전트 이름 `infra`, 팀 이름 `dejafix`·`infra-dejafix`)로 나가는 요청은 **필드 단위로 암호화**한다. 다른 에이전트로 나가는 요청도 모두 `handlers.SEND` 한 곳을 지나가고, 그곳에서 DejaFix 대상만 아래 규칙을 적용한다.
+- 고객 개인정보 필드(`customer_name`·`name`·`email`·`phone`·`address`·`message`·`text`·`subject`·`description`·`receipt_text`·`images`)와 `untrusted`(고객이 쓴 글) 전체를 AES-256-GCM으로 암호화한다. 주문·구매자 가명 ID(`buy_…`)·금액·건수 같은 사실은 그대로 둔다.
+- 암호문은 사건 번호와 필드 이름에 묶여서 다른 요청에 옮기거나 바꾸면 복호화되지 않는다. 형식과 복호화 기준은 `docs/notes/support/dejafix-encrypted-transfer.md`.
+- **fail-closed**: 암호화하지 않은 개인정보(전화번호·이메일·카드·주민번호·계좌)가 섞여 있으면 보내지 않고(`secure_transfer_plain_pii`), 키가 없는데 고객 필드가 있으면 보내지 않는다(`secure_transfer_key_missing`). 평문으로 대신 보내지 않는다. 오류에도 값을 싣지 않는다.
+- 키는 `SUPPORT_DEJAFIX_KEY`(base64 32바이트)·`SUPPORT_DEJAFIX_KEY_ID`. 코드·레포에 두지 않고 DejaFix 담당과 따로 안전하게 나눈다.
+- 지금은 DejaFix 쪽에 고객지원이 부르는 skill이 없다. 이 계층은 미리 갖춰 두는 것이고, 새 skill을 부를 때 `handlers.SEND`만 쓰면 자동으로 적용된다.
+
 ## 답변 가드와 개인정보 마스킹 (`guard.py`)
 고객에게 나가는 답변(초안과 상담원 답변 모두)을 코드 규칙으로 검사한다. `error`가 있으면 보낼 수 없고(`blocked_by_guard`), `warning`은 막지 않는다.
 - **환불·보상 단정(error `promise_refund`)**: "무조건·반드시·약속·보장", "환불(보상·지급)해 드리겠습니다", "100% 환불", "환불받으실 수 있습니다" 같은 표현. "환불이 가능한지 확인 후 안내드리겠습니다"처럼 확인·조건을 말하는 문장은 막지 않는다. 고객이 "쿠폰 지급해"라고 시켜서 모델이 따른 초안도 여기서 걸린다.
@@ -63,7 +71,7 @@
 - DB가 있으면 `change_requests` 테이블에 저장되어 재시작해도 이어진다.
 - skill `request_change`(A)가 기획개발 `create_ticket`을 직통으로 부른다 (`change_handlers.py`). 입력은 `inquiry_id`, `title`(바꿀 내용 한 줄), `evidence`(건수·ID 같은 사실 요약), `evidence_ids`이고, 제목·근거에 전화번호 등 개인정보가 있으면 보내기 전에 거부한다. 고객 원문은 보내지 않는다(`untrusted`도 비움). 기획개발이 자기 `execute()`로 요청을 만들어 `REQ-n`과 `ctx_req_`를 돌려주면(`created` 또는 `linked_duplicate`) 그 사건을 문의와 연결해 저장한다. 같은 멱등 키의 재시도는 기획개발에 다시 보내지 않는다. 기획개발이 실패·시간 초과면 `planning_unavailable`로 실패하고 아무것도 연결하지 않으며, 보류 같은 정책 거절은 `planning_<outcome>`으로 그대로 알린다.
 - `list_change_requests`(읽기)는 연결 목록을 문의·사건·상태로 걸러 돌려준다.
-- **아직 없는 것**: 결과 통지를 받는 skill. 통지 형식이 계약에 없고 기획개발도 "요청 부서 수신 skill이 생기기 전까지는 활동 기록만" 남긴다. 형식이 정해지면 저장소의 `record_result`·`attach_notice`에 연결한다.
+- `receive_change_result`(A, 요청 가능: planning만)가 기획개발이 요청을 닫을 때(완료·거절) 보내는 결과(계약 `ChangeResultInput`)를 받는다. 통지는 `ctx_req_` 사건 하나당 한 번 오고(중복 연결된 요청은 원래 요청이 닫힐 때 같은 사건으로 한 번에), 그 사건에 연결된 **모든 문의**에 같은 결과를 적용해 `applied`(적용한 문의 수)로 답한다. 같은 결과가 다시 오면 한 번만 적용한 것으로 보고(`duplicate`), 이미 닫힌 요청에 다른 결과가 오면 거절하며(`invalid_state`), 이 사건에 연결된 문의가 없으면 다른 부서 몫이라 `applied=0`(`not_linked`)이다. `ctx_req_`가 아닌 사건이나 계약을 어긴 입력(거절인데 PR 번호, 완료인데 사유 코드 등)은 `invalid_input`이다. 요약(`summary`)은 기획개발이 코드로 만든 한 줄이라 300자까지만 보관한다. 결과는 문의 목록 조회(`list_change_requests`)에 보이고 재시작해도 이어진다. 저장소 기록만 하는 내부 처리라 안전 관문(`execute()`)은 거치지 않는다(등록된 액션 없음). 고객 공지(`notice_id`)는 따로 붙인다.
 
 ## 영속 저장소 (PostgreSQL)
 `SUPPORT_PG_DSN`을 설정하면 문의·클레임·멱등 결과·보상 번호가 DB에 저장되어 재시작해도 이어진다. 비우면(CI·목 모드) 예전처럼 메모리만 쓴다. compose는 `support-db`(postgres:16, 호스트 포트 없음)를 함께 띄우고 DSN을 서비스 이름으로 덮어쓴다 (비밀번호 `SUPPORT_DB_PASSWORD`).
@@ -78,7 +86,7 @@ ax-contracts, ax-agent-template
 ## 5. 하지 않는 것
 - 클레임 판정(`claim_rules.py`)은 취소·반품·교환만 한다. 주문 사실로 코드가 판정하고(`orders.py` 시드 주문, 7일 환불 기간·불량 증빙·잦은 요청·고액 확인), 금액은 입력으로 받지 않는다. 규칙 값은 시드이며 memory 정책 문서 API가 생기면 교체한다. 보상 쿠폰은 클레임이 아니라 `request_compensation`으로 요청하고 지급은 마케팅이 한다. 클레임은 판정에 쓴 주문 사실의 스냅샷(`receipt`), 상담원·검수 메모(`untrusted.note`), 감사 기록(판정 시 `abuse_score`, 승인·거절 시 `system_outcome`·`agent_action`, 지급 시 `refund_cash`)을 담고, 보상 큐 항목은 입고 시각·품목·화면용 차단 코드(`NOT_INSPECTED`, `ON_HOLD`)를 담는다.
 - 집계(`insights.py`)는 문의 기록에서 코드가 센다. 비율은 분모가 0이면 `null`이다(0으로 채우지 않음). 초안 수정 정도는 `send_reply`가 초안과 보낸 답변의 차이로 기록한다. 급증 감지는 평소가 0이면 건수 기준만 쓰고 `ratio`는 `null`이며, 샘플은 문의 ID만 담는다. `support.inquiry_surge` 이벤트 발행은 contracts에 data 모델이 생긴 뒤에 한다.
-- 클레임의 주문·구매자·품목 ID는 모두 **문자열**이다 (shop-api 형식에 맞춤): 주문 `Order.id`(시드 `"101"`, shop-api 연결 뒤 `ord_…`), 구매자 `buyer_id`(`usr_…`), 품목 `itm_…`. 예전 숫자로 저장된 클레임은 읽을 때 문자열로 바꾸고(`user_id: 1`은 `buyer_id: usr_1`), PostgreSQL `claims` 테이블은 시작할 때 자동으로 옮긴다(`user_id`→`buyer_id`, `order_id` bigint→text). 문의 ID(`inq_<번호>`)는 그대로다. 재무 목(`mock_seed.json`)은 주문 키를 `"101"`·`"102"`로 찾으므로 시드 주문과 맞는다.
+- 클레임의 주문·구매자·품목 ID는 모두 **문자열**이다 (shop-api 형식에 맞춤): 주문 `Order.id`(시드 `"101"`, shop-api 연결 뒤 `ord_…`), 구매자 `buyer_id`(shop-api 형식 `buy_<4자리>`, 사용자 번호 N ↔ `buy_`+0 채운 4자리, `buyer_ids.py`), 품목 `itm_…`. 예전 기록은 읽을 때 지금 형식으로 바꾸고(`user_id: 1`·`usr_1`은 `buyer_id: buy_0001`), PostgreSQL `claims` 테이블은 시작할 때 자동으로 옮긴다(`user_id`→`buyer_id`, 값은 `buy_…`, `order_id` bigint→text). 문의 ID(`inq_<번호>`)는 그대로다. 재무 목(`mock_seed.json`)은 주문 키를 `"101"`·`"102"`로 찾으므로 시드 주문과 맞는다.
 - 환불 지급 요청(`refund_request`)의 `params.summary`는 코드가 만든 사실(금액·클레임·주문 ID·유형/사유 코드)만 담는다. 10만 원 이상 C 보류가 되면 safety가 앞 200자를 보류 기록에 담아 담당자가 대시보드에서 읽는다. 고객 이름·메모 같은 외부 입력은 넣지 않는다 (테스트로 확인).
 - 이벤트 `support.inquiry_received`(SHOP-09)는 `create_inquiry`·`add_customer_message`가 `execute()`로 실행되고 저장이 끝난 뒤 한 번씩 발행한다(agent-template `events.publish`). `data`는 계약 `SupportInquiryReceivedData`의 사실 필드(문의 ID, 분류, 긴급도, 고객 메시지 수)만 담고, 제목·본문은 전화번호·이메일을 가린 채 봉투 `untrusted`에만 담는다. 멱등 키 `<context_id>:support.inquiry_received:<inquiry_id>:<메시지 수>`가 `event_id`가 되어 재전송해도 한 번만 전달된다. 실행되지 않은 요청과 재시도(같은 `idempotency_key`)는 발행하지 않고, 발행이 실패해도 접수는 막지 않는다. 문의의 `order_id`도 클레임처럼 문자열이다(shop-api `ord_…`, 옛 숫자 기록·입력은 읽을 때 문자열로 바꾼다). 이벤트 `order_id`는 `ord_`로 시작할 때만 싣고, 시드 주문(`"101"`)처럼 그 형식이 아니면 지어내지 않고 `null`로 보낸다.
 - 환불 지급(`process_claim_queue`)의 `refund_request` 멱등 키와 사건은 처리를 요청한 호출이 아니라 **클레임을 접수한 사건** 기준(`<claim.context_id>:refund_request:claim:<id>`)으로 고정한다. 안전 레이어는 C 보류 건을 사람이 승인한 뒤 **같은 키**로 다시 요청해야 `executed`를 돌려주므로, 호출마다 새 키를 쓰면 승인이 반영되지 않는다. 처리를 요청한 사건은 근거 `ref_ids`(`request:<context_id>`)에 남는다.

@@ -23,7 +23,7 @@ def shop_order(**changes: Any) -> dict[str, Any]:
     """shop-api `GET /orders/{id}` 응답의 `data` (배송 전, 품목 1개)."""
     order = {
         "order_id": ORDER_ID,
-        "buyer_id": "usr_9",
+        "buyer_id": "buy_0009",
         "status": "paid",
         "total_amount": 23000,
         "refunded_amount": 0,
@@ -137,7 +137,9 @@ def call(
     return client.post("/a2a", json=body).json()
 
 
-def create(client: TestClient, order_id: str = ORDER_ID, buyer_id: str = "usr_9") -> dict[str, Any]:
+def create(
+    client: TestClient, order_id: str = ORDER_ID, buyer_id: str = "buy_0009"
+) -> dict[str, Any]:
     return call(
         client,
         "create_claim",
@@ -169,7 +171,7 @@ def executed(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_shop_order_is_mapped_to_the_judging_model() -> None:
     order = shop_client.to_order(shop_order(delivered_at="2026-10-22T00:00:00Z"))
     assert order is not None
-    assert (order.id, order.buyer_id, order.status) == (ORDER_ID, "usr_9", "delivered")
+    assert (order.id, order.buyer_id, order.status) == (ORDER_ID, "buy_0009", "delivered")
     assert order.payment_id == PAYMENT_ID and order.shipping_fee == 3000
     assert order.paid_at == datetime(2026, 10, 20, 1, 0, 5, tzinfo=UTC)
     assert [(i.id, i.paid_amount, i.title) for i in order.items] == [
@@ -205,7 +207,7 @@ def test_claim_is_judged_from_the_shop_order(client: TestClient, shop: FakeShop)
     assert (claim["order_id"], claim["payment_id"], claim["buyer_id"]) == (
         ORDER_ID,
         PAYMENT_ID,
-        "usr_9",
+        "buy_0009",
     )
     assert claim["lines"][0]["order_item_id"] == "oit_0001"
     assert claim["expected_refund"] == 23000  # 배송 전 취소: 품목 + 배송비
@@ -216,7 +218,7 @@ def test_unknown_unpaid_or_someone_elses_order_is_not_found(
     client: TestClient, shop: FakeShop
 ) -> None:
     assert create(client, order_id="ord_9999")["outcome"] == "not_found"
-    assert create(client, buyer_id="usr_1")["outcome"] == "not_found"
+    assert create(client, buyer_id="buy_0001")["outcome"] == "not_found"
     shop.order = shop_order(status="pending_payment", payments=[])
     assert create(client)["outcome"] == "not_found"
     assert call(client, "list_claims")["output"]["items"] == []
@@ -283,7 +285,7 @@ def test_seed_orders_are_paid_without_calling_shop_api(
         client,
         "create_claim",
         {
-            "buyer_id": "usr_2",
+            "buyer_id": "buy_0002",
             "customer_name": "고객",
             "order_id": "102",
             "type": "cancel",

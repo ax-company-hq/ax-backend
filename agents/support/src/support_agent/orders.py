@@ -25,7 +25,7 @@ class OrderItem(AxModel):
 class Order(AxModel):
     id: str  # 주문 ID (shop-api는 `ord_…`)
     order_no: str
-    buyer_id: str  # 구매자 ID (shop-api `buyer_id`, 예: usr_1)
+    buyer_id: str  # 구매자 ID (shop-api `buyer_id`, 예: buy_0001)
     status: str  # paid | preparing | shipped | delivered
     paid_at: datetime
     delivered_at: datetime | None = None
@@ -39,7 +39,7 @@ SEED_ORDERS: list[Order] = [
     Order(
         id="101",
         order_no="ORD-2026-0101",
-        buyer_id="usr_1",
+        buyer_id="buy_0001",
         status="delivered",
         paid_at=datetime(2026, 10, 10, tzinfo=UTC),
         delivered_at=datetime(2026, 10, 14, tzinfo=UTC),
@@ -52,7 +52,7 @@ SEED_ORDERS: list[Order] = [
     Order(
         id="102",
         order_no="ORD-2026-0102",
-        buyer_id="usr_2",
+        buyer_id="buy_0002",
         status="preparing",
         paid_at=datetime(2026, 10, 21, tzinfo=UTC),
         shipping_fee=3000,

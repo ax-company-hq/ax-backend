@@ -67,7 +67,7 @@ def call(
         "skill": "request_compensation",
         "input": {
             "inquiry_id": inquiry_id,
-            "buyer_id": "usr_1",
+            "buyer_id": "buy_0001",
             "reason_code": reason,
             "count": count,
         },
@@ -95,7 +95,7 @@ def test_requests_marketing_with_sequence_and_computed_total(_fresh: Sent) -> No
     assert request.sequence == 1
     assert request.input == {
         "purpose_code": "compensation",
-        "buyer_id": "usr_1",
+        "buyer_id": "buy_0001",
         "count": 2,
         "unit_value": 2000,
         "claimed_total": 4000,

@@ -150,3 +150,37 @@ class CreateTicketOutput(AxModel):
         if (self.outcome == "linked_duplicate") != (self.duplicate_of is not None):
             raise ValueError("duplicate_of는 outcome이 linked_duplicate일 때만 채운다")
         return self
+
+
+# ---- 변경 요청 결과 통지 (이슈 #280 요청, planning)
+#
+# - `receive_change_result`: planning → 요청 부서(support·hr·data), 등급 A.
+#   부서마다 같은 이름이다.
+# - planning이 요청을 닫을 때(완료·거절·기각) 보낸다.
+#   같은 `ctx_req_` 사건에 `path`를 비운 새 요청이다.
+#   중복 연결된 요청은 원래 요청이 닫힐 때 같은 사건으로 한 번에 보낸다.
+# - 멱등성 키: `ctx_req_…:change_result:REQ-n`.
+#   같은 결과가 두 번 와도 한 번만 적용한다.
+# - `reason_code`는 열어 둔 코드 값이다 (예: rejected_by_review, out_of_scope).
+
+
+class ChangeResultInput(AxModel):
+    request_id: str  # REQ-n
+    status: Literal["completed", "declined"]
+    pr_numbers: list[int] = Field(default_factory=list)  # 머지된 PR (completed일 때)
+    merged_at: UtcDatetime | None = None
+    spec_id: str | None = None
+    reason_code: str | None = None  # declined일 때 코드 값
+    summary: str  # 코드가 만든 한 줄 (자유 판단 문장 아님)
+
+    @model_validator(mode="after")
+    def _status_fields_are_consistent(self) -> ChangeResultInput:
+        if self.status == "declined" and (self.pr_numbers or self.merged_at is not None):
+            raise ValueError("pr_numbers·merged_at은 status가 completed일 때만 채운다")
+        if self.status == "completed" and self.reason_code is not None:
+            raise ValueError("reason_code는 status가 declined일 때만 채운다")
+        return self
+
+
+class ChangeResultOutput(AxModel):
+    applied: int  # 이 결과를 적용한 요청 부서 쪽 항목 수 (문의 n건 등)
