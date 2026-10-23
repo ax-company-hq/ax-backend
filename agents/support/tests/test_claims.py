@@ -420,3 +420,28 @@ def test_stats_count_agent_reviews(client: TestClient) -> None:
     call(client, "decide_claim", {"claim_id": claim_id, "decision": "reject"}, key="k-d")
     stats = call(client, "claim_stats")["output"]
     assert stats["agent_reviews"] == 1 and stats["agent_overrides"] == 0
+
+
+def test_inspection_without_note_keeps_the_note_left_at_receive(client: TestClient) -> None:
+    claim_id = create(client)["output"]["id"]
+    call(client, "decide_claim", {"claim_id": claim_id, "decision": "approve"}, key="k-d")
+    call(
+        client,
+        "receive_return",
+        {"claim_id": claim_id, "inspection": "fail"},
+        {"note": "상품 상태 다름"},
+        key="k-r",
+    )
+    after = call(client, "inspect_return", {"claim_id": claim_id, "inspection": "pass"}, key="k-i")[
+        "output"
+    ]
+    assert after["inspection"] == "pass"
+    assert after["inspection_note"] == "상품 상태 다름"  # 메모 없이 결과만 바꿔도 지워지지 않는다
+    newer = call(
+        client,
+        "inspect_return",
+        {"claim_id": claim_id, "inspection": "partial"},
+        {"note": "일부만 정상"},
+        key="k-i2",
+    )["output"]
+    assert newer["inspection_note"] == "일부만 정상"  # 새 메모가 있으면 바뀐다

@@ -36,6 +36,14 @@
 - 같은 `idempotency_key`의 두 번째 요청은 이전 결과를 돌려준다.
 - `create_inquiry`·`add_customer_message`는 선택 입력 `notice_id`가 있으면 마케팅 `get_notice`로 공지 사실(본문·약속·기간)을 읽어 답변 근거(`notice:<id>`)의 맨 앞에 넣는다. 공지를 찾지 못하거나 마케팅이 응답하지 않으면 근거 없이 진행한다 ("확인할 수 없음").
 - `request_compensation`은 단가를 코드 정책표(`compensation.py`)로 판정하고, 사건(`context_id`)별로 `sequence` 1부터 한 건씩 마케팅에 보낸다. 지급·`execute()`·재무 교차검증은 마케팅 쪽이라 support는 자기 상태를 바꾸지 않고 safety 등록도 필요 없다. 표에 없는 사유는 `not_eligible`. 번호는 마케팅이 소비한 경우(지급·재무 거절·보류·실행 실패)에만 올리고, 재무 검증 중(`working`)·번호/입력 오류·타임아웃·연결 실패는 같은 번호로 다시 보낸다. 같은 사건의 요청은 락으로 한 건씩 처리한다.
+## 영속 저장소 (PostgreSQL)
+`SUPPORT_PG_DSN`을 설정하면 문의·클레임·멱등 결과·보상 번호가 DB에 저장되어 재시작해도 이어진다. 비우면(CI·목 모드) 예전처럼 메모리만 쓴다. compose는 `support-db`(postgres:16, 호스트 포트 없음)를 함께 띄우고 DSN을 서비스 이름으로 덮어쓴다 (비밀번호 `SUPPORT_DB_PASSWORD`).
+- 메모리 저장소(`InquiryStore`, `ClaimStore`, `SequenceLedger`)를 상속한 영속 저장소가 읽기는 메모리 캐시, 쓰기는 같은 호출 안에서 DB에 반영한다. 시작할 때 DB에서 모두 읽어 와 ID 번호(문의·메시지·클레임)와 보상 `sequence`도 이어 간다.
+- 테이블(모두 `tenant_id`·`context_id` 포함, 본문은 `doc` jsonb): `inquiries`, `inquiry_results`(멱등 결과), `draft_events`(초안 채택·수정·거절 기록), `claims`, `compensation_sequences`, `compensation_results`. 스키마는 시작할 때 `CREATE TABLE IF NOT EXISTS`로 만든다 (별도 마이그레이션 도구 없음).
+- 보상 `sequence`를 저장하는 이유: 재시작하면 번호가 1로 돌아가 마케팅이 `SEQUENCE_GAP`으로 거절하고 이후가 계속 막힌다.
+- 한계: 단일 인스턴스를 가정한다 (여러 프로세스가 같은 DB를 쓰면 캐시가 어긋난다). 쓰기 실패는 예외로 올린다 — 안전 레이어가 이미 허가한 뒤라면 같은 `idempotency_key`로 다시 요청해야 하고, 메모리에는 이미 반영돼 있을 수 있다. 연결이 끊기면 한 번 다시 연결해 재시도한다.
+- 테스트: DB 없이 도는 테스트(메모리 구현으로 "저장 → 재시작 → 이어짐")와, `SUPPORT_PG_DSN`이 있을 때만 도는 PostgreSQL 테스트가 `tests/test_persistence.py`에 있다.
+
 ## 4. 의존
 ax-contracts, ax-agent-template
 ## 5. 하지 않는 것
@@ -45,6 +53,6 @@ ax-contracts, ax-agent-template
 - 환불 지급(`process_claim_queue`)의 `refund_request` 멱등 키와 사건은 처리를 요청한 호출이 아니라 **클레임을 접수한 사건** 기준(`<claim.context_id>:refund_request:claim:<id>`)으로 고정한다. 안전 레이어는 C 보류 건을 사람이 승인한 뒤 **같은 키**로 다시 요청해야 `executed`를 돌려주므로, 호출마다 새 키를 쓰면 승인이 반영되지 않는다. 처리를 요청한 사건은 근거 `ref_ids`(`request:<context_id>`)에 남는다.
 - 환불 지급은 `refund_request` 실행 허가와 지급 기록까지만 한다. shop-api 환불 API(SHOP-12) 호출은 아직 없다 (TODO).
 - `create_claim`·`decide_claim`·`receive_return`·`inspect_return`은 safety 레지스트리 등록이 필요하다 (`to:safety`). 미등록이면 C로 보류된다.
-- 저장소는 프로세스 메모리다. DB 연결 전까지 재시작하면 사라진다.
+- 저장소는 `SUPPORT_PG_DSN`이 없으면 프로세스 메모리다(재시작하면 사라진다). 있으면 PostgreSQL에 저장한다 (아래 "영속 저장소").
 - 정책 문서(KB)는 시드 조각이다. memory의 정책 문서 API가 생기면 교체한다.
 - 외부 API를 직접 호출해 상태를 바꾸지 않는다.

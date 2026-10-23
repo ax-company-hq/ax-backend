@@ -194,6 +194,7 @@ dependencies = [
     { name = "ax-contracts" },
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "psycopg", extra = ["binary"] },
     { name = "uvicorn" },
 ]
 
@@ -203,6 +204,7 @@ requires-dist = [
     { name = "ax-contracts", editable = "contracts" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
 

@@ -15,7 +15,7 @@ from typing import Any
 
 from ax_agent_template.execute import execute
 from ax_contracts.schemas import AgentRequest, AgentResult, Evidence
-from support_agent import claim_rules, orders
+from support_agent import claim_rules, orders, persistence
 from support_agent import handlers as h
 from support_agent.claim_schemas import (
     ClaimReasonHit,
@@ -29,9 +29,9 @@ from support_agent.claim_schemas import (
     QueueRunResult,
     ReceiveReturnInput,
 )
-from support_agent.claims import ClaimStore, now_iso
+from support_agent.claims import now_iso
 
-CLAIMS = ClaimStore()
+CLAIMS = persistence.build_claim_store()
 # 지급을 실행하지 못한 이유 (safety 판정 상태 → 화면에 보일 문장)
 HELD_MESSAGE = {
     "verifying": "재무 교차검증 중",
@@ -194,7 +194,7 @@ async def receive_return(request: AgentRequest) -> AgentResult:
     async def apply() -> tuple[dict[str, Any], bool]:
         claim.return_received_at = now_iso()
         claim.inspection = parsed.inspection
-        claim.inspection_note = _note(request)
+        claim.inspection_note = _note(request) or claim.inspection_note
         CLAIMS.set_status(claim, "return_received", "receive", inspection=parsed.inspection)
         return claim.model_dump(mode="json"), False
 
@@ -215,7 +215,7 @@ async def inspect_return(request: AgentRequest) -> AgentResult:
 
     async def apply() -> tuple[dict[str, Any], bool]:
         claim.inspection = parsed.inspection
-        claim.inspection_note = _note(request)
+        claim.inspection_note = _note(request) or claim.inspection_note
         CLAIMS.set_status(claim, "return_received", "inspection", inspection=parsed.inspection)
         return claim.model_dump(mode="json"), False
 
