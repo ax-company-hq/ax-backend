@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 
@@ -32,23 +31,9 @@ def load_card() -> AgentCard:
 
 
 def build_app() -> FastAPI:
-    """카드로 A2A 앱을 만든다.
-
-    TODO: 채워진 카드(PR #70)가 머지되면 빈 카드 처리(아래 `health_only`)를 지운다.
-    카드 파일이 아직 빈 자리표시자(skills가 비어 있음)면 /health만 있는 앱으로 뜬다.
-    """
-    raw = json.loads(_card_path().read_text(encoding="utf-8"))
-    if not raw.get("skills"):
-        health_only = FastAPI(title="ax-agent-data")
-
-        @health_only.get("/health")
-        def health() -> dict:
-            return {"data": {"status": "ok"}, "meta": {}}
-
-        return health_only
-    card = load_card()
-    return create_agent_app(card, HANDLERS)
+    """카드로 A2A 앱을 만든다. 카드와 핸들러의 skill이 다르면 시작할 때 실패한다."""
+    return create_agent_app(load_card(), HANDLERS)
 
 
-# /health는 템플릿의 create_agent_app이 같은 응답으로 제공한다.
+# /health, /.well-known/agent-card.json, /a2a 는 템플릿이 만든다.
 app = build_app()
