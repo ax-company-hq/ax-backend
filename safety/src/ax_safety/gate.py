@@ -28,6 +28,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from ax_contracts.schemas import ExecuteDecision, ExecuteRequest, HoldReason, ReviewHoldInput
+from ax_safety.overrides import OverrideFile, SavedOverrides
 from ax_safety.rules import (
     ActionSpec,
     Registry,
@@ -98,7 +99,10 @@ Verifier = Callable[[VerifyTask], Awaitable[VerifyOutcome]]
 Reviewer = Callable[[ReviewTask], Awaitable[ReviewOutcome]]
 ThresholdReviewer = Callable[[ThresholdReviewTask], Awaitable[ReviewOutcome]]
 
-# ---- 기준 바꾸기 (재무 AI가 결정, 안전 장치는 코드로 강제)
+# ---- 기준 바꾸기 (안전 장치는 코드로 강제, 재무 AI는 참고 의견, 적용은 사람만)
+# 기준 문서(agent-common 7장·SAF-02: 기준표는 사람만 바꾼다)를 바꾸는 docs PR이 머지되기 전까지
+# 재무 AI의 답은 `ai_review`로만 남기고 상태는 `pending`이다.
+# 적용은 `decide_threshold_change`(사람 토큰)에서만 한다.
 THRESHOLD_REVIEWER = "finance"
 THRESHOLD_REVIEW_SKILL = "review_threshold_change"
 GUARDRAIL = "guardrail"  # 안전 장치 범위 밖이라 거절한 기준 바꾸기의 decided_by
@@ -132,6 +136,15 @@ AUTO_REJECT_NOTE = {
     ),
 }
 
+
+OVERRIDES_CONTEXT = "ctx_req_threshold_overrides"  # 기준 복원 감사 로그의 context_id
+
+# 재무 AI의 기준 바꾸기 의견. 참고 의견일 뿐이고 상태는 pending으로 남는다
+AI_OPINION_NOTE = {
+    "approve": "재무 AI 의견: 승인 ({why}). 참고 의견이라 적용은 재무 담당자가 결정합니다.",
+    "reject": "재무 AI 의견: 거절 ({why}). 참고 의견이라 최종 결정은 재무 담당자가 합니다.",
+    "escalate": "재무 AI가 판단을 넘겼습니다 ({why}). 재무 담당자의 결정을 기다립니다.",
+}
 
 SELF_REVIEW_NOTE = (
     "자기 검증 금지: {action}의 요청자와 검토자({who})가 같아 AI에게 묻지 않고 사람에게 넘깁니다."
@@ -187,6 +200,7 @@ class Gate:
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         reviewer: Reviewer | None = None,
         threshold_reviewer: ThresholdReviewer | None = None,
+        overrides: OverrideFile | None = None,
     ) -> None:
         unknown = {r.action for r in thresholds.rules} - {s.action for s in registry.actions}
         if unknown:
@@ -196,12 +210,15 @@ class Gate:
         self.baseline = thresholds  # TOML 원래 값. 기준 바꾸기의 허용 범위는 이 값으로 정한다
         self._threshold_reviewer = threshold_reviewer
         self._threshold_lock = asyncio.Lock()
+        self._overrides = overrides
         self.store = store
         self._verifier = verifier
         self._reviewer = reviewer
         self._publish = publisher
         self._now = now
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
+        if overrides is not None:
+            self._restore_overrides()
 
     # ------------------------------------------------------------------ 진입점
     async def execute(self, request: ExecuteRequest) -> ExecuteDecision:
@@ -662,7 +679,7 @@ class Gate:
         await self._emit("safety.review_decided", review, data)
 
     # ------------------------------------------------------------------ 기준 바꾸기
-    # 기준표는 메모리에서 바꾼다(TODO: persist). 재시작하면 TOML 원래 값으로 돌아간다.
+    # 적용한 기준은 `overrides`(파일)에 저장하고 시작할 때 복원한다(`_restore_overrides`).
     def baseline_values(self) -> dict[str, int]:
         """바꿀 수 있는 기준과 TOML 원래 값."""
         values = {r.key: r.value for r in self.baseline.rules if r.metric not in PATH_METRICS}
@@ -733,9 +750,20 @@ class Gate:
         }
 
     async def request_threshold_change(
-        self, key: str, new_value: int, reason: str, requested_by: str
+        self,
+        key: str,
+        new_value: int,
+        reason: str,
+        requested_by: str,
+        *,
+        by_agent: bool = False,
     ) -> ThresholdChange:
-        """기준 바꾸기 요청. 안전 장치 → 재무 AI 순서. 사람 결정이 필요하면 `pending`."""
+        """기준 바꾸기 요청. 안전 장치(코드) → 재무 AI(참고 의견) → 사람이 적용·거절.
+
+        안전 장치 범위 밖이면 바로 `rejected`. 범위 안이면 재무 AI 답과 상관없이 `pending`이다.
+        에이전트가 요청했고 그 에이전트가 검토자(finance)면 재무 AI에게 묻지도 않는다
+        (자기 검증 금지).
+        """
         async with self._threshold_lock:
             change = ThresholdChange(
                 change_id=f"thc_{uuid.uuid4().hex[:12]}",
@@ -754,6 +782,17 @@ class Gate:
                 self._close_change(change, "rejected", GUARDRAIL, problem)
                 return change
             change.stats = self.threshold_stats(key)
+            if by_agent and requested_by == THRESHOLD_REVIEWER:
+                change.ai_review = {
+                    "result": "skipped",
+                    "reason_code": "self_review",
+                    "explanation": SELF_REVIEW_NOTE.format(
+                        action="기준 바꾸기", who=THRESHOLD_REVIEWER
+                    ),
+                }
+                self._change_audit(change, "threshold_change_ai_review", change.ai_review)
+                change.explanation = "재무 AI가 요청한 기준 바꾸기라 재무 담당자가 결정합니다."
+                return change
             if self._threshold_reviewer is None:
                 change.explanation = "재무 AI에 묻지 못해 재무 담당자의 결정을 기다립니다."
                 return change
@@ -764,14 +803,9 @@ class Gate:
                 "explanation": outcome.explanation,
             }
             self._change_audit(change, "threshold_change_ai_review", change.ai_review)
-            if outcome.result == "approve":
-                self._apply_change(change, AI_REVIEWER, outcome.explanation)
-            elif outcome.result == "reject":
-                self._close_change(change, "rejected", AI_REVIEWER, outcome.explanation)
-            else:
-                change.explanation = (
-                    outcome.explanation or "재무 AI가 답하지 않아 재무 담당자의 결정을 기다립니다."
-                )
+            change.explanation = AI_OPINION_NOTE[outcome.result].format(
+                why=outcome.explanation or "이유 없음"
+            )
             return change
 
     async def decide_threshold_change(
@@ -821,21 +855,93 @@ class Gate:
             return ReviewOutcome("escalate", "reviewer_unavailable", "")
 
     def _apply_change(self, change: ThresholdChange, by: str, explanation: str) -> None:
-        """기준표를 바꾸고 version을 올린다. 이후 모든 판정이 새 값을 쓴다."""
-        table = self.thresholds
-        change.old_value = self.current_value(change.key)
-        if change.key == TIMEOUT_KEY:
-            update: dict[str, Any] = {TIMEOUT_KEY: float(change.new_value)}
-        else:
-            update = {
-                "rules": [
-                    r.model_copy(update={"value": change.new_value}) if r.key == change.key else r
-                    for r in table.rules
-                ]
-            }
-        self.thresholds = table.model_copy(update={**update, "version": table.version + 1})
+        """기준표를 바꾸고 version을 올린다. 이후 모든 판정이 새 값을 쓴다.
+
+        파일에 먼저 저장한다. 저장하지 못하면(OSError) 적용하지 않고 `pending`으로 둔다.
+        """
+        old_value = self.current_value(change.key)
+        table = self._with_value(self.thresholds, change.key, change.new_value)
+        table = table.model_copy(update={"version": self.thresholds.version + 1})
+        self._save_overrides(table, change.change_id)
+        self.thresholds = table
+        change.old_value = old_value
         change.version_after = self.thresholds.version
         self._close_change(change, "applied", by, explanation)
+
+    @staticmethod
+    def _with_value(table: ThresholdTable, key: str, value: int) -> ThresholdTable:
+        if key == TIMEOUT_KEY:
+            return table.model_copy(update={TIMEOUT_KEY: float(value)})
+        rules = [r.model_copy(update={"value": value}) if r.key == key else r for r in table.rules]
+        return table.model_copy(update={"rules": rules})
+
+    def _changed_values(self, table: ThresholdTable) -> dict[str, int]:
+        """원래 값(TOML)과 다른 숫자 기준만."""
+        current = {r.key: r.value for r in table.rules if r.metric not in PATH_METRICS}
+        current[TIMEOUT_KEY] = int(table.review_timeout_seconds)
+        base = self.baseline_values()
+        return {k: v for k, v in current.items() if k in base and base[k] != v}
+
+    def _save_overrides(self, table: ThresholdTable, change_id: str | None) -> None:
+        if self._overrides is None:
+            return
+        self._overrides.save(
+            SavedOverrides(
+                version=table.version,
+                baseline=self.baseline_values(),
+                values=self._changed_values(table),
+                change_id=change_id,
+                saved_at=self._now(),
+            )
+        )
+
+    def _overrides_audit(self, step: str, data: dict[str, Any]) -> None:
+        self.store.append_audit(self._now(), OVERRIDES_CONTEXT, TENANT, step, None, data)
+
+    def _restore_overrides(self) -> None:
+        """시작할 때 저장된 기준을 복원한다. 원래 값이 바뀌었거나 깨진 파일이면 버린다.
+
+        안전 장치 범위 밖인 값은 그 기준만 빼고 복원한다. 모두 감사 로그에 남긴다.
+        """
+        assert self._overrides is not None
+        try:
+            saved = self._overrides.load()
+        except (OSError, ValueError) as exc:
+            logger.warning("저장된 기준을 읽지 못해 TOML 값을 쓴다: %s", exc)
+            self._overrides_audit(
+                "threshold_overrides_discarded",
+                {"reason": "unreadable", "error": type(exc).__name__},
+            )
+            return
+        if saved is None:
+            return
+        if saved.baseline != self.baseline_values():
+            logger.warning("기준표 원래 값이 바뀌어 저장된 기준을 버리고 TOML 값을 쓴다")
+            self._overrides_audit(
+                "threshold_overrides_discarded",
+                {"reason": "baseline_changed", "values": saved.values, "version": saved.version},
+            )
+            return
+        skipped: dict[str, str] = {}
+        for key, value in saved.values.items():
+            problem = self.guardrail_problem(key, value, "restore")
+            if problem:
+                skipped[key] = problem
+                continue
+            self.thresholds = self._with_value(self.thresholds, key, value)
+        version = max(saved.version, self.baseline.version)
+        self.thresholds = self.thresholds.model_copy(update={"version": version})
+        restored = self._changed_values(self.thresholds)
+        logger.info("저장된 기준 복원: version %s, %s", version, restored)
+        self._overrides_audit(
+            "threshold_overrides_restored",
+            {
+                "version": version,
+                "values": restored,
+                "skipped": skipped,
+                "change_id": saved.change_id,
+            },
+        )
 
     def _close_change(
         self,

@@ -1,10 +1,13 @@
-"""기준 바꾸기 테스트: 안전 장치(코드) → 재무 AI → 필요하면 사람.
+"""기준 바꾸기 테스트: 안전 장치(코드) → 재무 AI(참고 의견) → 사람이 적용·거절.
 
-적용되면 이후 판정이 새 값을 쓴다.
+재무 AI의 답은 `ai_review`로만 남고 상태는 `pending`이다(기준 문서 docs PR 전).
+사람이 적용하면 이후 판정이 새 값을 쓰고, 바뀐 값은 파일에 저장돼 재시작 뒤 복원된다.
 """
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -20,6 +23,7 @@ from ax_safety.gate import (
     ThresholdReviewTask,
 )
 from ax_safety.main import create_app
+from ax_safety.overrides import OverrideFile
 from ax_safety.rules import load_registry, load_thresholds
 from ax_safety.store import Store
 
@@ -54,14 +58,28 @@ def ops_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SAFETY_REVIEW_TIMEOUT_SECONDS", "86400")
 
 
-def make_gate(clock: Any, verifier: Any, sent: Any, reviewer: Any) -> Gate:
+def make_gate(
+    clock: Any, verifier: Any, sent: Any, reviewer: Any, overrides: OverrideFile | None = None
+) -> Gate:
     table = load_thresholds()
     table = table.model_copy(
         update={"auto_review": table.auto_review.model_copy(update={"enabled": False})}
     )
     return Gate(
-        load_registry(), table, Store(), verifier, sent, now=clock, threshold_reviewer=reviewer
+        load_registry(),
+        table,
+        Store(),
+        verifier,
+        sent,
+        now=clock,
+        threshold_reviewer=reviewer,
+        overrides=overrides,
     )
+
+
+def _decide(client: TestClient, change_id: str, decision: str = "approved") -> dict:
+    url = f"{URL}/{change_id}/decision"
+    return client.post(url, json={"decision": decision}, headers=HUMAN).json()["data"]
 
 
 def make_client(gate: Gate) -> TestClient:
@@ -140,22 +158,39 @@ def test_only_humans_or_finance_can_request(clock, verifier, sent, headers, stat
 
 
 def test_finance_agent_can_request(clock, verifier, sent) -> None:
-    gate = make_gate(clock, verifier, sent, FakeThresholdReviewer(APPROVE))
+    """finance가 요청한 건은 finance AI에게 묻지 않고(자기 검증 금지) 사람을 기다린다."""
+    reviewer = FakeThresholdReviewer(APPROVE)
+    gate = make_gate(clock, verifier, sent, reviewer)
     data = _ask(make_client(gate), "coupon_total", 350_000, headers=FINANCE).json()["data"]
-    assert (data["requested_by"], data["status"]) == ("finance", "applied")
+    assert (data["requested_by"], data["status"], data["decided_by"]) == (
+        "finance",
+        "pending",
+        None,
+    )
+    assert data["ai_review"]["reason_code"] == "self_review"
+    assert reviewer.tasks == []
+    assert gate.thresholds.version == 1
+    assert gate.current_value("coupon_total") == 300_000
 
 
-# ---------------------------------------------------------------- 재무 AI 결정
+# ---------------------------------------------------------------- 재무 AI 의견 (참고만)
 @pytest.mark.asyncio
-async def test_ai_approval_applies_and_later_executions_use_new_value(
-    clock, verifier, sent, coupon
-) -> None:
+async def test_ai_approval_is_advisory_and_human_applies(clock, verifier, sent, coupon) -> None:
     gate = make_gate(clock, verifier, sent, FakeThresholdReviewer(APPROVE))
     before = await gate.execute(coupon(14, 25_000, purpose_code="campaign", key="before"))
     assert before.status == "held"  # 350,000원 ≥ 300,000 (그리고 단가 2만 초과)
 
     change = await gate.request_threshold_change("coupon_total", 400_000, "보류가 많음", "taeyoon")
-    assert (change.status, change.decided_by, change.version_after) == ("applied", AI_REVIEWER, 2)
+    # 재무 AI가 승인해도 적용하지 않는다: ai_review로만 남고 사람을 기다린다
+    assert (change.status, change.decided_by, change.version_after) == ("pending", None, None)
+    assert change.ai_review["result"] == "approve"
+    assert "참고 의견" in change.explanation
+    assert gate.thresholds.version == 1
+    assert gate.current_value("coupon_total") == 300_000
+    assert AI_REVIEWER not in str(change.decided_by)
+
+    change = await gate.decide_threshold_change(change.change_id, "approved", "taeyoon", None)
+    assert (change.status, change.decided_by, change.version_after) == ("applied", "taeyoon", 2)
     assert (change.old_value, change.new_value, change.baseline) == (300_000, 400_000, 300_000)
     assert gate.thresholds.version == 2
     assert gate.current_value("coupon_total") == 400_000
@@ -174,6 +209,8 @@ async def test_ai_approval_applies_and_later_executions_use_new_value(
 async def test_review_timeout_change_is_used_for_new_holds(clock, verifier, sent, coupon) -> None:
     gate = make_gate(clock, verifier, sent, FakeThresholdReviewer(APPROVE))
     change = await gate.request_threshold_change("review_timeout_seconds", 100_000, "x", "t")
+    assert change.status == "pending"
+    change = await gate.decide_threshold_change(change.change_id, "approved", "taeyoon", None)
     assert change.status == "applied"
     decision = await gate.execute(coupon(20, 20_000, purpose_code="campaign", key="hold"))
     review = gate.store.get_review(decision.review_id or "")
@@ -182,15 +219,14 @@ async def test_review_timeout_change_is_used_for_new_holds(clock, verifier, sent
 
 
 @pytest.mark.asyncio
-async def test_ai_reject_is_recorded(clock, verifier, sent) -> None:
+async def test_ai_reject_is_recorded_as_opinion(clock, verifier, sent) -> None:
+    """재무 AI의 거절도 참고 의견이다. 최종 결정은 사람이 한다."""
     reviewer = FakeThresholdReviewer(ReviewOutcome("reject", "no", "안 됩니다"))
     gate = make_gate(clock, verifier, sent, reviewer)
     change = await gate.request_threshold_change("coupon_total", 350_000, "x", "taeyoon")
-    assert (change.status, change.decided_by, change.explanation) == (
-        "rejected",
-        AI_REVIEWER,
-        "안 됩니다",
-    )
+    assert (change.status, change.decided_by) == ("pending", None)
+    assert change.ai_review == {"result": "reject", "reason_code": "no", "explanation": "안 됩니다"}
+    assert "거절" in change.explanation and "안 됩니다" in change.explanation
     assert gate.thresholds.version == 1
 
 
@@ -253,8 +289,10 @@ def test_versions_history_and_thresholds_api(clock, verifier, sent) -> None:
     gate = make_gate(clock, verifier, sent, FakeThresholdReviewer(APPROVE))
     client = make_client(gate)
     first = _ask(client, "coupon_total", 400_000).json()["data"]
+    assert first["status"] == "pending"
+    first = _decide(client, first["change_id"])
     clock.advance(60)
-    second = _ask(client, "coupon_unit", 25_000).json()["data"]
+    second = _decide(client, _ask(client, "coupon_unit", 25_000).json()["data"]["change_id"])
     clock.advance(60)
     _ask(client, "coupon_unit", 999_999)  # 안전 장치 거절도 기록에 남는다
     assert (first["version_after"], second["version_after"]) == (2, 3)
@@ -330,10 +368,15 @@ async def test_call_threshold_reviewer_maps_answers(monkeypatch: pytest.MonkeyPa
         {"key": "coupon_total"},
         {"reason_untrusted_text": "hi"},
     )
+
+    def out(decision: str) -> dict:
+        return {"decision": decision, "reason_code": "r", "explanation": "e"}
+
     cases = [
-        (TaskStatus.COMPLETED, {"decision": "approve", "explanation": "ok"}, "approve"),
-        (TaskStatus.COMPLETED, {"decision": "reject"}, "reject"),
-        (TaskStatus.COMPLETED, {"decision": "approved"}, "escalate"),
+        (TaskStatus.COMPLETED, out("approve"), "approve"),
+        (TaskStatus.COMPLETED, out("reject"), "reject"),
+        (TaskStatus.COMPLETED, out("approved"), "escalate"),
+        (TaskStatus.COMPLETED, {"decision": "approve"}, "escalate"),  # 형식이 다르면 사람에게
         (TaskStatus.FAILED, {}, "escalate"),
     ]
     for status, output, expected in cases:
@@ -343,3 +386,101 @@ async def test_call_threshold_reviewer_maps_answers(monkeypatch: pytest.MonkeyPa
     assert (target, request.skill) == ("finance", "review_threshold_change")
     assert request.untrusted == {"reason_untrusted_text": "hi"}
     assert "reason_untrusted_text" not in request.input
+    assert request.meta.idempotency_key == "ctx_req_thc_1:review_threshold_change:thc_1"
+
+
+# ---------------------------------------------------------------- 저장·복원 (재시작)
+def _applied_gate(clock, verifier, sent, path: Path) -> Gate:
+    gate = make_gate(clock, verifier, sent, FakeThresholdReviewer(APPROVE), OverrideFile(path))
+    client = make_client(gate)
+    _decide(client, _ask(client, "coupon_total", 400_000).json()["data"]["change_id"])
+    _decide(client, _ask(client, "refund_single", 150_000).json()["data"]["change_id"])
+    return gate
+
+
+def test_applied_values_survive_restart(clock, verifier, sent, tmp_path: Path) -> None:
+    path = tmp_path / "overrides.json"
+    first = _applied_gate(clock, verifier, sent, path)
+    assert first.thresholds.version == 3
+    saved = json.loads(path.read_text("utf-8"))
+    assert saved["values"] == {"coupon_total": 400_000, "refund_single": 150_000}
+    assert saved["version"] == 3
+
+    # 재시작: 새 관문이 파일을 읽어 같은 기준과 version으로 시작한다
+    restarted = make_gate(clock, verifier, sent, None, OverrideFile(path))
+    assert restarted.thresholds.version == 3
+    assert restarted.current_value("coupon_total") == 400_000
+    assert restarted.current_value("refund_single") == 150_000
+    assert restarted.baseline_values()["coupon_total"] == 300_000
+    audit = [e for e in restarted.store.list_audit() if e.step == "threshold_overrides_restored"]
+    assert audit and audit[0].detail["values"] == saved["values"]
+
+
+def test_pending_or_ai_approved_changes_are_not_saved(
+    clock, verifier, sent, tmp_path: Path
+) -> None:
+    path = tmp_path / "overrides.json"
+    gate = make_gate(clock, verifier, sent, FakeThresholdReviewer(APPROVE), OverrideFile(path))
+    _ask(make_client(gate), "coupon_total", 400_000)
+    assert not path.exists()
+
+
+def test_changed_toml_wins_over_saved_values(clock, verifier, sent, tmp_path: Path) -> None:
+    """사람이 기준표를 고쳐 원래 값이 달라졌으면 저장된 값은 버린다."""
+    path = tmp_path / "overrides.json"
+    _applied_gate(clock, verifier, sent, path)
+    saved = json.loads(path.read_text("utf-8"))
+    saved["baseline"]["coupon_total"] = 250_000  # 저장할 때의 원래 값이 지금과 다름
+    path.write_text(json.dumps(saved), "utf-8")
+    restarted = make_gate(clock, verifier, sent, None, OverrideFile(path))
+    assert restarted.thresholds.version == 1
+    assert restarted.current_value("coupon_total") == 300_000
+    steps = [e.step for e in restarted.store.list_audit()]
+    assert "threshold_overrides_discarded" in steps
+
+
+@pytest.mark.parametrize("content", ["{not json", '{"version": 2}'])
+def test_broken_file_falls_back_to_toml(clock, verifier, sent, tmp_path: Path, content) -> None:
+    path = tmp_path / "overrides.json"
+    path.write_text(content, "utf-8")
+    gate = make_gate(clock, verifier, sent, None, OverrideFile(path))
+    assert gate.thresholds.version == 1
+    assert gate.current_value("coupon_total") == 300_000
+    assert "threshold_overrides_discarded" in [e.step for e in gate.store.list_audit()]
+
+
+def test_out_of_range_saved_value_is_skipped(clock, verifier, sent, tmp_path: Path) -> None:
+    path = tmp_path / "overrides.json"
+    _applied_gate(clock, verifier, sent, path)
+    saved = json.loads(path.read_text("utf-8"))
+    saved["values"]["coupon_total"] = 10_000_000  # 손으로 고친 값: 안전 장치 범위 밖
+    path.write_text(json.dumps(saved), "utf-8")
+    restarted = make_gate(clock, verifier, sent, None, OverrideFile(path))
+    assert restarted.current_value("coupon_total") == 300_000
+    assert restarted.current_value("refund_single") == 150_000
+
+
+def test_save_failure_does_not_apply(clock, verifier, sent, tmp_path: Path) -> None:
+    class Broken(OverrideFile):
+        def save(self, saved: Any) -> None:
+            raise OSError("disk full")
+
+    gate = make_gate(
+        clock, verifier, sent, FakeThresholdReviewer(ESCALATE), Broken(tmp_path / "x.json")
+    )
+    client = make_client(gate)
+    change_id = _ask(client, "coupon_total", 400_000).json()["data"]["change_id"]
+    response = client.post(
+        f"{URL}/{change_id}/decision", json={"decision": "approved"}, headers=HUMAN
+    )
+    assert response.status_code == 503
+    assert gate.thresholds.version == 1
+    assert gate.current_value("coupon_total") == 300_000
+    assert gate.store.get_change(change_id).status == "pending"  # type: ignore[union-attr]
+
+
+def test_overrides_path_from_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SAFETY_THRESHOLD_OVERRIDES_PATH", str(tmp_path / "o.json"))
+    assert OverrideFile.from_env().path == tmp_path / "o.json"
+    monkeypatch.delenv("SAFETY_THRESHOLD_OVERRIDES_PATH")
+    assert OverrideFile.from_env().path == Path("data") / "safety" / "threshold_overrides.json"

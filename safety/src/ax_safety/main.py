@@ -9,9 +9,9 @@
 | `POST /api/safety/reviews/{review_id}/decision` | 승인·거절 | **사람만** |
 | `GET /api/safety/audit-logs?context_id=` | 감사 로그 | 없음(조회) |
 | `GET /api/safety/thresholds`, `GET /api/safety/registry` | 기준표(+`baseline`)·레지스트리 | 없음 |
-| `POST /api/safety/threshold-changes` | 기준 바꾸기 요청 (안전 장치 → 재무 AI) | 사람·finance |
+| `POST /api/safety/threshold-changes` | 기준 바꾸기 요청 (안전 장치 → AI 의견) | 사람·finance |
 | `GET /api/safety/threshold-changes` | 기준 바꾸기 기록 (최근 것부터) | 없음(조회) |
-| `POST /api/safety/threshold-changes/{change_id}/decision` | 기다리는 건 승인·거절 | **사람만** |
+| `POST /api/safety/threshold-changes/{change_id}/decision` | 적용·거절 | **사람만** |
 
 `ExecuteRequest.requester`는 믿지 않는다. 토큰에서 꺼낸 이름과 다르면 403이다.
 """
@@ -35,6 +35,7 @@ from ax_agent_template.logging import log_event
 from ax_contracts.schemas import ExecuteRequest
 from ax_safety.auth import agent_from_token, bearer, human_from_token
 from ax_safety.gate import Gate, Publisher, Reviewer, ThresholdReviewer, Verifier
+from ax_safety.overrides import OverrideFile
 from ax_safety.rules import load_registry, load_thresholds
 from ax_safety.store import Store
 from ax_safety.verify import (
@@ -104,6 +105,7 @@ def create_app(
         publisher,
         reviewer=reviewer,
         threshold_reviewer=threshold_reviewer,
+        overrides=OverrideFile.from_env(),  # 바뀐 기준 저장·복원
     )
 
     @contextlib.asynccontextmanager
@@ -217,6 +219,7 @@ def create_app(
         body: ThresholdChangeBody, authorization: str | None = Header(default=None)
     ) -> dict | JSONResponse:
         token = bearer(authorization)
+        by_agent = False
         try:
             requested_by = human_from_token(token)
         except PermissionError:
@@ -226,8 +229,9 @@ def create_app(
                 return _error(401, "UNAUTHORIZED", str(exc))
             if requested_by not in THRESHOLD_CHANGE_AGENTS:
                 return _error(403, "FORBIDDEN", "기준 바꾸기는 사람이나 재무 AI만 요청할 수 있다")
+            by_agent = True  # 에이전트 요청은 항상 사람이 적용한다
         change = await gate.request_threshold_change(
-            body.key, body.new_value, body.reason, requested_by
+            body.key, body.new_value, body.reason, requested_by, by_agent=by_agent
         )
         log_event(
             f"ctx_req_{change.change_id}",
@@ -257,6 +261,9 @@ def create_app(
             return _error(404, "NOT_FOUND", "기준 바꾸기 요청이 없다")
         except ValueError as exc:
             return _error(409, "ALREADY_DECIDED", str(exc))
+        except OSError:
+            logger.exception("바뀐 기준을 저장하지 못해 적용하지 않았다: %s", change_id)
+            return _error(503, "SAVE_FAILED", "바뀐 기준을 저장하지 못해 적용하지 않았다")
         return _ok(change.model_dump(mode="json"))
 
     @app.get("/api/safety/registry")

@@ -5,7 +5,7 @@
 
 - 등급 판정 (SAF-01): 레지스트리 기본 등급과 금액 규칙 중 높은 쪽. `claimed_grade`는 기록만 한다
 - 레지스트리·기준표 (SAF-02): `src/ax_safety/rules/registry.toml`, `thresholds.toml`. TOML이 원래 값이다. 레지스트리와 `[auto_review]`·경로 목록은 사람만 PR로 바꾼다
-- 기준 바꾸기 (재무 AI 결정): 숫자 기준(`rules`의 `value`, `review_timeout_seconds`)은 대시보드에서 요청하면 안전 장치(코드) → 재무 AI `review_threshold_change` 순서로 결정해 실행 중에 바로 적용한다(version + 1). 재무 AI가 사람에게 넘기거나 답하지 않으면 재무 담당자가 승인·거절한다. 아래 "기준 바꾸기" 참고
+- 기준 바꾸기 (사람이 적용): 숫자 기준(`rules`의 `value`, `review_timeout_seconds`)은 대시보드에서 요청하면 안전 장치(코드)가 먼저 검사하고, 재무 AI `review_threshold_change`의 의견을 `ai_review`로 남긴 뒤 **재무 담당자(사람 토큰)가 승인해야 적용**된다(version + 1). 재무 AI 답은 참고 의견일 뿐이다(기준 문서를 바꾸는 docs PR 전). 적용한 값은 파일에 저장돼 재시작 뒤 복원된다. 아래 "기준 바꾸기" 참고
 - A 즉시 실행 (SAF-03), B 교차검증 (SAF-04): 레지스트리의 검증자 skill(재무 `verify_amount` 등)을 A2A로 부른다
 - C 보류 큐 (SAF-05): 근거 리포트와 함께 보류, 사람 토큰으로만 결정, 기한 안에 결정이 없으면 자동 거절. 기한은 데모 기본 10분, 운영은 `SAFETY_REVIEW_TIMEOUT_SECONDS`(예: 86400=24시간)로 덮어쓴다
 - AI 1차 판단: C 건 중 요청이 잘못된 것(금액 불일치·미등록·형식 오류)은 규칙이 바로 거절하고, 쿠폰·환불·판매자 심사는 재무 AI `review_hold`에 먼저 묻는다(승인·거절·사람에게). 재무 AI가 답하지 않거나 사람에게라고 하면 사람이 결정한다. 정산 확정은 항상 사람. 설정: `thresholds.toml`의 `[auto_review]`(사람만 변경, 끄면 모든 C 건을 사람이 결정).
@@ -58,9 +58,9 @@ curl -X POST localhost:8001/api/safety/reviews/<review_id>/decision \
 
 ### 기준 바꾸기
 
-흐름: 요청(사람 토큰 또는 finance 토큰) → 안전 장치(코드) → 재무 AI → 적용·거절·사람 대기.
+흐름: 요청(사람 토큰 또는 finance 토큰) → 안전 장치(코드) → 재무 AI 의견(`ai_review`, 참고) → `pending` → 사람이 적용·거절.
 
-| 안전 장치 (코드, 재무 AI·사람도 못 넘음) | 걸리면 |
+| 안전 장치 (코드, 사람도 못 넘음) | 걸리면 |
 | --- | --- |
 | 바꿀 수 있는 기준: 숫자 규칙(`coupon_total` 등)과 `review_timeout_seconds`만. `auto_review.*`, 경로 목록(`paths_within`·`paths_avoid`: `pr_allowed_paths`·`merge_allowed_paths`·`pr_protected_paths`·`merge_protected_paths`), `verify_timeout_seconds`, 규칙 삭제는 불가 | `rejected` (`decided_by: guardrail`) |
 | 새 값은 양의 정수, TOML 원래 값의 0.5배 ~ 2배 | 〃 |
@@ -71,12 +71,14 @@ curl -X POST localhost:8001/api/safety/reviews/<review_id>/decision \
 - 재무 AI 입력(`input`): `change_id, key, current_value, new_value, baseline, stats`. `stats`는 safety 기록에서 코드로 센다:
   `action`, `holds_24h`(최근 24시간 그 기준에 걸려 멈춘 건수, 마감 기준은 모든 보류), `executed_today`(그 액션의 오늘 실행 합계),
   `ai_approved_24h`, `human_approved_24h`, `expired_24h`. 이유는 `untrusted.reason_untrusted_text`.
-- 재무 AI 답: `approve` → 적용(`applied`, `version_after`), `reject` → `rejected`, `escalate`·무응답·오류 → `pending`(사람 결정).
+- 재무 AI 답(`approve`·`reject`·`escalate`·무응답)은 `ai_review`와 `explanation`에 의견으로만 남고 상태는 항상 `pending`이다. 적용(`applied`, `version_after`)은 `POST .../decision`(사람 토큰)에서만 한다.
+- 에이전트(finance)가 요청한 건은 재무 AI에게 묻지 않는다(자기 검증 금지, `ai_review.reason_code = "self_review"`). 사람이 결정한다.
+- 재무 AI 호출의 멱등성 키는 `{context_id}:review_threshold_change:{change_id}`.
 - 기록 필드: `change_id(thc_…), key, old_value, new_value, baseline, reason, requested_by, status(pending|applied|rejected),
-  decided_by(guardrail|finance-ai|사람 이름), explanation, created_at, decided_at, version_after, ai_review, stats`.
+  decided_by(guardrail|사람 이름), explanation, created_at, decided_at, version_after, ai_review, stats`.
 - 이미 결정된 건에 사람 결정을 보내면 409. 사람이 승인해도 안전 장치를 다시 검사한다.
 - 감사 로그: `threshold_change_requested|ai_review|applied|rejected` (`context_id = ctx_req_<change_id>`).
-- 바뀐 기준은 메모리에만 있다(TODO: persist). 재시작하면 TOML 원래 값으로 돌아간다.
+- 저장·복원: 사람이 적용할 때마다 원래 값과 다른 기준을 `SAFETY_THRESHOLD_OVERRIDES_PATH`(기본 `data/safety/threshold_overrides.json`, 작업 폴더 기준. compose는 `safety/data`에 마운트)에 저장한다. 저장하지 못하면 적용하지 않고 503을 돌려준다. 시작할 때 복원하고 감사 로그 `threshold_overrides_restored`를 남긴다. 저장할 때의 원래 값(TOML + 환경변수)과 지금이 다르거나(사람이 기준표를 고침) 파일이 깨졌으면 버리고 TOML 값을 쓴다(`threshold_overrides_discarded`). 안전 장치 범위 밖인 값은 그 기준만 뺀다. 기준 바꾸기 기록(목록)은 아직 메모리에만 있다.
 
 ```bash
 curl -X POST localhost:8001/api/safety/threshold-changes -H 'Authorization: Bearer human:taeyoon' \

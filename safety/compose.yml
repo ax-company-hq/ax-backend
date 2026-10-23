@@ -5,6 +5,8 @@ services:
       dockerfile: safety/Dockerfile
     ports:
       - "8001:8001"
+    volumes:
+      - ./data:/app/data  # 사람이 적용한 기준 바꾸기 (재시작해도 남는다)
     env_file:
       - path: ../.env
         required: false
