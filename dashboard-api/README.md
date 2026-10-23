@@ -7,7 +7,7 @@
 - 현재(1~2단계)는 목 데이터로 읽기·쓰기 API를 연다. 쓰기는 목 모드에서 메모리 데이터만 바꾼다. 실제 연결 단계에서 승인·지급 계열은 support의 `execute()`를 거치도록 바꾼다.
 ## 2. 실행 방법
 `docker compose -f infra/compose.yml up dashboard-api` / 목 모드: `DASHBOARD_MOCK=1`
-목 모드가 아니면 문의·클레임·보상 큐·KPI 경로는 support를 부르고, 후기·집계(`/metrics`)·고객·KB·주문·인수인계 경로는 `503 UPSTREAM_NOT_CONNECTED`를 돌려준다.
+목 모드가 아니면 문의·클레임·보상 큐·KPI 경로는 support를, 인수인계·후보 카드 경로는 hr을 부르고, 후기·집계(`/metrics`)·고객·KB·주문 경로는 `503 UPSTREAM_NOT_CONNECTED`를 돌려준다.
 에이전트 토큰은 `DASHBOARD_API_TOKEN`, support 주소는 `AX_SUPPORT_URL`(기본 `http://support:8102`).
 ## 3. 입출력 계약
 응답은 성공 `{data, meta}`, 실패 `{error: {code, message}}`. 모델은 `schemas.py`이고 OpenAPI는 `contracts/openapi/dashboard-api.json`으로 CI가 내보낸다.
@@ -71,18 +71,24 @@ support 출력은 `claim_mapping.py`에서 화면 모델로 바꾼다 (값을 �
 - 지급 연동이 막힌 항목(재무 검증 중·보류·거부)은 `process` 결과에서 `held`와 `ON_HOLD` 이유로 보인다. 같은 큐를 다시 처리해도 지급 요청(`refund_request`)의 키는 support가 클레임을 접수한 사건 기준으로 고정하므로(`<claim.context_id>:refund_request:claim:<id>`), 검증 중인 건이나 승인된 보류 건을 다시 처리하면 같은 판정이 이어지고 중복 지급되지 않는다. dashboard-api 호출마다 새 `ctx_ui_`를 붙여도 상관없다.
 - 감사 기록의 `agent_override`(상담원 승인) 라벨은 화면 표기에 맞춘 이름이다. `claim_stats.agent_overrides`는 자동 판정을 뒤집는 경우만 세는데 지금은 자동 판정을 바꿀 수 없어 항상 0이다.
 
-### 인사 탭: 인수인계 질문 (목 모드 전용)
-형식은 모두 계약 `ax_contracts.schemas.hr`를 그대로 쓴다. hr 에이전트에 인수인계 skill이 아직 없어서 목 모드(`DASHBOARD_MOCK=1`)에서만 응답하고, 아니면 `503 UPSTREAM_NOT_CONNECTED`다.
-| 경로 (`/api/dashboard` 아래) | 응답 |
-| --- | --- |
-| GET `/handovers`, `/handovers/{handover_id}` | `StartHandoverOutput` (상태, 항목, 완성도, 빈 자리 수, 대기 질문) |
-| GET `/handover-questions` | 답을 기다리는 `HandoverQuestion` 전체 (각 질문에 `context_id`) |
-| POST `/handover-questions/{question_id}/answer` | 본문 `HandoverAnswerRequest`(`question_id`, `answer`, `idempotency_key`) → `AnswerHandoverQuestionOutput` (남은 질문, 새 완성도, 상태) |
-- 완성도·빈 자리 수는 코드가 계산한다 (완성도 = (항목 수 - 빈 자리) / 항목 수). 마지막 질문에 답하면 `ready`가 된다.
-- 같은 `idempotency_key`로 같은 질문에 다시 보내면 이전 결과를 돌려주고 한 번만 반영한다 (다른 질문에 쓰면 409 `IDEMPOTENCY_CONFLICT`). 이미 답한 질문은 409 `INVALID_STATE`, 없는 질문은 404, 본문 오류(빈 답변·빈 키·경로와 다른 `question_id`)는 422다.
-- 실제 연결 계획: 답변은 새 요청으로 hr `answer_handover_question`(A2A, `deadline` 30초 그대로)에 보내고, 요청 `context_id`는 새 `ctx_ui_`가 아니라 **질문의 `context_id`**를 그대로 쓴다 (`support_client.call()`에 `context_id` 인자 추가 필요). 대기 중인 질문 목록은 hr의 읽기 skill로 받는다.
-- hr 쪽에 필요한 것: `start_handover`·`answer_handover_question` 구현과 Agent Card 등록(요청 가능: dashboard-api), 대기 질문·인수인계 목록 읽기 skill (계약에 없음).
+### 인사 탭: 인수인계·후보 카드
+형식은 모두 계약 `ax_contracts.schemas.hr`를 그대로 쓴다. 목 모드(`DASHBOARD_MOCK=1`)는 메모리 데이터로, 아니면 hr 에이전트 skill을 A2A로 부른다(`hr_client.py`, 요청자 `dashboard-api`, `deadline` 30초). hr 화면 계약 문서는 `docs/notes/hr/dashboard-api-contract.md`다.
+| 경로 (`/api/dashboard` 아래) | hr skill | 응답 `data` |
+| --- | --- | --- |
+| GET `/handovers?status&area` | `list_handovers` | `HandoverView[]` (인계자·후임·영역·사유·완성도·항목·`open_questions`) |
+| GET `/handovers/{handover_id}` | `list_handovers`에서 찾음 (단건 skill 없음) | `HandoverView`, 없으면 404 |
+| GET `/handover-questions?assignee_id&handover_id` | `list_open_questions` | 답을 기다리는 `HandoverQuestion[]` (각 질문에 `context_id`) |
+| POST `/handover-questions/{question_id}/answer` | `answer_handover_question` | 본문 `HandoverAnswerRequest`(`question_id`, `answer`, `idempotency_key`) → `AnswerHandoverQuestionOutput` |
+| GET `/candidate-cards?area` | `list_candidate_cards` | 후보 `Card[]` (`candidate: true`, `confidence` low·mid·high) |
+| POST `/candidate-cards/{card_id}/decision` | `decide_candidate_card` | 본문 `{decision: approve|reject, note?}` → `{card_id, status: active|retired}` |
+- 답변은 질문이 속한 사건의 `context_id`(질문 목록에서 받은 값)를 그대로 `meta.context_id`로 보낸다. 새로 만들지 않는다. 그래서 hr 감사 기록이 그 사건으로 모인다. 이미 답해서 대기 목록에서 빠진 질문(같은 답의 재전송)은 사건을 알 수 없어 새 `ctx_ui_`로 보내고, hr이 질문 ID로 찾아 한 번만 반영한다. 멱등 키는 본문의 `idempotency_key`다.
+- 같은 답을 다시 보내면 한 번만 반영되고 성공한다. **다른 답**을 다시 보내면 409 `CONFLICT`다. 없는 질문·카드·인수인계는 404 `NOT_FOUND`, 본문 오류(빈 답변·빈 키·경로와 다른 `question_id`·모르는 결정 값)는 422다.
+- 후보 카드: 같은 결정을 다시 하면 성공하고 반대 결정이면 409 `CONFLICT`다. 실행은 hr이 `decide_candidate_card`(A)로 한다. 대시보드는 hr skill만 부르고 직접 `execute()`하지 않는다. 승인 권한 규칙은 아직 없다(누구나 호출 가능, 정하면 여기서 막는다).
+- hr 결과를 오류로 바꾸는 표(`hr_client.unwrap`): `rejected/INVALID_INPUT` 422, 그 밖의 `rejected` 403 `UPSTREAM_REJECTED`, `UNKNOWN_*` 404 `NOT_FOUND`, `CONFLICT`·`NOT_CANDIDATE`·`HANDOVER_CLOSED` 등 409 `CONFLICT`, `gate_*` 409 `NOT_EXECUTED`, `failed` 502 `UPSTREAM_ERROR`, `canceled` 504 `UPSTREAM_TIMEOUT`. `input-required`(사람 입력 대기)는 오류가 아니라 출력 그대로다.
+- 목과 실제는 같은 모양이다. 예전 목의 `StartHandoverOutput`(`gap_count`, `questions`)은 hr 화면 계약의 `HandoverView`(`open_questions`)로 바뀌었다. 화면 타입을 다시 만들어야 한다.
+- 완성도·진행률 같은 숫자는 hr이 계산한 값이다 (목은 코드가 계산: 완성도 = (항목 수 - 빈 자리) / 항목 수).
 - 답변 문장은 사람이 쓴 내부 입력이라 계약대로 `input`으로 보낸다. 화면은 텍스트로만 표시해야 한다.
+- 아직 연결하지 않은 hr 화면 경로(온보딩·변경·명부·감사 기록·계획 비교)는 `dashboard-api-contract.md` 2장의 제안 경로대로 이어서 붙인다.
 
 ### 사건 ID (`context_id`)
 모든 요청에는 사건 단위 `context_id`가 필요하다. 화면(상담원) 호출은 요청마다 새 `ctx_ui_<hex>`를 붙인다 (`support_client.UI_CONTEXT_PREFIX`, 한 곳).

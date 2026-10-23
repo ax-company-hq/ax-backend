@@ -331,11 +331,12 @@ async def confirm_handover(svc: Services, request: AgentRequest) -> AgentResult:
         "area": row["area"],
         "item_ids": item_ids,
         "completeness": pct,
+        "completeness_percent": int(pct),  # safety 규칙(#186)이 읽는 0~100 정수
         "target": row["handover_id"],
         "summary": (
             f"인수인계 확정 요청 {row['owner_id']}→{row['successor_id'] or '미정'} "
             f"({row['area']}), 완성도 {pct}%"
-        ),
+        )[:200],
     }
     evidence = make_evidence(svc.clock, params_for_gate["summary"], [row["handover_id"], *item_ids])
     decision = await svc.gate.execute(

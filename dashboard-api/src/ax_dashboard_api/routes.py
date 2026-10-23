@@ -8,11 +8,27 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 
-from ax_contracts.schemas.hr import HandoverAnswerRequest
-from ax_dashboard_api import claim_mapping, mock_actions, mock_data, mock_handover, support_client
+from ax_contracts.schemas.hr import (
+    AnswerHandoverQuestionOutput,
+    DecideCandidateCardOutput,
+    HandoverAnswerRequest,
+    HandoverQuestion,
+    HandoverStatus,
+    HandoverView,
+)
+from ax_contracts.schemas.record import Card
+from ax_dashboard_api import (
+    claim_mapping,
+    hr_client,
+    mock_actions,
+    mock_data,
+    mock_handover,
+    support_client,
+)
 from ax_dashboard_api.envelope import ApiError, is_mock, ok, require_mock
 from ax_dashboard_api.schemas import (
     AgentMessageBody,
+    CandidateDecisionBody,
     Conversation,
     ConversationCreate,
     ConversationListItem,
@@ -27,6 +43,8 @@ from ax_dashboard_api.schemas import (
     TextBody,
     Validation,
 )
+
+HR_LIST_LIMIT = 200  # hr 조회 skill의 최대 건수
 
 router = APIRouter(prefix="/api/dashboard")
 # 목 데이터만 있는 경로 (클레임·보상 큐·후기·집계 등). 실제 연결은 이후 단계에서 바꾼다
@@ -300,34 +318,100 @@ def review_status(review_id: int, body: ReviewStatusBody) -> dict:
     return ok(mock_actions.set_review_status(review_id, body.status))
 
 
-# ------------------------------------ 인사 탭: 인수인계 질문 (목 전용, hr skill이 생기면 A2A 연결)
-@mock_only.get("/handovers")
-def handovers() -> dict:
-    items = mock_handover.BOARD.list_handovers()
+# ------------------------------------ 인사 탭: 인수인계·후보 카드
+# 목 모드는 `mock_handover`, 아니면 hr skill을 A2A로 부른다 (`hr_client`).
+# 응답은 계약 모델 그대로다.
+@router.get("/handovers")
+async def handovers(status: HandoverStatus | None = None, area: str | None = None) -> dict:
+    if is_mock():
+        items = mock_handover.BOARD.list_handovers(status, area)
+    else:
+        items = await _live_handovers(status=status, area=area)
     return ok(items, total=len(items))
 
 
-@mock_only.get("/handovers/{handover_id}")
-def handover(handover_id: str) -> dict:
-    return ok(mock_handover.BOARD.get(handover_id))
+async def _live_handovers(**filters: str | None) -> list[HandoverView]:
+    payload = {k: v for k, v in filters.items() if v is not None}
+    out = await hr_client.call("list_handovers", {**payload, "limit": HR_LIST_LIMIT})
+    return [HandoverView.model_validate(h) for h in out["handovers"]]
 
 
-@mock_only.get("/handover-questions")
-def handover_questions() -> dict:
+@router.get("/handovers/{handover_id}")
+async def handover(handover_id: str) -> dict:
+    if is_mock():
+        return ok(mock_handover.BOARD.get(handover_id))
+    found = next((h for h in await _live_handovers() if h.handover_id == handover_id), None)
+    if found is None:  # hr에 단건 조회 skill이 없어 목록에서 찾는다
+        raise ApiError(404, "NOT_FOUND", f"인수인계 {handover_id}를 찾을 수 없다")
+    return ok(found)
+
+
+@router.get("/handover-questions")
+async def handover_questions(
+    assignee_id: str | None = None, handover_id: str | None = None
+) -> dict:
     """인계자의 답을 기다리는 질문 전체. 각 질문에 `context_id`가 있어 답변이 같은 사건으로 간다."""
-    items = mock_handover.BOARD.pending_questions()
+    if is_mock():
+        items = mock_handover.BOARD.pending_questions(assignee_id, handover_id)
+    else:
+        items = await _live_questions(assignee_id=assignee_id, handover_id=handover_id)
     return ok(items, total=len(items))
 
 
-@mock_only.post("/handover-questions/{question_id}/answer")
-def answer_handover_question(question_id: str, body: HandoverAnswerRequest) -> dict:
+async def _live_questions(**filters: str | None) -> list[HandoverQuestion]:
+    out = await hr_client.call(
+        "list_open_questions", {k: v for k, v in filters.items() if v is not None}
+    )
+    return [HandoverQuestion.model_validate(q) for q in out["questions"]]
+
+
+@router.post("/handover-questions/{question_id}/answer")
+async def answer_handover_question(question_id: str, body: HandoverAnswerRequest) -> dict:
     if body.question_id != question_id:
         raise ApiError(422, "INVALID_REQUEST", "question_id: 경로와 본문이 다르다")
-    if not body.answer.strip():
+    answer = body.answer.strip()
+    if not answer:
         raise ApiError(422, "INVALID_REQUEST", "answer: 답변이 비었다")
     if not body.idempotency_key.strip():
         raise ApiError(422, "INVALID_REQUEST", "idempotency_key: 필수다")
-    return ok(mock_handover.BOARD.answer(question_id, body.answer.strip(), body.idempotency_key))
+    if is_mock():
+        return ok(mock_handover.BOARD.answer(question_id, answer, body.idempotency_key))
+    # 답변은 질문이 속한 사건의 context_id로 보낸다. 이미 답해서 목록에서 빠진 질문(같은 답의
+    # 재전송)은 사건을 알 수 없어 새 사건으로 보낸다. hr은 질문 ID로 대기 상태를 찾고 같은 답은
+    # 한 번만 반영한다.
+    known = next((q for q in await _live_questions() if q.question_id == question_id), None)
+    out = await hr_client.call(
+        "answer_handover_question",
+        {"question_id": question_id, "answer": answer},
+        context_id=known.context_id if known else None,
+        key=body.idempotency_key,
+    )
+    return ok(AnswerHandoverQuestionOutput.model_validate(out))
+
+
+@router.get("/candidate-cards")
+async def candidate_cards(area: str | None = None) -> dict:
+    """확신이 낮아 후보로 둔 카드 (사람이 승인·폐기)."""
+    if is_mock():
+        items = mock_handover.BOARD.candidate_cards(area)
+    else:
+        out = await hr_client.call("list_candidate_cards", {"area": area} if area else {})
+        items = [Card.model_validate(c) for c in out["cards"]]
+    return ok(items, total=len(items))
+
+
+@router.post("/candidate-cards/{card_id}/decision")
+async def decide_candidate_card(card_id: str, body: CandidateDecisionBody) -> dict:
+    """후보 카드 승인·폐기. hr이 `decide_candidate_card`(A)로 실행하고, 같은 결정은 성공한다."""
+    if is_mock():
+        return ok(mock_handover.BOARD.decide(card_id, body.decision))
+    payload: dict[str, str] = {"card_id": card_id, "decision": body.decision}
+    if body.note and body.note.strip():
+        payload["note"] = body.note.strip()
+    out = await hr_client.call(
+        "decide_candidate_card", payload, target=f"card:{card_id}:{body.decision}"
+    )
+    return ok(DecideCandidateCardOutput.model_validate(out))
 
 
 router.include_router(mock_only)

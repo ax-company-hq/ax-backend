@@ -42,7 +42,7 @@ logger = logging.getLogger("ax.support.handlers")
 
 STORE = persistence.build_inquiry_store()
 LEDGER = persistence.build_sequence_ledger()
-# 문의와 기획개발 변경 요청의 연결. 요청·결과 skill은 계약이 정해진 뒤 붙인다 (change_requests.py)
+# 문의와 기획개발 변경 요청의 연결. 요청은 change_handlers.py, 결과 통지는 계약이 정해진 뒤 붙인다
 CHANGES = persistence.build_change_request_store()
 SEND = call_agent  # 테스트에서 바꿀 수 있다
 
