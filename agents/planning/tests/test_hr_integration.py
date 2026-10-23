@@ -434,3 +434,97 @@ def test_confirm_without_warn_has_no_warn_ignored(gate) -> None:
     [case_params] = gate.params("record_case")
     assert "warn_ignored" not in case_params
     assert "warn 무시" not in RecordCase.model_validate(case_params["record_case"]).summary
+
+
+# ---- verify_handover: safety 교차검증 호출 형식 (#187)
+
+
+def _review(params: dict, action: str = "confirm_handover") -> dict:
+    """safety `Gate._cross_verify`가 verifier skill에 넣는 input과 같은 모양."""
+    return {
+        "execution_id": "exe_hnd_1",
+        "action": action,
+        "requester": "hr",
+        "params": params,
+        "computed_amount": None,
+        "threshold_version": "2026-10-23",
+    }
+
+
+def _safety_verdict(result: dict) -> str:
+    """safety `call_verifier` 규칙: completed이고 decision == approved 또는 approved == true만 승인."""
+    if result["status"] != "completed":
+        return "unavailable"
+    out = result["output"]
+    return (
+        "approved"
+        if out.get("decision") == "approved" or out.get("approved") is True
+        else "rejected"
+    )
+
+
+def _verify_review(a2a_body, params: dict, action: str = "confirm_handover") -> dict:
+    body = a2a_body(
+        "verify_handover",
+        _review(params, action),
+        token="mock:safety",
+        context_id="ctx_hnd_0001",
+        idempotency_key="verify:exe_hnd_1",
+    )
+    return _call(body)
+
+
+HR_PARAMS = {
+    "handover_id": "hnd_1",
+    "owner_id": "emp_01",
+    "area": "payment",
+    "completeness_percent": 90,
+    "target": "hnd_1",
+    "summary": "인수인계 확정 요청 emp_01→emp_02 (payment), 완성도 90%",
+}
+
+
+def test_verify_handover_accepts_safety_review_format(service, a2a_body) -> None:
+    before = _domain(service)
+    ok = _verify_review(a2a_body, {**HR_PARAMS, "item_ids": ["dep_pr_28"]})
+    assert (ok["status"], ok["outcome"]) == ("completed", None)
+    out = VerifyHandoverOutput.model_validate(ok["output"])
+    assert (out.approved, out.reason_code) == (True, "complete")
+    assert _safety_verdict(ok) == "approved"
+    assert "execution:exe_hnd_1" in ok["evidence"]["ref_ids"]
+    assert "handover:hnd_1" in ok["evidence"]["ref_ids"]
+    assert _domain(service) == before
+    reply = service.state.activity[-1]
+    assert (reply.from_, reply.to, reply.point) == ("planning", "safety", "verify_handover")
+
+    # 계약 이름(handover_item_ids)으로 와도 같다
+    same = _verify_review(a2a_body, {**HR_PARAMS, "handover_item_ids": ["dep_pr_28"]})
+    assert same["output"] == ok["output"] | {"checked_at": same["output"]["checked_at"]}
+
+
+def test_verify_handover_review_format_missing_is_rejected(service, a2a_body) -> None:
+    result = _verify_review(a2a_body, {**HR_PARAMS, "item_ids": []})
+    assert (result["status"], result["outcome"]) == ("completed", "rejected_by_review")
+    out = VerifyHandoverOutput.model_validate(result["output"])
+    assert (out.approved, out.reason_code) == (False, "missing_items")
+    assert [i.item_id for i in out.missing] == ["dep_pr_28"]
+    assert _safety_verdict(result) == "rejected"
+
+
+def test_verify_handover_review_format_target_and_bad_input(service, a2a_body) -> None:
+    # handover_id가 없으면 target(=handover_id)을 쓴다
+    params = {k: v for k, v in HR_PARAMS.items() if k != "handover_id"} | {
+        "item_ids": ["dep_pr_28"]
+    }
+    assert _safety_verdict(_verify_review(a2a_body, params)) == "approved"
+    # 담당자를 모르면 판정하지 않는다 → failed (safety는 무응답 → 보류)
+    no_owner = {k: v for k, v in HR_PARAMS.items() if k != "owner_id"}
+    bad = _verify_review(a2a_body, no_owner)
+    assert (bad["status"], bad["outcome"]) == ("failed", "invalid_input")
+    assert _safety_verdict(bad) == "unavailable"
+    # 다른 액션의 검토는 받지 않는다
+    other = _verify_review(a2a_body, HR_PARAMS, action="confirm_reassignment")
+    assert (other["status"], other["outcome"]) == ("failed", "invalid_input")
+    # 명부에 없는 영역도 승인하지 않는다
+    weird = _verify_review(a2a_body, {**HR_PARAMS, "area": "shop-api/payment"})
+    assert _safety_verdict(weird) == "unavailable"

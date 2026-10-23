@@ -13,7 +13,9 @@
 
 from __future__ import annotations
 
-from pydantic import ValidationError
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ax_contracts.schemas import AgentRequest, AgentResult, Evidence, TaskStatus
 from ax_contracts.schemas.planning import (
@@ -267,12 +269,63 @@ async def list_in_progress(request: AgentRequest) -> AgentResult:
     )
 
 
+class SafetyReviewInput(BaseModel):
+    """safety 교차검증 호출 형식 (`safety/src/ax_safety/gate.py` `_cross_verify`, #187).
+
+    safety는 B 액션의 검증자 skill을 계약 입력이 아니라 실행 요청 그대로 부른다:
+    `{execution_id, action, requester, params, computed_amount, threshold_version}`.
+    hr `confirm_handover`의 params는 `handover_id`·`owner_id`·`area`·`item_ids`(또는
+    `handover_item_ids`)·`completeness_percent` 등이다. 완성도는 safety 규칙이 보므로 쓰지 않는다.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    execution_id: str
+    action: str
+    requester: str | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+HANDOVER_ACTIONS = ("confirm_handover",)
+
+
+def _handover_input(raw: dict[str, Any]) -> tuple[VerifyHandoverInput, str | None]:
+    """계약 형식이면 그대로, safety 검토 형식이면 계약 입력으로 바꾼다. (입력, execution_id)."""
+    if "execution_id" not in raw or "params" not in raw:
+        return VerifyHandoverInput.model_validate(raw), None
+    review = SafetyReviewInput.model_validate(raw)
+    if review.action not in HANDOVER_ACTIONS:
+        raise ValueError(f"verify_handover가 검증하지 않는 액션: {review.action}")
+    p = review.params
+    items = p.get("handover_item_ids")
+    if items is None:
+        items = p.get("item_ids", [])
+    converted = {
+        "handover_id": p.get("handover_id") or p.get("target"),
+        "owner_id": p.get("owner_id"),
+        "area": p.get("area"),
+        "handover_item_ids": items,
+    }
+    return VerifyHandoverInput.model_validate(converted), review.execution_id
+
+
 async def verify_handover(request: AgentRequest) -> AgentResult:
-    """hr confirm_handover(B)의 교차검증 (read). 거절도 completed + rejected_by_review."""
+    """hr confirm_handover(B)의 교차검증 (read). 거절도 completed + rejected_by_review.
+
+    입력은 계약 `VerifyHandoverInput` 또는 safety 검토 형식(`SafetyReviewInput`) 둘 다 받는다.
+    출력은 계약 `VerifyHandoverOutput`이고 safety는 `approved == true`일 때만 승인으로 본다.
+    """
     try:
-        inp = VerifyHandoverInput.model_validate(request.input)
+        inp, execution_id = _handover_input(request.input)
     except ValidationError as exc:
         return _invalid(request, exc)
+    except ValueError as exc:
+        return AgentResult(
+            meta=request.meta,
+            status=TaskStatus.FAILED,
+            outcome="invalid_input",
+            output={"message": str(exc)},
+        )
     if inp.area is not None and not is_roster_area(inp.area):
         # 비교할 영역을 모르면 승인하지 않는다 (safety는 failed를 무응답으로 보고 보류한다)
         return AgentResult(
@@ -314,7 +367,9 @@ async def verify_handover(request: AgentRequest) -> AgentResult:
                 f"missing = in_progress - handover_item_ids ({len(inp.handover_item_ids)}건)",
             ],
             data_summary=summary,
-            ref_ids=[f"handover:{inp.handover_id}"] + _item_refs(check.current),
+            ref_ids=[f"handover:{inp.handover_id}"]
+            + ([f"execution:{execution_id}"] if execution_id else [])
+            + _item_refs(check.current),
         ),
     )
 
