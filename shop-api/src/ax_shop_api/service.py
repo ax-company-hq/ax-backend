@@ -160,11 +160,16 @@ class Shop:
             "FROM payments WHERE order_id = ? ORDER BY rowid",
             (order_id,),
         ).fetchall()
+        refunded = conn.execute(
+            "SELECT COALESCE(SUM(amount), 0) AS total FROM refunds WHERE order_id = ?",
+            (order_id,),
+        ).fetchone()["total"]
         return {
             "order_id": order["order_id"],
             "buyer_id": order["buyer_id"],
             "status": order["status"],
             "total_amount": order["total_amount"],
+            "refunded_amount": refunded,
             "shipping_fee": order["shipping_fee"],
             "points_used": order["points_used"],
             "delivered_at": order["delivered_at"],
