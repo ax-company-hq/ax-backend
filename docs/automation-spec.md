@@ -375,6 +375,15 @@ claude-review.yml — 트리거: pull_request_target [opened, synchronize, reope
 - contracts 리뷰 부서: 바뀐 contracts 경로 → contracts_affected 표의 부서 (team.py `Team.contracts_reviewers`). 표에 없는 파일이 있으면 reviewers.contracts를 더한다.
   cap은 끝난 contracts 리뷰 run의 jobs를 읽어 실제 리뷰 부서로 센다 (run 제목으로는 알 수 없음, 결과는 캐시)
 
+### 12. 핵심 파일 사후 확인 (code owner 리뷰 필수 해제 이후)
+- dev 브랜치 보호의 "code owner 리뷰 필수"는 꺼져 있다. 핵심 파일의 벽은 folder-guard다:
+  봇 PR은 부서 폴더·docs/notes/<부서>/만 바꿀 수 있어 `.github/`·`.claude/`·CODEOWNERS·human_files(기준표 toml)를 건드리면 실패한다
+  (revert/는 사람 경로 불가, openapi/sync-는 contracts/openapi/만). 작성 후처리(write_post)와 guard-folder 훅도 같은 경로를 막는다
+- 핵심 파일(team.yml `core_paths` + `human_files`)을 바꾼 PR이 dev에 머지되면 core-change-notify.yml이
+  `core-change` 라벨을 붙이고 열린 report 이슈에 `@core_notify 핵심 파일 변경 머지: #N 제목 (@작성자) — 파일` 한 줄을 남긴다 (스위치 무관)
+- 매일 정리 report에 "지난 24시간 핵심 파일 변경" 목록 (core-change 라벨)
+- (보류) 감사 에이전트 2개 구조(#213)
+
 ### 완료 기준 (각 단계는 자기 범위에 해당하는 항목만)
 - team.py 단위 테스트: 리뷰어 표 모든 행, 같은 사람 대체, contracts 대체, 빈 목록 실패, check-diff(human_paths·루트 파일·notes 예외·uv.lock·심볼릭 링크 거부·bot_branches),
   사람 PR 다부서, dept-of-branch 별칭, cap 계산(token_dept 기준), requeue 단계

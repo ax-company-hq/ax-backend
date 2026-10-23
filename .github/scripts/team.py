@@ -157,6 +157,15 @@ class Team:
                 return dept_id
         return None
 
+    def is_core_path(self, path: str) -> bool:
+        """핵심 파일: core_paths(.github/·.claude/·CODEOWNERS)와 human_files(기준표 toml)."""
+        if path in self.human_files:
+            return True
+        for p in self.data.get("core_paths", []):
+            if path == p.rstrip("/") or (p.endswith("/") and path.startswith(p)):
+                return True
+        return False
+
     def is_human_file(self, path: str) -> bool:
         """부서 폴더 안이지만 사람만 바꾸는 파일 (team.yml human_files)."""
         return path in self.human_files
