@@ -14,8 +14,9 @@ bot_login: ax-company-hq-bot[bot]
 # 하루 Claude 실행 상한은 사람마다 작성(write_cap)·리뷰(review_cap)를 따로 센다 (UTC 날짜 기준)
 
 # 에이전트 리뷰(agent-review)는 이 부서를 건드렸거나 부서 2개 이상에 걸친 PR에만 돈다.
-# 부서 하나 안에서만 바뀐 PR은 guards가 agent-review를 "not required"로 success 처리한다
-review_required_depts: [contracts, agent-template]
+# 공유 폴더(contracts, agent-template)와 안전 레이어(safety)·통합 에이전트(orchestrator)는 단독 PR도 리뷰.
+# 그 밖의 부서 하나 안에서만 바뀐 PR은 guards가 agent-review를 "not required"로 success 처리한다
+review_required_depts: [contracts, agent-template, safety, orchestrator]
 
 # 부서마다 동시에 진행할 수 있는 작성 수. 넘으면 새 작성을 시작하지 않고 wip-wait 라벨로 기다린다
 wip: { open_bot_prs: 2, in_progress_issues: 3 }

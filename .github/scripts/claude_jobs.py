@@ -899,11 +899,30 @@ def stale_targets(team: team_mod.Team, prs: list[dict], issues: list[dict],
     return old_prs, old_issues
 
 
+GREEN = {"success", "skipped", "neutral"}
+
+
+def pr_all_green(sha: str) -> bool:
+    """그 커밋의 커밋 상태와 check run이 전부 초록인지 (승인만 기다리는 PR). 못 읽으면 False."""
+    try:
+        status = api(f"repos/{repo()}/commits/{sha}/status") or {}
+        runs = (api(f"repos/{repo()}/commits/{sha}/check-runs?per_page=100") or {}).get(
+            "check_runs", [])
+    except subprocess.CalledProcessError:
+        return False
+    if status.get("state") != "success":
+        return False
+    return all(r.get("status") == "completed" and r.get("conclusion") in GREEN for r in runs)
+
+
 def stale_sweep(team: team_mod.Team, now: datetime | None = None) -> str:
     now = now or datetime.now(UTC)
     prs = api(f"repos/{repo()}/pulls?state=open&per_page=100") or []
     issues = list_pages(f"repos/{repo()}/issues?state=open")
     old_prs, old_issues = stale_targets(team, prs, issues, now)
+    # 체크가 모두 초록이고 사람 승인만 기다리는 PR(계약 PR 등)은 닫지 않는다
+    waiting = [p for p in old_prs if pr_all_green(p["head"]["sha"])]
+    old_prs = [p for p in old_prs if p not in waiting]
     hours = team.stale_hours
     lines = []
     for pr in old_prs:
@@ -932,6 +951,9 @@ def stale_sweep(team: team_mod.Team, now: datetime | None = None) -> str:
     day = now.strftime("%Y-%m-%d")
     body = [f"{hours}시간 넘게 변화가 없던 봇 PR·이슈 정리 ({day} UTC)", ""]
     body += lines or ["- 닫은 것 없음"]
+    if waiting:
+        body += ["", "**승인 대기 (체크 초록, 닫지 않음)**",
+                 *[f"- PR #{p['number']} {p['title']}" for p in waiting]]
     if resumed:
         body += ["", "**wip-wait 재개**", *[f"- {r}" for r in resumed]]
     for old in issues:

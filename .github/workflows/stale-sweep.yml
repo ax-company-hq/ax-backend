@@ -47,6 +47,9 @@ jobs:
           permission-pull-requests: write
           permission-contents: write
           permission-actions: write
+          # 체크가 모두 초록이고 승인만 기다리는 PR은 닫지 않으려고 읽는다
+          permission-statuses: read
+          permission-checks: read
       - name: 정리 · report
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}

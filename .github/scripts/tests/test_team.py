@@ -726,6 +726,9 @@ def test_event_pull_request_bad_file(tmp_path, monkeypatch) -> None:
         (["agents/data/a.py", "memory/b.py"], True),  # 부서 2개 (사람 PR)
         (["contracts/x.py"], True),
         (["agent-template/x.py"], True),
+        (["safety/src/x.py"], True),  # 안전 레이어는 단독 PR도 리뷰
+        (["orchestrator/x.py"], True),
+        (["agents/finance/x.py"], False),
         (["docs/notes/agent-template/x.md"], True),  # notes도 그 부서
         (["README.md"], False),  # human_paths만 (guards가 따로 처리)
     ],
@@ -788,3 +791,13 @@ def test_dispatch_write_explicit_dept_mode_skips_label_lookup(team: Team, monkey
     assert [c[0] for c in calls] == ["repos/o/r/issues/9/labels",
                                      "repos/o/r/actions/workflows/_claude-write.yml/dispatches"]
     assert "inputs[dept]=data" in calls[1][1] and "inputs[mode]=task" in calls[1][1]
+
+
+def test_guard_same_name_in_two_files_must_both_survive() -> None:
+    # 준하 리뷰: 흔한 이름(test_smoke)이 두 파일에 있으면 한쪽을 지워도 통과하던 구멍
+    a = "def test_smoke():\n    assert x()\n"
+    files = {"agents/data/tests/test_a.py": (a, ""), "agents/data/tests/test_b.py": (a, a)}
+    v = team_mod.find_test_weakening(
+        [ch("agents/data/tests/test_a.py", "D"), ch("agents/data/tests/test_b.py")],
+        lambda p: files[p][0], lambda p: files[p][1])
+    assert any("테스트 삭제" in x and "test_smoke" in x for x in v)

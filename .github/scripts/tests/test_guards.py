@@ -69,10 +69,12 @@ def test_human_mixed_one_dept_not_required(team) -> None:
 @pytest.mark.parametrize(
     "paths",
     [["agents/data/a.py", "memory/b.py"],  # 사람 PR 부서 2개
-     ["contracts/x.py"], ["agent-template/x.py"]],
+     ["contracts/x.py"], ["agent-template/x.py"], ["safety/x.py"], ["orchestrator/x.py"]],
 )
 def test_shared_or_multi_dept_needs_review(team, paths) -> None:
-    author = "haakim7" if paths[0].startswith(("contracts", "agent-template")) else "JangJaehyeonn"
+    owners = {"contracts": "haakim7", "agent-template": "haakim7", "orchestrator": "haakim7",
+              "safety": "2taeyoon"}
+    author = owners.get(paths[0].split("/")[0], "JangJaehyeonn")
     plan = decide(team, pr(author), [ch(x) for x in paths])
     assert "agent-review" not in states(plan)
 

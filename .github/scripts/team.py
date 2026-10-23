@@ -28,6 +28,7 @@ import os
 import re
 import subprocess
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -356,10 +357,10 @@ def _count_real_asserts(node: ast.AST) -> int:
     return _count_asserts(node) - sum(1 for sub in ast.walk(node) if _trivial_assert(sub))
 
 
-def test_inventory(source: str) -> tuple[set[str], int]:
-    """(테스트 이름 집합 `Class.test_x`/`test_x`, 의미 있는 assert 수)."""
+def test_inventory(source: str) -> tuple[Counter[str], int]:
+    """(테스트 이름 개수 `Class.test_x`/`test_x`, 의미 있는 assert 수)."""
     tree = ast.parse(source)
-    names: set[str] = set()
+    names: Counter[str] = Counter()
     asserts = 0
 
     def visit(body, prefix: str) -> None:
@@ -369,22 +370,20 @@ def test_inventory(source: str) -> tuple[set[str], int]:
                 visit(n.body, f"{prefix}{n.name}.")
             elif isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef) and n.name.startswith(
                     "test_"):
-                names.add(prefix + n.name)
+                names[prefix + n.name] += 1
                 asserts += _count_real_asserts(n)
 
     visit(tree.body, "")
     return names, asserts
 
 
-HUMAN_TESTS = "(사람 경로)"
-
-
 def find_test_weakening(changes: list[Change], read_base, read_head,
                         team: Team | None = None) -> list[str]:
     """부서별로 테스트 약화를 찾는다.
 
-    - 바뀐 파일에 있던 테스트 이름이 같은 부서의 바뀐 파일 어디에도 남아 있지 않으면 실패
-      (파일을 나누거나 옮기는 것은 이름이 남으니 통과, 지우거나 이름만 바꿔 갈아치우면 실패)
+    - 바뀐 파일에 있던 테스트 이름이 같은 부서의 바뀐 파일에서 그 개수만큼 남아 있지 않으면 실패
+      (파일을 나누거나 옮기는 것은 이름이 남으니 통과, 지우거나 이름만 바꿔 갈아치우면 실패.
+       `test_smoke`처럼 흔한 이름이 두 파일에 있으면 둘 다 남아야 한다)
     - 테스트 함수 안 의미 있는 assert 수(`assert True` 같은 상수 assert 제외) 합계가 줄면 실패
     team이 없으면 전체를 한 묶음으로 본다. 부서 폴더 밖 테스트는 "(사람 경로)" 한 묶음.
     """
@@ -394,23 +393,25 @@ def find_test_weakening(changes: list[Change], read_base, read_head,
         if not is_test_path(c.path):
             continue
         try:
-            b = test_inventory(read_base(c.path)) if c.status != "A" else (set(), 0)
-            h = test_inventory(read_head(c.path)) if c.status != "D" else (set(), 0)
+            b = test_inventory(read_base(c.path)) if c.status != "A" else (Counter(), 0)
+            h = test_inventory(read_head(c.path)) if c.status != "D" else (Counter(), 0)
         except (SyntaxError, ValueError, RecursionError, MemoryError) as e:
             violations.append(f"{c.path}: 파싱 실패 ({type(e).__name__})")
             continue
         group = (team.dept_of_path(c.path) if team else None) or HUMAN_TESTS
-        g = groups.setdefault(group, {"base": {}, "head": set(), "ba": 0, "ha": 0})
+        g = groups.setdefault(group, {"base": Counter(), "where": {}, "head": Counter(),
+                                      "ba": 0, "ha": 0})
         for name in b[0]:
-            g["base"].setdefault(name, c.path)
-        g["head"] |= h[0]
+            g["where"].setdefault(name, c.path)
+        g["base"] += b[0]
+        g["head"] += h[0]
         g["ba"] += b[1]
         g["ha"] += h[1]
     for group, g in sorted(groups.items()):
         where = f"{group}: " if team else ""
-        gone = sorted(n for n in g["base"] if n not in g["head"])
+        gone = sorted(n for n, k in g["base"].items() if g["head"][n] < k)
         for name in gone[:10]:
-            violations.append(f"{where}테스트 삭제 {g['base'][name]}::{name}")
+            violations.append(f"{where}테스트 삭제 {g['where'][name]}::{name}")
         if len(gone) > 10:
             violations.append(f"{where}테스트 삭제 외 {len(gone) - 10}개")
         if g["ha"] < g["ba"]:

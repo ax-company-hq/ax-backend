@@ -107,7 +107,7 @@ members:
   bxbae:          { name: 병환, token: CLAUDE_TOKEN_BYUNGHWAN, write_cap: 15, review_cap: 15 }
   areatmadm:      { name: 재헌, token: CLAUDE_TOKEN_JAEHEON,   write_cap: 15, review_cap: 15 }
 bot_login: ax-company-hq-bot[bot]   # `gh api apps/ax-company-hq-bot`로 확인 (앱 slug: ax-company-hq-bot)
-review_required_depts: [contracts, agent-template]   # 이 부서를 건드렸거나 부서 2개 이상일 때만 agent-review (11장)
+review_required_depts: [contracts, agent-template, safety, orchestrator]   # 이 부서를 건드렸거나 부서 2개 이상일 때만 agent-review (11장)
 wip: { open_bot_prs: 2, in_progress_issues: 3 }      # 부서 동시 작성 한도 (11장)
 stale_hours: 48                                      # 매일 정리 기준 (11장)
 depts:      # id: { folder, aliases, owners(첫 번째가 실행 토큰), env_prefix }
@@ -348,10 +348,12 @@ claude-review.yml — 트리거: pull_request_target [opened, synchronize, reope
    사람 PR이 dev를 깨뜨린 incident = 그 사람이 수정 PR)
 
 ### 11. 단순화 (막히는 PR·이슈 줄이기) — 1~10장보다 우선
-- 리뷰 범위: agent-review는 review_required_depts(contracts, agent-template)를 건드렸거나 부서 2개 이상에 걸친 PR에만 돈다.
+- 리뷰 범위: agent-review는 review_required_depts(contracts, agent-template, safety, orchestrator)를 건드렸거나 부서 2개 이상에 걸친 PR에만 돈다.
+  safety(실행 관문·등급·보류 큐)와 orchestrator(모든 부서 요청 중계)는 단독 PR도 리뷰한다.
   부서 하나 안에서만 바뀐 PR은 guards가 `agent-review` success("not required — 부서 폴더 안 변경")를 쓰고 claude-review prep은 종료.
   필수 체크 구성은 그대로 (agent-review는 계속 필수). 판정 함수: team.py `Team.review_required`, CLI `review-required`
-- cap 분리: 사람마다 write_cap(작성)·review_cap(리뷰)을 따로 센다. 기본 15/15. run 제목으로 종류를 나눈다 (team.py `run_kind`)
+- cap 분리: 사람마다 write_cap(작성)·review_cap(리뷰)을 따로 센다. 기본 15/15. run 제목으로 종류를 나눈다 (team.py `run_kind`).
+  사람당 하루 최대 30회(작성 15 + 리뷰 15)로 예전 합산 20보다 늘었다. 작성이 리뷰 몫을 잡아먹지 않게 하려는 것이고, 비용을 줄이려면 두 값을 낮춘다
 - WIP 제한: _claude-write prep에서 부서의 열린 봇 PR(부서 브랜치)이 open_bot_prs 이상이거나 진행 중(in-progress) to:/dept: 이슈가
   in_progress_issues 이상이면 시작하지 않고 `wip-wait` 라벨 + 코멘트. wip-resume.yml(봇 PR closed)과 stale-sweep이 자리가 난 부서의
   wip-wait 이슈 1개(priority → 번호 순)를 _claude-write로 다시 실행한다
@@ -364,7 +366,8 @@ claude-review.yml — 트리거: pull_request_target [opened, synchronize, reope
 - 턴 한도: 작성 Claude 단계가 --max-turns를 넘으면(execution_file의 result) 재대기하지 않고 `needs-split` 라벨 + "작업 분할 필요" 코멘트
 - 매일 정리: stale-sweep.yml(`0 1 * * *`, AX_AUTOMATION=on) — stale_hours보다 오래 변화 없는 봇 부서 PR은 닫고(브랜치 삭제, 연결 이슈 needs-human),
   봇이 만든 이슈는 `stale` 라벨로 닫는다 (report·incident·in-progress·wip-wait·needs-human·needs-split·delegated·blocked·external·quota·priority는 제외). 목록을 `[report] 정리 <날짜>` 이슈에 남기고 전날 것은 닫는다.
-  revert/·openapi/sync- 같은 봇 브랜치 PR은 dev-health 담당이라 건드리지 않는다
+  revert/·openapi/sync- 같은 봇 브랜치 PR은 dev-health 담당이라 건드리지 않는다.
+  체크(커밋 상태·check run)가 모두 초록이고 승인만 기다리는 봇 PR(예: code owner 승인이 필요한 계약 PR)은 닫지 않는다
 - 기준 문서와 다른 동작: docs PR(requirements·agent-common)을 먼저 합의·머지한 뒤 코드 PR (CLAUDE.md 작업 규칙 11, review.md 막는 기준 1)
 
 ### 완료 기준 (각 단계는 자기 범위에 해당하는 항목만)

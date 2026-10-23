@@ -81,7 +81,7 @@ e커머스 가상회사의 부서별 AI 에이전트를 A2A로 연결한 AX 플�
   - `ci`, `contracts-compat`, `automation-tests` (GitHub Actions)
   - `folder-guard`, `test-guard`, `dev-health`, `agent-review` (ax-bot 커밋 상태)
   - human_paths·`contracts/`를 바꿨으면 code owner 승인 (`.github/`·`.claude/`·`scripts/`·`CLAUDE.md`·`contracts/`는 재현·준하·태윤 중 한 명, 그 밖의 human_paths는 재현·준하 중 한 명)
-- `agent-review`는 다른 부서 에이전트가 한다. 단 공유 폴더(`contracts/`, `agent-template/`)를 건드렸거나 부서 2개 이상에 걸친 PR에만 돈다. 부서 폴더 하나 안에서만 바뀐 PR은 `agent-review`가 "not required"로 통과하고 CI·관문만으로 자동 머지된다. 사람 승인 수(Required approvals)는 0이다. 사람이 승인 버튼을 누를 필요가 없다.
+- `agent-review`는 다른 부서 에이전트가 한다. 단 공유 폴더(`contracts/`, `agent-template/`)·안전 레이어(`safety/`)·통합 에이전트(`orchestrator/`)를 건드렸거나 부서 2개 이상에 걸친 PR에만 돈다. 부서 폴더 하나 안에서만 바뀐 PR은 `agent-review`가 "not required"로 통과하고 CI·관문만으로 자동 머지된다. 사람 승인 수(Required approvals)는 0이다. 사람이 승인 버튼을 누를 필요가 없다.
 - contracts는 에이전트 2명 리뷰 + 하위 호환 검사(`contracts-compat`) + code owner(준하·태윤·재현) 승인으로 머지한다.
 - 사람 PR은 자기가 맡은 부서 여러 개를 함께 바꿀 수 있고, 해당 리뷰 부서 전부가 승인해야 한다. 에이전트 PR은 부서 하나만.
 - 급한 수정: code owner(재현·준하)가 `hotfix` 라벨을 붙이면 관문을 통과한다. 새 커밋이 올라오면 라벨이 떨어진다.

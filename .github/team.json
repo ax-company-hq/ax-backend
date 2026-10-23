@@ -190,7 +190,9 @@
   },
   "review_required_depts": [
     "contracts",
-    "agent-template"
+    "agent-template",
+    "safety",
+    "orchestrator"
   ],
   "reviewers": {
     "agent-template": [

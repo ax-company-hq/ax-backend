@@ -527,6 +527,7 @@ def test_stale_sweep_closes_and_reports(team, monkeypatch) -> None:
     monkeypatch.setattr(cj, "remove_label", lambda n, lb: writes.append((f"rm {n}", lb)))
     monkeypatch.setattr(cj, "add_labels", lambda n, lbs: writes.append((f"add {n}", tuple(lbs))))
     monkeypatch.setattr(cj, "wip_resume", lambda t: [])
+    monkeypatch.setattr(cj, "pr_all_green", lambda sha: False)
     out = cj.stale_sweep(team, now)
     assert out.startswith("PR 1·이슈 1 닫음") and "report #99" in out
     paths = [w[0] for w in writes]
@@ -598,3 +599,43 @@ def test_release_closed_pr(team, monkeypatch, merged, closer, removed) -> None:
     monkeypatch.setattr(cj, "remove_label", lambda n, lb: got.append((n, lb)))
     cj.release_closed_pr(team, 30)
     assert (got == [(7, "in-progress")]) is removed
+
+
+def test_stale_sweep_keeps_green_prs_waiting_for_approval(team, monkeypatch) -> None:
+    # 준하 리뷰: 체크가 모두 초록이고 code owner 승인만 기다리는 봇 계약 PR은 닫지 않는다
+    now = cj.parse_time("2026-10-23T03:00:00Z")
+    prs = [bot_pr("contracts/86-x-r0", 40, body="<!-- ax-issue:86 -->",
+                  updated="2026-10-20T00:00:00Z", sha="green")]
+    writes = []
+
+    def fake_api(path, *extra):
+        if extra:
+            writes.append((path, extra))
+            return {"number": 99}
+        return prs if "/pulls?" in path else []
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setattr(cj, "api", fake_api)
+    monkeypatch.setattr(cj, "comment", lambda n, b: writes.append((f"comment {n}", b)))
+    monkeypatch.setattr(cj, "wip_resume", lambda t: [])
+    monkeypatch.setattr(cj, "pr_all_green", lambda sha: sha == "green")
+    out = cj.stale_sweep(team, now)
+    assert out.startswith("PR 0·이슈 0 닫음")
+    assert "repos/o/r/pulls/40" not in [w[0] for w in writes]
+    body = next(x for x in writes[-1][1] if x.startswith("body="))
+    assert "승인 대기" in body and "PR #40" in body
+
+
+@pytest.mark.parametrize(
+    ("status", "runs", "green"),
+    [("success", [{"status": "completed", "conclusion": "success"},
+                  {"status": "completed", "conclusion": "skipped"}], True),
+     ("pending", [], False),
+     ("success", [{"status": "completed", "conclusion": "failure"}], False),
+     ("success", [{"status": "in_progress", "conclusion": None}], False)],
+)
+def test_pr_all_green(monkeypatch, status, runs, green) -> None:
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setattr(cj, "api", lambda path, *e: {"state": status} if path.endswith("/status")
+                        else {"check_runs": runs})
+    assert cj.pr_all_green("s") is green
