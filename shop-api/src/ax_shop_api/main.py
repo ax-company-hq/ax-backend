@@ -59,6 +59,10 @@ class OrderIn(BaseModel):
     points_used: int = Field(default=0, ge=0)  # 포인트 사용분(원). 품목 금액 비율로 나눠 기록한다
 
 
+class ShippedIn(BaseModel):
+    shipped_at: AwareDatetime | None = None  # 비우면 지금(시연·시드용으로 지난 시각도 가능)
+
+
 class DeliveredIn(BaseModel):
     delivered_at: AwareDatetime | None = None  # 비우면 지금(시연·시드용으로 지난 시각도 가능)
 
@@ -279,6 +283,12 @@ def create_app(db: Db | None = None, seed_data: bool = True) -> FastAPI:
         order = shop.cancel(order_id, body.reason_code)
         await outbox.flush(database)
         return _ok(order)
+
+    @app.post("/api/shop/admin/orders/{order_id}/shipped")
+    async def mark_shipped(
+        order_id: str, body: ShippedIn, _: str = Depends(_caller(INJECT_ALLOWED))
+    ) -> dict:
+        return _ok(shop.mark_shipped(order_id, body.shipped_at))
 
     @app.post("/api/shop/admin/orders/{order_id}/delivered")
     async def mark_delivered(
