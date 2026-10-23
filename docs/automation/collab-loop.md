@@ -13,7 +13,7 @@
 | guards (folder-guard, test-guard, dev-health) | `guards.yml` | 항상 (dev-health는 `AX_DEV_RED` 참조) | dev 필수 체크 |
 | auto-merge | `auto-merge.yml` | 항상 | agent-review가 dev 필수 체크가 아니면 예약하지 않게 되어 있어 **지금은 예약 안 함** → 루프가 승인 후 자동 머지 예약 |
 | bot-ci-failed | `bot-ci-failed.yml` | `AX_AUTOMATION=on` | |
-| 봇 코드 작성 (`to:` 자동 처리) | `claude-request.yml`, `_claude-write.yml` | `AX_AUTOMATION=on` | **끄기로 했지만 아직 켜짐**: 같은 변수가 bot-ci-failed도 켜고 있어 그대로 둠 |
+| 봇 재작성 (재시도·wip 재개) | `_claude-write.yml` | `AX_AUTOMATION=on` | guards 재대기·bot-ci-failed·wip-resume이 직접 실행. 이미 진행 중인 봇 이슈만 해당 |
 | stale-sweep, wip-resume | `stale-sweep.yml`, `wip-resume.yml` | `AX_AUTOMATION=on` | |
 | hotfix, team-guard, core-change-notify | 각 파일 | 항상 | |
 
@@ -22,6 +22,7 @@
 | 자동화 | 워크플로 | 끈 방법 | 이유 | 다시 켜는 방법 |
 | --- | --- | --- | --- | --- |
 | agent-review | `claude-review.yml` | workflow disable + dev 필수 체크에서 `agent-review` 제거 | 루프 교차 리뷰로 대체 | `gh workflow enable claude-review.yml -R ax-company-hq/ax-backend` + dev 필수 체크에 `agent-review`(app_id 5419374) 추가 |
+| 봇 코드 작성 (`to:` 라벨 자동 처리) | `claude-request.yml` | workflow disable (`AX_AUTOMATION`은 on 유지: bot-ci-failed 등과 묶여 있음) | 요청은 루프가 처리 | `gh workflow enable claude-request.yml -R ax-company-hq/ax-backend` |
 | 아침 리포트 | `morning.yml` | `AX_MORNING=off` | 루프 중심 운영 | `AX_MORNING=on` |
 | /go (오토파일럿 작성 시작) | `go.yml` | `AX_GO=off` | 루프 중심 운영 | `AX_GO=on` |
 | relay (blocked-by 해제·요청 합치기) | `relay.yml` | `AX_RELAY=off` | 루프 중심 운영 | `AX_RELAY=on` |
