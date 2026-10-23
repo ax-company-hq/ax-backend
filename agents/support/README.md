@@ -45,12 +45,13 @@
 - 고객 원문(제목·본문)은 프롬프트의 데이터 블록에만 들어가고(닫는 태그를 넣어도 탈출하지 못함), 접수만으로는 쿠폰·환불 같은 상태 변경이 실행되지 않는다 (`tests/test_injection.py`).
 
 ## 문의와 기획개발 변경 요청의 연결 (`change_requests.py`)
-고객지원이 기획개발에 변경을 요청하면(직통, 통합 에이전트를 거치지 않음) 기획개발이 변경 요청 사건 `ctx_req_…`를 **발급**한다 (`ContextPrefix.REQUEST`). 처리 결과를 받았을 때 어느 문의에 답할지 알려면 문의와 이 사건을 이어 둬야 해서 연결 저장소를 먼저 만들어 뒀다 (`handlers.CHANGES`). **요청을 보내는 skill과 결과를 받는 skill은 아직 없다** — 기획개발 접수 skill과 결과 통지 형식 계약이 정해진 뒤에 붙인다.
-- 한 문의에 변경 요청이 여러 건일 수 있고, 한 변경 요청(`ctx_req_…`)은 문의 하나에만 묶인다 (다른 문의에 다시 이으면 충돌).
-- 상태: `requested`(결과 대기) → `completed` 또는 `declined`. 같은 결과를 다시 받으면 재전송으로 보고 그대로 두며, 이미 끝난 요청에 다른 결과가 오면 충돌이다. 상태 이름은 계약에 맞춰 `CHANGE_STATUSES` 한 곳에서 바꾼다.
-- 처리가 끝난(`completed`) 요청에는 고객 공지가 필요했을 때 마케팅 `notice_id`를 한 번 붙일 수 있다 (공지 조회 후 답변은 이미 `notice_id` 입력으로 동작한다).
-- 결과 통지는 기획개발이 **`path`를 비운 새 요청**으로 보내야 한다. 원래 요청의 `meta`를 재사용하면 `path`에 support가 남아 `LOOP_DETECTED`로 거부된다.
-- `DB`가 있으면 `change_requests` 테이블에 저장되어 재시작해도 이어진다.
+고객지원이 기획개발에 변경을 요청하면(직통, 통합 에이전트를 거치지 않음) 기획개발이 변경 요청 사건 `ctx_req_…`를 **발급**한다. 같은 요청을 여러 부서·여러 문의가 보내면 기획개발이 하나로 묶어 같은 `context_id`를 돌려준다 (`create_ticket`의 `linked_duplicate`, 이슈 #172). 그래서 **한 변경 요청에 문의가 여러 개** 연결될 수 있고, 한 문의에 요청이 여러 건일 수도 있다. 연결은 (`context_id`, `inquiry_id`) 한 쌍이 한 행이다 (`handlers.CHANGES`).
+- 요청을 보낼 때 문의 ID는 `source_ref`(`inq_<번호>`, `source_ref_for`)로 보내고, 돌려받은 `context_id`로 이 저장소에 이어 둔다. `source_ref`는 기획개발의 판정에 쓰이지 않는다.
+- 결과 통지는 기획개발이 **같은 `context_id`에 `path`를 비운 새 요청**으로 보낸다 (원래 요청의 `meta`를 재사용하면 `path`에 support가 남아 `LOOP_DETECTED`). 그 `context_id`에 연결된 **모든 문의**에 같은 결과를 적용한다 (`record_result`).
+- 상태: `requested`(결과 대기) → `completed` 또는 `declined`. 같은 결과를 다시 받으면 재전송으로 보고 그대로 두며, 이미 끝난 요청에 다른 결과가 오면 충돌이다. 이미 끝난 요청에 새 문의가 묶이면 그 결과(와 공지)를 이어받는다. 상태 이름은 계약에 맞춰 `CHANGE_STATUSES` 한 곳에서 바꾼다.
+- 처리가 끝난(`completed`) 요청에는 고객 공지가 필요했을 때 마케팅 `notice_id`를 한 번 붙일 수 있다 (연결된 모든 문의에). 공지 조회 후 답변은 이미 `notice_id` 입력으로 동작한다.
+- DB가 있으면 `change_requests` 테이블에 저장되어 재시작해도 이어진다.
+- **아직 없는 것**: 기획개발 `create_ticket`을 부르는 skill과 결과를 받는 skill. 계약(#172)이 머지되고 기획개발이 skill을 등록한 뒤에 붙인다 (등급 A, 요청 가능: support·marketing·hr·data·orchestrator).
 
 ## 영속 저장소 (PostgreSQL)
 `SUPPORT_PG_DSN`을 설정하면 문의·클레임·멱등 결과·보상 번호가 DB에 저장되어 재시작해도 이어진다. 비우면(CI·목 모드) 예전처럼 메모리만 쓴다. compose는 `support-db`(postgres:16, 호스트 포트 없음)를 함께 띄우고 DSN을 서비스 이름으로 덮어쓴다 (비밀번호 `SUPPORT_DB_PASSWORD`).
