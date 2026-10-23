@@ -238,8 +238,11 @@ class Engine:
             names = sorted(self.registry.cards)
             target = await self.llm_pick(step.skill, [n for n in names if n != dept])
             used_llm = target is not None
-        if target is None:
-            self._fail(inc, run, f"이관 실패({why}): 맞는 부서를 찾지 못함")
+        if target is None:  # 실제에 없는 부서를 지어내지 않고 "이관 큐로 넘김"만 남긴다
+            run.status = "transfer_queued"
+            run.note = f"소관 부서를 찾지 못해 이관 큐로 넘김({why})"
+            run.finished_at = now()
+            inc.log(f"{run.label}: {run.note}")
             return
         inc.log(f"{run.label}: {dept} → {target} 이관({'LLM' if used_llm else '규칙'})")
         run.transferred_to = target
@@ -390,6 +393,7 @@ class Engine:
             "failed": f"실패 ({run.note})",
             "skipped": f"건너뜀 ({run.note})",
             "rejected_by_human": f"보류 후 거절 ({run.note})",
+            "transfer_queued": f"이관 큐로 넘김 ({run.note})",
         }.get(run.status, run.status)
         return f"{run.label} [{who}] {text}"
 
