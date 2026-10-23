@@ -183,7 +183,7 @@ def write_prep(team: team_mod.Team, dept: str, mode: str, issue_no: int, actor: 
     if wait:
         raise JobError(f"wip: {wait}")
     token_secret = team.owner_token(dept)
-    owner = team.owners(dept)[0]
+    owner = team.token_owner(dept)
     st = team_mod.cap_status(team, [owner], "write")[owner]  # run 목록 3회 조회
     if st["used"] is None:
         raise JobError("cap을 확인하지 못해 실행하지 않음 (fail-closed)")
@@ -257,8 +257,8 @@ def wip_check(team: team_mod.Team, dept: str, open_prs: list[dict],
     열린 봇 PR(부서 브랜치) 수가 open_bot_prs 이상이거나, 진행 중(in-progress) to:/dept: 이슈 수가
     in_progress_issues 이상이면 기다린다.
     """
-    max_prs = int(team.wip.get("open_bot_prs", 0))
-    max_issues = int(team.wip.get("in_progress_issues", 0))
+    max_prs = team.wip_limit(dept, "open_bot_prs")
+    max_issues = team.wip_limit(dept, "in_progress_issues")
     prs = [p for p in open_prs if is_dept_bot_pr(team, p) == dept]
     with_pr = {pr_issue(p) for p in prs}
     cutoff = (now or datetime.now(UTC)) - timedelta(hours=STALE_IN_PROGRESS_HOURS)
@@ -428,7 +428,7 @@ def review_author_person(team: team_mod.Team, author: str, branch: str) -> str |
     """봇 PR이면 브랜치 부서 실행 토큰의 주인, 사람 PR이면 작성자."""
     if author == team.bot_login:
         dept = team.dept_of_branch(branch)
-        return team.owners(dept)[0] if dept else None
+        return team.token_owner(dept) if dept else None
     return author
 
 
@@ -652,10 +652,10 @@ def review_prep(team: team_mod.Team, pr_no: int) -> dict:
     if not depts:
         return {"skip": "리뷰 부서 없음", "fail": True, "head_sha": head}
     # cap은 여기서 한 번만 계산해 matrix로 넘긴다 (리뷰어 잡마다 다시 조회하지 않음)
-    caps = team_mod.cap_status(team, sorted({team.owners(d)[0] for d in depts}), "review")
+    caps = team_mod.cap_status(team, sorted({team.token_owner(d) for d in depts}), "review")
     reviewers = []
     for d in depts:
-        owner = team.owners(d)[0]
+        owner = team.token_owner(d)
         reviewers.append({"dept": d, "token_secret": team.owner_token(d),
                           "model_var": review_model_var(d), "name": team.members[owner]["name"],
                           "owner": owner, "cap_ok": caps[owner]["ok"],
