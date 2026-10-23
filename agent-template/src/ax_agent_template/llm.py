@@ -26,8 +26,12 @@ import httpx
 from pydantic import BaseModel
 
 from ax_agent_template.config import env_prefix
+from ax_agent_template.logging import log_event
 
 T = TypeVar("T", bound=BaseModel)
+
+# 계약 `LogKind`에 이 종류가 추가되기 전에는 표준 로거에만 남고 공통 로그 저장소에는 쓰이지 않는다.
+LLM_CALL_KIND = "llm_call"
 
 UNTRUSTED_OPEN = "<untrusted_data>"
 UNTRUSTED_CLOSE = "</untrusted_data>"
@@ -88,6 +92,7 @@ class LLMClient:
         prompt: str,
         schema: type[T],
         untrusted: dict[str, Any] | None = None,
+        context_id: str | None = None,
     ) -> T:
         """프롬프트를 보내고 응답을 `schema`로 검증해서 돌려준다.
 
@@ -99,10 +104,35 @@ class LLMClient:
         format_prompt(prompt, untrusted)
         raise NotImplementedError("TODO: OpenAI 호환 API 호출과 스키마 검증·재요청")
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
+    def record_usage(
+        self,
+        context_id: str | None,
+        model: str | None,
+        input_tokens: int,
+        output_tokens: int,
+        success: bool,
+        tenant_id: str = "shop-demo",
+    ) -> None:
+        """호출 1회의 사용량(NFR-06)을 공통 로그에 남긴다. 숫자만 남기고 프롬프트·응답은 넣지 않는다."""
+        log_event(
+            context_id or "none",
+            tenant_id,
+            LLM_CALL_KIND,
+            {
+                "department": self.dept,
+                "model": model,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "success": success,
+            },
+            source=self.dept,
+        )
+
+    async def embed(self, texts: list[str], context_id: str | None = None) -> list[list[float]]:
         """OpenAI 호환 `/embeddings`로 텍스트별 벡터를 돌려준다. 입력 순서를 유지한다.
 
         모델은 `<부서>_EMBED_MODEL`(없으면 `EMBED_MODEL`), 엔드포인트·키는 LLM 설정을 쓴다.
+        `context_id`가 있으면 호출 사용량을 공통 로그에 남긴다.
         """
         if not self.settings.embed_model:
             raise LLMNotConfiguredError(
@@ -118,15 +148,29 @@ class LLMClient:
             {"Authorization": f"Bearer {self.settings.api_key}"} if self.settings.api_key else {}
         )
         url = self.settings.base_url.rstrip("/") + "/embeddings"
-        async with httpx.AsyncClient(timeout=30.0) as http:
-            response = await http.post(
-                url, json={"model": self.settings.embed_model, "input": texts}, headers=headers
-            )
-            response.raise_for_status()
-        items = sorted(response.json()["data"], key=lambda item: item["index"])
-        vectors = [[float(x) for x in item["embedding"]] for item in items]
-        if len(vectors) != len(texts):
-            raise ValueError(f"임베딩 개수가 입력과 다르다: {len(vectors)} != {len(texts)}")
+        model = self.settings.embed_model
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as http:
+                response = await http.post(
+                    url, json={"model": model, "input": texts}, headers=headers
+                )
+                response.raise_for_status()
+            body = response.json()
+            items = sorted(body["data"], key=lambda item: item["index"])
+            vectors = [[float(x) for x in item["embedding"]] for item in items]
+            if len(vectors) != len(texts):
+                raise ValueError(f"임베딩 개수가 입력과 다르다: {len(vectors)} != {len(texts)}")
+        except Exception:
+            self.record_usage(context_id, model, 0, 0, False)
+            raise
+        usage = body.get("usage") or {}
+        self.record_usage(
+            context_id,
+            model,
+            int(usage.get("prompt_tokens") or 0),
+            int(usage.get("completion_tokens") or 0),
+            True,
+        )
         return vectors
 
 
@@ -164,12 +208,19 @@ class MockLLMClient(LLMClient):
         prompt: str,
         schema: type[T],
         untrusted: dict[str, Any] | None = None,
+        context_id: str | None = None,
     ) -> T:
         self.calls.append(format_prompt(prompt, untrusted))
         if schema not in self.responses:
+            self.record_usage(context_id, self.settings.model or "mock", 0, 0, False)
             raise KeyError(f"MockLLMClient에 {schema.__name__} 응답이 등록되지 않았다")
+        self.record_usage(context_id, self.settings.model or "mock", 0, 0, True)
         return self.responses[schema]  # type: ignore[return-value]
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        """네트워크 없이 토큰 해시 bag-of-words로 만든 `MOCK_EMBED_DIM`차원 정규화 벡터."""
+    async def embed(self, texts: list[str], context_id: str | None = None) -> list[list[float]]:
+        """네트워크 없이 토큰 해시 bag-of-words로 만든 `MOCK_EMBED_DIM`차원 정규화 벡터.
+
+        실제 호출과 같은 형식으로 사용량을 남기되 토큰은 0이다.
+        """
+        self.record_usage(context_id, self.settings.embed_model or "mock", 0, 0, True)
         return [_mock_embedding(text) for text in texts]
