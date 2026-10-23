@@ -19,7 +19,14 @@ from ax_dashboard_api.envelope import ApiError, is_mock
 CommunicationOutcome = Literal["completed", "rejected", "held", "needs_human", "in_progress"]
 
 # 소통으로 보는 로그 종류. 이벤트 발행·기억 참조는 부서 간 대화가 아니다
-COMM_KINDS = ["request_received", "result_sent", "task_status", "execute_decided", "rejected"]
+COMM_KINDS = [
+    "request_received",
+    "result_sent",
+    "task_status",
+    "execute_decided",
+    "escalated",  # 이관 큐로 넘긴 건은 `needs_human`으로 보인다
+    "rejected",
+]
 MAX_LIMIT = 1000
 
 LogReader = Callable[[CommonLogQuery], CommonLogResult]
