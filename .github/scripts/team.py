@@ -82,7 +82,7 @@ class Team:
         self.hotfix_labelers: list[str] = data.get("hotfix_labelers", [])
         self.review_required_depts: list[str] = data.get("review_required_depts", [])
         self.wip: dict[str, int] = data.get("wip", {})
-        # 부서별 WIP 덮어쓰기 { <부서>: { open_bot_prs: N, in_progress_issues: M } }. 없으면 wip 기본값
+        # 부서별 WIP 덮어쓰기 { <부서>: { open_bot_prs: N, in_progress_issues: M } } (없으면 wip)
         self.wip_overrides: dict[str, dict[str, int]] = data.get("wip_overrides") or {}
         self.stale_hours: int = int(data.get("stale_hours", 48))
         self.contracts_affected: dict[str, list[str]] = data.get("contracts_affected", {})

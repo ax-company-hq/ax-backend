@@ -9,6 +9,7 @@ members = [
     "shop-api",
     "dashboard-api",
     "agents/*",
+    "e2e",
 ]
 
 [dependency-groups]
@@ -39,5 +40,6 @@ testpaths = [
     "shop-api/tests",
     "dashboard-api/tests",
     "agents",
+    "e2e/tests",
 ]
 asyncio_default_fixture_loop_scope = "function"
