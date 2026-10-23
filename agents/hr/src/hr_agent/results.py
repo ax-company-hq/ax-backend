@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from ax_contracts.schemas import (
     AgentRequest,
     AgentResult,
+    ErrorCode,
     Evidence,
     ExecuteDecision,
     InputReason,
@@ -97,14 +98,17 @@ def refused(request: AgentRequest, outcome: str, message: str) -> AgentResult:
 
 
 def invalid_input(request: AgentRequest, error: Exception | str) -> AgentResult:
-    """입력이 계약과 맞지 않을 때. 오류 상세는 짧게만 싣는다.
+    """입력이 계약과 맞지 않을 때: 요청 자체를 거부한다(`rejected` / `INVALID_INPUT`).
 
-    계약의 `ErrorCode`에 입력 오류 값이 없어 `rejected`로 쓸 수 없다
-    (계약 후속 제안: `INVALID_INPUT`).
-    그때까지는 `failed` + `outcome="INVALID_INPUT"`이다.
+    오류 상세는 짧게만 싣고 외부 문구는 싣지 않는다.
     """
     detail = str(error)
-    return failed(request, "INVALID_INPUT", detail.splitlines()[0][:200] if detail else "invalid")
+    return AgentResult(
+        meta=request.meta,
+        status=TaskStatus.REJECTED,
+        outcome=ErrorCode.INVALID_INPUT.value,
+        output={"message": detail.splitlines()[0][:200] if detail else "invalid"},
+    )
 
 
 def gate_blocked(request: AgentRequest, decision: ExecuteDecision) -> AgentResult:

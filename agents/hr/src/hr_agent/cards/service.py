@@ -15,7 +15,14 @@ from __future__ import annotations
 
 from pydantic import ValidationError
 
-from ax_contracts.schemas import AgentRequest, AgentResult, RecordCase, RecordCaseOutput
+from ax_contracts.schemas import (
+    AgentRequest,
+    AgentResult,
+    Card,
+    Evidence,
+    RecordCase,
+    RecordCaseOutput,
+)
 from hr_agent.cards.builder import (
     build_card,
     card_id_of,
@@ -38,6 +45,29 @@ from hr_agent.util import dumps
 def idempotency_key_of(record: RecordCase) -> str:
     """`context_id + record_case + 대상`: 같은 이벤트가 두 번 와도 카드는 한 번만 만든다."""
     return f"record_case:{record.context_id}:{record.kind.value}:{target_key(record)}"
+
+
+async def link_older_cards(
+    svc: Services, request: AgentRequest, card: Card, evidence: Evidence
+) -> list[str]:
+    """새 카드가 대체하는 옛 카드를 `superseded`로 연결한다(연결마다 관문을 거친다)."""
+    superseded: list[str] = []
+    for old_id in await find_superseded(card, svc.memory):
+        link_decision = await svc.gate.execute(
+            "memory.card_link",
+            {
+                "card_id": old_id,
+                "summary": f"{old_id} 대체",
+                "op": "supersede",
+                "target": f"{old_id}>{card.card_id}",
+            },
+            with_key(request.meta, f"memory.card_link:{old_id}>{card.card_id}"),
+            evidence,
+        )
+        if link_decision.status == "executed":
+            await svc.memory.set_status(old_id, "superseded", card.card_id)
+            superseded.append(old_id)
+    return superseded
 
 
 async def record_case(svc: Services, request: AgentRequest) -> AgentResult:
@@ -140,22 +170,7 @@ async def record_case(svc: Services, request: AgentRequest) -> AgentResult:
         return gate_blocked(request, decision)
     await svc.memory.write_card(card)
 
-    superseded: list[str] = []
-    for old_id in await find_superseded(card, svc.memory):
-        link_decision = await svc.gate.execute(
-            "memory.card_link",
-            {
-                "card_id": old_id,
-                "summary": f"{old_id} 대체",
-                "op": "supersede",
-                "target": f"{old_id}>{card.card_id}",
-            },
-            with_key(request.meta, f"memory.card_link:{old_id}>{card.card_id}"),
-            evidence,
-        )
-        if link_decision.status == "executed":
-            await svc.memory.set_status(old_id, "superseded", card.card_id)
-            superseded.append(old_id)
+    superseded = await link_older_cards(svc, request, card, evidence)
 
     candidate = bool(card.extra["candidate"])
     outcome = "candidate" if candidate else "card_created"

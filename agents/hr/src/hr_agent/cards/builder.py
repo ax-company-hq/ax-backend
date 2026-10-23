@@ -25,6 +25,9 @@ AREA_PREFIX = "area:"
 
 
 def area_of(record: RecordCase) -> str | None:
+    """영역: 계약의 `area` 필드가 먼저, 없으면 근거 참조의 `area:<영역>`(옛 호출 방식)."""
+    if record.area and record.area.strip():
+        return record.area.strip()
     for ref in record.source_refs:
         if ref.startswith(AREA_PREFIX):
             return ref[len(AREA_PREFIX) :].strip() or None
@@ -117,7 +120,7 @@ def build_card(
         title=_title(record),
         body=_body(record, info),
         tags=tags,
-        status="active",
+        status="candidate" if candidate else "active",
         source_refs=record.source_refs,
         author=who,
         confidence=confidence,

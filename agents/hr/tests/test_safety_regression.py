@@ -25,8 +25,20 @@ STATE_CHANGING = [
     "request_assignment_change",
     "confirm_reassignment",
     "confirm_offboarding",
+    "update_onboarding_step",
+    "decide_candidate_card",
 ]
-ALL_SKILLS = [*STATE_CHANGING, "get_roster", "check_plan"]
+READ_SKILLS = [
+    "get_roster",
+    "check_plan",
+    "list_handovers",
+    "list_open_questions",
+    "list_onboardings",
+    "list_changes",
+    "list_candidate_cards",
+    "get_audit_timeline",
+]
+ALL_SKILLS = [*STATE_CHANGING, *READ_SKILLS]
 
 
 def body(skill, inp, key="k", ctx="ctx_sr_0001", token="mock:orchestrator", path=None, **extra):
@@ -95,7 +107,30 @@ def world(svc, client) -> dict[str, Any]:
         {"change_id": off["output"]["change_id"], "successor_id": "emp_09"},
         "w5",
     )
+    onboarding = call("start_onboarding", {"member_id": "emp_10", "area": "payment"}, "w6")
+    candidate = client.post(
+        "/a2a",
+        json=body(
+            "record_case",
+            {
+                "context_id": "ctx_w_cand",
+                "kind": "decision",
+                "summary": "근거 없이 정한 결정",
+                "source_refs": ["area:payment"],
+                "author": "planning",
+            },
+            "w7",
+            "ctx_w_cand",
+            "mock:planning",
+        ),
+    ).json()
     return {
+        "step": {
+            "onboarding_id": onboarding["output"]["onboarding_id"],
+            "step_id": onboarding["output"]["steps"][0]["step_id"],
+            "done": True,
+        },
+        "candidate": {"card_id": candidate["output"]["card_id"], "decision": "approve"},
         "answer": {
             "question_id": started["output"]["questions"][0]["question_id"],
             "answer": "답변",
@@ -128,14 +163,34 @@ def valid_input(skill: str, world: dict[str, Any]) -> dict[str, Any]:
         },
         "confirm_reassignment": world["reassign"],
         "confirm_offboarding": world["off"],
+        "update_onboarding_step": world["step"],
+        "decide_candidate_card": world["candidate"],
         "get_roster": {},
         "check_plan": {"draft": {"title": "t", "summary": "s", "area": "payment", "kind": "spec"}},
+        "list_handovers": {},
+        "list_open_questions": {},
+        "list_onboardings": {},
+        "list_changes": {},
+        "list_candidate_cards": {},
+        "get_audit_timeline": {"context_id": "ctx_sr_0001"},
     }[skill]
 
 
 # ---- 1. 권한 없는 요청자는 어떤 skill도 못 바꾼다 (20) --------------------------------------
-@pytest.mark.parametrize("token", ["mock:stranger", "mock:dashboard-api"])
-@pytest.mark.parametrize("skill", STATE_CHANGING)
+def _forbidden_pairs() -> list[tuple[str, str]]:
+    """Agent Card의 요청자 목록에 없는 (skill, 토큰) 쌍: 낯선 에이전트와 dashboard-api."""
+    from hr_agent.main import load_card
+
+    allowed = {s.id: s.allowed_requesters for s in load_card().skills}
+    return [
+        (skill, token)
+        for skill in STATE_CHANGING
+        for token in ("mock:stranger", "mock:dashboard-api")
+        if token.removeprefix("mock:") not in allowed[skill]
+    ]
+
+
+@pytest.mark.parametrize(("skill", "token"), _forbidden_pairs())
 def test_unlisted_requesters_change_nothing(svc, client, world, skill, token) -> None:
     before = state(svc)
     res = client.post(
@@ -379,6 +434,8 @@ def test_injected_text_never_changes_the_outcome(skill) -> None:
             "confirm_handover": {"handover_id": started["output"]["handover_id"]},
             "reassign": {"change_id": "none", "successor_id": "emp_07"},
             "off": {"change_id": "none"},
+            "step": {"onboarding_id": "onb_none", "step_id": "stp_none", "done": True},
+            "candidate": {"card_id": "card_none", "decision": "approve"},
         }
         raw = body(skill, valid_input(skill, world), "inj", "ctx_inj_1")
         if payload:

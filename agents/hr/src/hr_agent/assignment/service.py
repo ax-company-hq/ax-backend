@@ -421,7 +421,12 @@ async def confirm_reassignment(svc: Services, request: AgentRequest) -> AgentRes
         evidence,
     )
     if decision.status == "held":  # 실제 레지스트리가 C로 올린 경우: 사람 승인을 기다린다
-        return gate_blocked(request, decision)
+        svc.audit.record(request.meta.context_id, "reassignment.held", {"id": change["change_id"]})
+        return input_required(
+            request,
+            ConfirmReassignmentOutput(change_id=change["change_id"], status="held"),
+            evidence=evidence,
+        )
     if decision.status != "executed":
         svc.audit.record(
             request.meta.context_id,
@@ -564,12 +569,7 @@ async def confirm_offboarding(svc: Services, request: AgentRequest) -> AgentResu
             "offboarding.cancelled",
             {"id": change["change_id"], "reason": decision.hold_reason},
         )
-        return completed(
-            request,
-            {"change_id": change["change_id"], "status": "rejected", "message": "퇴직 취소"},
-            outcome="rejected",
-            evidence=evidence,
-        )
+        return _off_result(request, svc, change, "rejected", None, "rejected", evidence)
 
     # 승인 뒤 적용: 남은 모든 담당에서 빠졌을 때 공백이 생기면 하지 않는다(fail-closed)
     coverage, _ = rules.simulate(svc.store, [], extra_removals=[member])

@@ -29,8 +29,19 @@ STATE_CHANGING = {
     "request_assignment_change": "request_assignment_change",
     "confirm_reassignment": "confirm_reassignment",
     "confirm_offboarding": "confirm_offboarding",
+    "update_onboarding_step": "update_onboarding_step",
+    "decide_candidate_card": "memory.card_write",
 }
-READ_ONLY = {"get_roster", "check_plan"}
+READ_ONLY = {
+    "get_roster",
+    "check_plan",
+    "list_handovers",
+    "list_open_questions",
+    "list_onboardings",
+    "list_changes",
+    "list_candidate_cards",
+    "get_audit_timeline",
+}
 
 
 def body(
@@ -79,7 +90,7 @@ def test_agent_card_lists_all_skills_with_resolvable_schemas() -> None:
     card = load_card()
     ids = {s.id for s in card.skills}
     assert ids == set(HANDLERS) == STATE_CHANGING.keys() | READ_ONLY
-    assert len(ids) == 10
+    assert len(ids) == 18
     for skill in card.skills:
         for ref in (skill.input_schema, skill.output_schema):
             path, _, cls = ref.partition("#")
@@ -104,7 +115,7 @@ def test_agent_card_grades_match_the_safety_registry_draft(svc) -> None:
 
 def test_agent_card_is_served_over_http(client: TestClient) -> None:
     served = client.get("/.well-known/agent-card.json").json()
-    assert served["name"] == "hr" and len(served["skills"]) == 10
+    assert served["name"] == "hr" and len(served["skills"]) == 18
 
 
 # 2) 결정성 ----------------------------------------------------------------------

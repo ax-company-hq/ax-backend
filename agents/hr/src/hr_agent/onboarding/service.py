@@ -15,6 +15,7 @@ from ax_contracts.schemas import (
     OnboardingStep,
     StartOnboardingInput,
     StartOnboardingOutput,
+    UpdateOnboardingStepInput,
 )
 from hr_agent.clients.memory import card_state
 from hr_agent.handover import store as hstore
@@ -48,7 +49,7 @@ async def _area_decisions(svc: Services, area: str):
     return sorted(cards, key=lambda c: ((c.extra or {}).get("decided_at") or "", c.card_id))
 
 
-def _steps(svc: Services, onboarding_id: str) -> list[OnboardingStep]:
+def steps_of(svc: Services, onboarding_id: str) -> list[OnboardingStep]:
     rows = svc.store.all(
         "SELECT step_id, step_order, title, card_id, done FROM onboarding_steps"
         " WHERE onboarding_id = ? ORDER BY step_order",
@@ -69,7 +70,7 @@ def _steps(svc: Services, onboarding_id: str) -> list[OnboardingStep]:
 def _result(
     svc: Services, request: AgentRequest, onboarding_id: str, summary: str, refs: list[str]
 ):
-    steps = _steps(svc, onboarding_id)
+    steps = steps_of(svc, onboarding_id)
     output = StartOnboardingOutput(
         onboarding_id=onboarding_id, steps=steps, progress=progress_of(steps)
     )
@@ -156,3 +157,60 @@ async def start_onboarding(svc: Services, request: AgentRequest) -> AgentResult:
         {"id": onboarding_id, "steps": len(titles), "cards": len(cards)},
     )
     return _result(svc, request, onboarding_id, summary, refs)
+
+
+async def update_onboarding_step(svc: Services, request: AgentRequest) -> AgentResult:
+    """온보딩 단계의 완료 표시를 바꾼다. 진행률은 완료한 단계 수로 코드가 다시 센다."""
+    try:
+        params = UpdateOnboardingStepInput.model_validate(request.input)
+    except ValidationError as exc:
+        return invalid_input(request, exc)
+    if not request.meta.idempotency_key:
+        return invalid_input(request, "상태를 바꾸는 요청에는 idempotency_key가 필요하다")
+    row = svc.store.one(
+        "SELECT s.done FROM onboarding_steps s WHERE s.onboarding_id = ? AND s.step_id = ?",
+        (params.onboarding_id, params.step_id),
+    )
+    if row is None:
+        return refused(request, "UNKNOWN_STEP", "없는 온보딩 단계다")
+    if bool(row["done"]) == params.done:  # 이미 그 상태다: 다시 처리하지 않는다
+        svc.audit.record(
+            request.meta.context_id, "onboarding_step.duplicate", {"step": params.step_id}
+        )
+        return _step_result(svc, request, params.onboarding_id, "duplicate")
+
+    summary = f"온보딩 단계 {'완료' if params.done else '되돌림'}: {params.step_id}"
+    target = f"{params.step_id}:{int(params.done)}"
+    decision = await svc.gate.execute(
+        "update_onboarding_step",
+        {"onboarding_id": params.onboarding_id, "summary": summary, "target": target},
+        with_key(request.meta, f"update_onboarding_step:{target}"),
+        make_evidence(svc.clock, summary, [params.onboarding_id]),
+    )
+    if decision.status != "executed":
+        return gate_blocked(request, decision)
+    svc.store.execute(
+        "UPDATE onboarding_steps SET done = ? WHERE onboarding_id = ? AND step_id = ?",
+        (int(params.done), params.onboarding_id, params.step_id),
+    )
+    svc.audit.record(
+        request.meta.context_id,
+        "onboarding_step.updated",
+        {"onboarding_id": params.onboarding_id, "step": params.step_id, "done": params.done},
+    )
+    return _step_result(svc, request, params.onboarding_id, "updated")
+
+
+def _step_result(
+    svc: Services, request: AgentRequest, onboarding_id: str, outcome: str
+) -> AgentResult:
+    steps = steps_of(svc, onboarding_id)
+    output = StartOnboardingOutput(
+        onboarding_id=onboarding_id, steps=steps, progress=progress_of(steps)
+    )
+    return completed(
+        request,
+        output,
+        outcome=outcome,
+        evidence=make_evidence(svc.clock, f"온보딩 진행률 {output.progress}%", [onboarding_id]),
+    )

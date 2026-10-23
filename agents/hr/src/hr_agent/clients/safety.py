@@ -38,6 +38,7 @@ HR_ACTIONS: dict[str, ActionSpec] = {
     "answer_handover_question": ActionSpec("A"),
     "request_assignment_change": ActionSpec("A"),
     "start_onboarding": ActionSpec("A"),
+    "update_onboarding_step": ActionSpec("A"),
     "confirm_handover": ActionSpec("B", verifier="planning"),
     "confirm_handover_incomplete": ActionSpec("C"),  # 완성도 미달이면 사람이 보고 결정한다
     "confirm_reassignment": ActionSpec("B", verifier="safety"),

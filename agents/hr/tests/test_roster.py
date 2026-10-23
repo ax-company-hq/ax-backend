@@ -44,7 +44,7 @@ def test_area_filter_and_unknown_area(svc, client) -> None:
     out = GetRosterOutput.model_validate(client.post("/a2a", json=_body("search")).json()["output"])
     assert {e.area for e in out.entries} == {"search"}
     bad = client.post("/a2a", json=_body("nowhere")).json()
-    assert (bad["status"], bad["outcome"]) == ("failed", "INVALID_INPUT")
+    assert (bad["status"], bad["outcome"]) == ("rejected", "INVALID_INPUT")
 
 
 def test_roster_has_no_personal_fields(svc, client) -> None:

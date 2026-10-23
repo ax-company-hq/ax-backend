@@ -3,9 +3,8 @@
 실제 연동(3단계)은 같은 `MemoryClient` 인터페이스로 memory 서비스를 부른다. 저장 같은 상태 변경은
 호출하는 쪽이 `execute("memory.card_write")`가 `executed`를 돌려준 뒤에만 부른다.
 
-카드의 상태는 계약 `Card.status`(`active`·`superseded`·`retired`)에 "후보"를 더해 다룬다.
-후보(`candidate`)는 `status`가 `active`이고 `extra["candidate"]`가 true인 카드다.
-계약에 `candidate` 상태가 들어오면(후속 계약 PR) 이 변환만 바꾸면 된다.
+카드의 상태는 계약 `Card.status`(`active`·`candidate`·`superseded`·`retired`)다.
+후보(`candidate`)는 계약의 `Card.status == "candidate"`인 카드다(`extra["candidate"]`도 같이 둔다).
 """
 
 from __future__ import annotations
@@ -20,8 +19,12 @@ from hr_agent.util import dumps, loads, similarity
 
 
 def card_state(card: Card) -> str:
-    """검색·표시에 쓰는 상태: `candidate`·`active`·`superseded`·`retired`."""
-    if card.status == "active" and card.extra.get("candidate"):
+    """검색·표시에 쓰는 상태: `candidate`·`active`·`superseded`·`retired`.
+
+    후보는 계약의 `Card.status == "candidate"`다. 옛 방식(`active` + `extra["candidate"]`)으로
+    저장된 카드도 후보로 읽는다.
+    """
+    if card.status == "candidate" or (card.status == "active" and card.extra.get("candidate")):
         return "candidate"
     return card.status
 
@@ -127,9 +130,11 @@ class MockMemoryClient:
             raise KeyError(card_id)
         extra = {**card.extra, "candidate": candidate}
         tags = [t for t in card.tags if t != "candidate"] + (["candidate"] if candidate else [])
-        await self.write_card(
-            Card.model_validate(card.model_copy(update={"extra": extra, "tags": tags}).model_dump())
-        )
+        status = card.status
+        if status in ("active", "candidate"):  # 대체·폐기된 카드의 상태는 건드리지 않는다
+            status = "candidate" if candidate else "active"
+        update = {"extra": extra, "tags": tags, "status": status}
+        await self.write_card(Card.model_validate(card.model_copy(update=update).model_dump()))
 
 
 def _match(card: Card, area: str | None, kinds: list[str] | None, states: list[str] | None) -> bool:

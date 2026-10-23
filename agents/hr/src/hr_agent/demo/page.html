@@ -232,7 +232,15 @@ function renderCards(root) {
   root.append(el('hr'), bar);
   const shown = cards.filter((c) => S.filter === 'all' || c.state === S.filter);
   if (!shown.length) root.append(el('div', {class: 'empty'}, '카드가 없어요. 위에서 기록을 보내 보세요.'));
-  shown.forEach((c) => root.append(cardView(c)));
+  shown.forEach((c) => {
+    const view = cardView(c);
+    if (c.state === 'candidate') {
+      const note = el('input', {placeholder: '메모(선택)'});
+      const decide = (decision) => () => send('decide_candidate_card', 'dashboard-api', {card_id: c.card_id, decision, note: note.value || null}, c.context_id, `${c.context_id}:card:${c.card_id}:${decision}`);
+      view.append(el('div', {class: 'row'}, note, el('button', {class: 'small', onclick: decide('approve')}, '승인(확정)'), el('button', {class: 'ghost small', onclick: decide('reject')}, '폐기')));
+    }
+    root.append(view);
+  });
   const recs = (S.snap && S.snap.records) || [];
   if (recs.length) { root.append(el('h3', {}, `기록만 저장된 것 ${recs.length}건`)); recs.forEach((r) => root.append(el('div', {class: 'card'}, badge(r.kind), ' ', r.summary, el('div', {class: 'muted'}, r.context_id)))); }
 }
@@ -324,7 +332,8 @@ function renderOnboarding(root) {
   if (!list.length) root.append(el('div', {class: 'empty'}, '아직 온보딩이 없어요.'));
   list.forEach((o) => {
     const c = el('div', {class: 'card'}, el('div', {class: 'badges'}, badge(`진행률 ${o.progress}%`, o.progress === 100 ? 'ok' : 'warn'), badge(o.area), badge(o.member_id)), el('div', {class: 'muted'}, o.onboarding_id));
-    o.steps.forEach((s) => c.append(el('div', {}, badge(s.done ? '완료' : '대기', s.done ? 'ok' : ''), ` ${s.step_order}. ${s.title}`, s.card_id ? el('span', {class: 'muted'}, '  ' + s.card_id) : null)));
+    o.steps.forEach((s) => c.append(el('div', {}, badge(s.done ? '완료' : '대기', s.done ? 'ok' : ''), ` ${s.step_order}. ${s.title}`, s.card_id ? el('span', {class: 'muted'}, '  ' + s.card_id) : null, ' ',
+      el('button', {class: 'ghost small', onclick: () => send('update_onboarding_step', 'dashboard-api', {onboarding_id: o.onboarding_id, step_id: s.step_id, done: !s.done}, o.context_id, `${o.context_id}:step:${s.step_id}:${s.done ? 0 : 1}`)}, s.done ? '되돌리기' : '완료 표시'))));
     root.append(c);
   });
 }
