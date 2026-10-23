@@ -136,6 +136,7 @@ class ClaimStore:
             order_id=order.id,
             order_no=order.order_no,
             buyer_id=order.buyer_id,
+            payment_id=order.payment_id,
             customer=customer,
             type=claim_type,  # type: ignore[arg-type]
             reason=reason,  # type: ignore[arg-type]

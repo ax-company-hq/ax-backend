@@ -32,7 +32,8 @@ def test_same_title_twice_becomes_one_request_and_linked_duplicate(service) -> N
     coupon = [r for r in service.state.requests if r.title.startswith("쿠폰 적용 후")]
     assert len(coupon) == 2
     original, dup = coupon
-    assert (original.id, original.state, original.duplicate_of) == ("REQ-21", "접수", None)
+    assert (original.id, original.duplicate_of) == ("REQ-21", None)
+    assert original.state != "접수" and original.spec is not None  # 접수 뒤 기획서부터 자동 진행
     assert (dup.id, dup.state, dup.duplicate_of) == ("REQ-24", "중복 연결", "REQ-21")
     assert results[3].outcome == "linked_duplicate"
     # 2번째는 기존 REQ-12와 같은 제목 → 연결
@@ -140,11 +141,14 @@ def test_whole_text_request_waits_for_human_at_l1(service) -> None:
     for _ in range(3):
         run(service.inbound("marketing_simple"))
     r = next(x for x in service.state.requests if x.title == "기획전 페이지 안내 문구 전체 교체")
-    assert r.state == "접수" and r.auto is not None and not r.auto.ok
+    # L1 기준을 넘으면 간단 요청 무인 처리(_auto_complete)는 안 하고, 일반 흐름(기획서 초안 →
+    # 확정 규칙 → PR → 머지 규칙)으로 간다. 사람이 누를 차례는 규칙에 걸릴 때만이다
+    assert r.auto is not None and not r.auto.ok
     assert any("L1 기준(30줄·2파일) 초과" in reason for reason in r.auto.reasons)
-    assert r.spec is None
-    last = acts(service, r.context_id)[-1]
-    assert (last.point, last.text) == ("get_request_status", f"{r.id} 접수됨 (팀장 확정 대기)")
+    assert r.flow and r.spec is not None and r.state != "접수"
+    points = [(a.point, a.text) for a in acts(service, r.context_id)]
+    assert ("get_request_status", f"{r.id} 접수됨 → 기획서 작성") in points
+    assert any(p == "write_spec" for p, _ in points)
     # 같은 제목도 L2 기준이면 크기는 통과한다
     pol = service.state.auto_policy.model_copy(update={"level": 2})
     assert check_simple(r.title, pol).ok
@@ -362,3 +366,52 @@ def test_reset_restores_seed(service) -> None:
     service.reset()
     assert len(service.state.requests) == 6 and service.state.seq == 0
     assert service.gate_calls == []
+
+
+# ---- 사람 클릭 없이 다음 단계로 (flow 요청)
+
+
+def test_general_request_advances_without_clicks(service) -> None:
+    run(service.inbound("support_ticket"))
+    r = req(service, "REQ-21")
+    assert r.flow and r.spec is not None
+    sp = next(x for x in service.state.specs if x.id == r.spec)
+    assert sp.status == "확정" and sp.auto
+    tasks = [t for t in service.state.tasks if t.spec == sp.id]
+    prs = [p for p in service.state.prs if p.task in {t.id for t in tasks}]
+    assert tasks and len(prs) == len(tasks)  # PR 만들기 버튼 없이 작업마다 PR
+    # 각 PR은 자동 머지됐거나, 규칙에 걸려 대기열에 있다 (그때만 사람·교차검증 차례)
+    assert all(p.merged or p.auto_review is not None for p in prs)
+    points = [a.point for a in acts(service, r.context_id)]
+    assert points.index("write_spec") < points.index("split_tasks") < points.index("review_pr")
+
+
+def test_draft_is_adopted_and_advances(service) -> None:
+    run(service.inbound("hr_draft"))
+    r = req(service, "REQ-21")
+    assert r.flow and r.spec is not None and service.state.drafts_accepted == 1
+    assert any(a.point == "review_ticket_draft" for a in acts(service, r.context_id))
+
+
+def test_mismatch_is_reviewed_again_once(service) -> None:
+    # 시드 SPEC-7(요구사항 2개)을 flow 요청으로 두고 사람이 확정하면, PR 만들기부터는 자동이다.
+    # 두 번째 PR은 첫 검수가 불일치 → 수정 후 재검수까지 버튼 없이 간다
+    req(service, "REQ-12").flow = True
+    run(service.confirm_spec("SPEC-7"))
+    tasks = {t.id for t in service.state.tasks if t.spec == "SPEC-7"}
+    prs = [p for p in service.state.prs if p.task in tasks]
+    assert len(prs) == 2
+    assert [p.reviews for p in prs] == [["통과"], ["불일치", "통과"]]
+
+
+def test_l0_keeps_general_request_at_intake(service) -> None:
+    service.state.auto_policy.level = 0
+    run(service.inbound("support_ticket"))
+    r = req(service, "REQ-21")
+    assert (r.state, r.spec) == ("접수", None)
+
+
+def test_seed_requests_are_not_advanced(service) -> None:
+    before = {x.id: (x.state, x.spec) for x in service.state.requests}
+    run(service.inbound("data_query"))
+    assert {x.id: (x.state, x.spec) for x in service.state.requests} == before
