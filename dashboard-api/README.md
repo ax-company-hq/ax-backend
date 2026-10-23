@@ -48,7 +48,7 @@ CORS 허용 출처는 `DASHBOARD_CORS_ORIGINS`(쉼표 구분, 기본 `http://loc
 | POST `/conversations/{id}/agent-messages` | `send_reply` (가드 차단이면 422 `REPLY_BLOCKED`) |
 | POST `/conversations/{id}/reject-draft`, `/summary`, `/status` | `reject_draft`, `summarize_inquiry`, `set_inquiry_status` |
 
-요청마다 새 `ctx_req_<hex>` 사건 ID를 붙이고, 상태를 바꾸는 skill에는 `idempotency_key`(context_id + skill + 대상)를 붙인다. 오류 매핑: `not_found`→404, `not_executed_*`(보류·거부)→409 `NOT_EXECUTED`, 타임아웃→504 `UPSTREAM_TIMEOUT`, 거부→403 `UPSTREAM_REJECTED`, 그 밖의 실패→502 `UPSTREAM_ERROR`.
+요청마다 새 `ctx_ui_<hex>` 사건 ID(아래 "사건 ID")를 붙이고, 상태를 바꾸는 skill에는 `idempotency_key`(context_id + skill + 대상)를 붙인다. 오류 매핑: `not_found`→404, `not_executed_*`(보류·거부)→409 `NOT_EXECUTED`, 타임아웃→504 `UPSTREAM_TIMEOUT`, 거부→403 `UPSTREAM_REJECTED`, 그 밖의 실패→502 `UPSTREAM_ERROR`.
 `POST /conversations`는 선택 필드 `customer_name`을 support에 넘긴다 (없으면 "고객 <user_id>"). 고객 목록(`/users`)은 shop-api 연결 전까지 목 전용이다.
 
 ### 클레임·보상 큐·KPI 연결 (목 모드가 아닐 때)
@@ -67,7 +67,7 @@ support 출력은 `claim_mapping.py`에서 화면 모델로 바꾼다 (값을 �
 - 규칙·공제 코드와 감사 액션 이름은 화면 라벨 표(`RULE_KO`, `AUDIT_KO`)의 키에 맞춘다 (대응이 없는 코드는 그대로 둔다).
 - 거절된 클레임은 환불 예정액·적립금을 0으로 보낸다.
 - 비어 있는 값: `description`(고객 원문은 저장하지 않는다), `tracking`, `compensation`(보상 쿠폰은 `request_compensation`), `hold_reason`.
-- 지급 연동이 막힌 항목(재무 검증 중·보류·거부)은 `process` 결과에서 `held`와 `ON_HOLD` 이유로 보인다. 같은 큐를 다시 처리해도 지급 요청(`refund_request`)의 키는 support가 클레임을 접수한 사건 기준으로 고정하므로(`<claim.context_id>:refund_request:claim:<id>`), 검증 중인 건이나 승인된 보류 건을 다시 처리하면 같은 판정이 이어지고 중복 지급되지 않는다. dashboard-api 호출마다 새 `ctx_req_`를 붙여도 상관없다.
+- 지급 연동이 막힌 항목(재무 검증 중·보류·거부)은 `process` 결과에서 `held`와 `ON_HOLD` 이유로 보인다. 같은 큐를 다시 처리해도 지급 요청(`refund_request`)의 키는 support가 클레임을 접수한 사건 기준으로 고정하므로(`<claim.context_id>:refund_request:claim:<id>`), 검증 중인 건이나 승인된 보류 건을 다시 처리하면 같은 판정이 이어지고 중복 지급되지 않는다. dashboard-api 호출마다 새 `ctx_ui_`를 붙여도 상관없다.
 - 감사 기록의 `agent_override`(상담원 승인) 라벨은 화면 표기에 맞춘 이름이다. `claim_stats.agent_overrides`는 자동 판정을 뒤집는 경우만 세는데 지금은 자동 판정을 바꿀 수 없어 항상 0이다.
 
 ### 인사 탭: 인수인계 질문 (목 모드 전용)
@@ -79,9 +79,15 @@ support 출력은 `claim_mapping.py`에서 화면 모델로 바꾼다 (값을 �
 | POST `/handover-questions/{question_id}/answer` | 본문 `HandoverAnswerRequest`(`question_id`, `answer`, `idempotency_key`) → `AnswerHandoverQuestionOutput` (남은 질문, 새 완성도, 상태) |
 - 완성도·빈 자리 수는 코드가 계산한다 (완성도 = (항목 수 - 빈 자리) / 항목 수). 마지막 질문에 답하면 `ready`가 된다.
 - 같은 `idempotency_key`로 같은 질문에 다시 보내면 이전 결과를 돌려주고 한 번만 반영한다 (다른 질문에 쓰면 409 `IDEMPOTENCY_CONFLICT`). 이미 답한 질문은 409 `INVALID_STATE`, 없는 질문은 404, 본문 오류(빈 답변·빈 키·경로와 다른 `question_id`)는 422다.
-- 실제 연결 계획: 답변은 새 요청으로 hr `answer_handover_question`(A2A, `deadline` 30초 그대로)에 보내고, 요청 `context_id`는 새 `ctx_req_`가 아니라 **질문의 `context_id`**를 그대로 쓴다 (`support_client.call()`에 `context_id` 인자 추가 필요). 대기 중인 질문 목록은 hr의 읽기 skill로 받는다.
+- 실제 연결 계획: 답변은 새 요청으로 hr `answer_handover_question`(A2A, `deadline` 30초 그대로)에 보내고, 요청 `context_id`는 새 `ctx_ui_`가 아니라 **질문의 `context_id`**를 그대로 쓴다 (`support_client.call()`에 `context_id` 인자 추가 필요). 대기 중인 질문 목록은 hr의 읽기 skill로 받는다.
 - hr 쪽에 필요한 것: `start_handover`·`answer_handover_question` 구현과 Agent Card 등록(요청 가능: dashboard-api), 대기 질문·인수인계 목록 읽기 skill (계약에 없음).
 - 답변 문장은 사람이 쓴 내부 입력이라 계약대로 `input`으로 보낸다. 화면은 텍스트로만 표시해야 한다.
+
+### 사건 ID (`context_id`)
+모든 요청에는 사건 단위 `context_id`가 필요하다. 화면(상담원) 호출은 요청마다 새 `ctx_ui_<hex>`를 붙인다 (`support_client.UI_CONTEXT_PREFIX`, 한 곳).
+- 계약에 정해진 접두사는 흉내 내지 않는다: `ctx_inc_`(통합 에이전트 발급), `ctx_req_`(기획개발 발급 — 같은 변경 요청을 여러 부서가 보내면 하나로 묶는 번호표), `ctx_ntc_`, `ctx_cmp_`(마케팅 발급). 예전에는 화면 호출에 `ctx_req_`를 붙였는데, 기획개발이 발급하는 변경 요청 번호와 같은 모양이라 헷갈릴 수 있어 바꿨다.
+- **임시 값이다.** 화면 호출용 접두사는 계약 `ContextPrefix`와 `docs/agent-common.md`에 아직 없다 (요청 이슈 참고). 정해지면 상수만 바꾼다.
+- 이미 사건이 있는 대상(인수인계 질문, 클레임 지급 등)은 그 사건의 `context_id`를 그대로 쓴다.
 
 ## 4. 의존
 ax-contracts, ax-agent-template
