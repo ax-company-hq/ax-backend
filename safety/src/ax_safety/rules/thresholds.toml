@@ -157,9 +157,9 @@ field = "duplicate_count"
 op = ">"
 value = 0
 
-# merge_pr: generate_pr와 같은 크기·경로 기준
+# merge_pr: generate_pr와 같은 크기·경로 기준. 규칙 키는 파일 안에서 겹치지 않게 merge_ 접두사
 [[rules]]
-key = "pr_changed_lines"
+key = "merge_changed_lines"
 action = "merge_pr"
 metric = "param"
 field = "changed_lines"
@@ -167,7 +167,7 @@ op = ">"
 value = 300
 
 [[rules]]
-key = "pr_changed_files"
+key = "merge_changed_files"
 action = "merge_pr"
 metric = "param"
 field = "changed_files"
@@ -175,7 +175,7 @@ op = ">"
 value = 20
 
 [[rules]]
-key = "pr_allowed_paths"
+key = "merge_allowed_paths"
 action = "merge_pr"
 metric = "paths_within"
 field = "changed_paths"
@@ -198,7 +198,7 @@ op = ">"
 value = 0
 
 [[rules]]
-key = "irreversible"
+key = "merge_irreversible"
 action = "merge_pr"
 metric = "param"
 field = "irreversible_count"

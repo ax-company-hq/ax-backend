@@ -119,6 +119,15 @@ class ThresholdTable(_Strict):
     review_timeout_seconds: float = Field(gt=0)
     rules: list[Rule] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def _unique_keys(self) -> ThresholdTable:
+        seen: set[str] = set()
+        for rule in self.rules:
+            if rule.key in seen:
+                raise ValueError(f"기준표에 같은 규칙 키가 두 번 있다: {rule.key}")
+            seen.add(rule.key)
+        return self
+
     def rules_for(self, action: str) -> list[Rule]:
         return [rule for rule in self.rules if rule.action == action]
 

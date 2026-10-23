@@ -195,6 +195,12 @@ owner = "planning"
 base_grade = "B"
 verifier = "safety"
 
+# 변경 요청 접수는 A (#173). 요청 부서는 A2A로 부르고, execute()는 planning이 부른다
+[[actions]]
+action = "create_ticket"
+owner = "planning"
+base_grade = "A"
+
 # 기록·회신·초안은 A (#166). 돈·배포에 닿지 않는다
 [[actions]]
 action = "write_spec"
