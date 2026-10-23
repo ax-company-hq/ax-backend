@@ -67,6 +67,8 @@ class Ledger:
         self.loss_reports: dict[str, dict[str, Any]] = {}  # context_id → 마지막 손실 리포트
         self.reviewed: dict[str, AgentResult] = {}  # review_id → AI 1차 판단
         self.ai_reviews: list[dict[str, Any]] = []  # 대시보드 조회용 AI 판단 기록
+        self.catbooks_items: dict[str, dict[str, Any]] = {}  # 캣북스 클레임 확인 결과
+        self.catbooks_sync: dict[str, Any] | None = None  # 마지막 캣북스 가져오기 요약
         self.threshold_reviewed: dict[str, AgentResult] = {}  # change_id → 기준 바꾸기 판단
         self.threshold_reviews: list[dict[str, Any]] = []  # 대시보드 조회용 기준 바꾸기 판단
 
