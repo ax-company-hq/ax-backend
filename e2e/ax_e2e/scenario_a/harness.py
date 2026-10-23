@@ -2,8 +2,8 @@
 
 - mock: 부서 앱을 import해 `agent_url(부서)` 주소로 ASGI에 연결한다 (`ax_agent_template.client`와
   총괄의 httpx를 같은 라우터로 바꿔 끼운다). LLM은 `LLM_*`를 비우고 `<PREFIX>_MOCK=1`로 목 처리한다.
-- real: 서버 PC의 실제 compose를 부르는 부분은 PR-C(`real-run.yml`)가 채운다. 지금은 스텁이라 모든
-  단계가 pending(note "real 호출부 없음")으로 표시된다.
+- real: `AX_REAL_HOST`(예 localhost)가 있으면 compose가 연 포트로 HTTP 호출한다 (`call_dept`가
+  라우터 없이 실제 연결). 없으면 스텁이라 모든 단계가 pending이다. 실서버 점수는 지금 단독만 낸다.
 """
 
 from __future__ import annotations
@@ -29,6 +29,24 @@ def e2e_mode() -> str:
     if mode not in MODES:
         raise ValueError(f"AX_E2E_MODE는 mock|real: {mode}")
     return mode
+
+
+def real_host() -> str | None:
+    """실서버 호출 대상 호스트 (`AX_REAL_HOST`, 예 localhost). 없으면 real 모드는 스텁이다."""
+    return os.getenv("AX_REAL_HOST") or None
+
+
+def prepare_real_env(host: str) -> None:
+    """real 모드: 부서 주소를 `http://<host>:<포트>`로 정한다 (compose가 포트를 호스트에 연다).
+
+    토큰은 요청자별 `<PREFIX>_TOKEN` 환경변수를 쓴다 (real_run.py가 서버 PC `.env`에서 넘긴다).
+    e2e 프로세스는 LLM을 직접 부르지 않으므로 LLM 키는 필요 없다.
+    """
+    from ax_agent_template.config import DEFAULT_PORTS, env_prefix
+
+    os.environ["TENANT_ID"] = "shop-demo"
+    for name, port in DEFAULT_PORTS.items():
+        os.environ[f"AX_{env_prefix(name)}_URL"] = f"http://{host}:{port}"
 
 
 def prepare_env(workdir: Path) -> None:
@@ -145,7 +163,14 @@ def build_request(
         timeout=30.0,
     )
     req = testclient.build_request(args)
-    return req.model_copy(update={"input": data, "untrusted": untrusted or {}})
+    req = req.model_copy(update={"input": data, "untrusted": untrusted or {}})
+    if e2e_mode() == "real":
+        from ax_agent_template.config import env_prefix
+
+        token = os.getenv(f"{env_prefix(requester)}_TOKEN")
+        if token:  # 없으면 mock 토큰이 그대로 가서 실서버가 거부한다 (단계 실패 사유로 남는다)
+            req = req.model_copy(update={"meta": req.meta.model_copy(update={"token": token})})
+    return req
 
 
 async def call_dept(dept: str, req) -> dict:

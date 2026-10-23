@@ -131,6 +131,34 @@ def path_scores(stages: list[StageDef], out: list[Stage]) -> dict:
     return scores
 
 
+def real_as_unit(real: DevStatus) -> DevStatus:
+    """직전 real-result.json을 `judge`가 단독 관점으로 비교할 수 있게 real을 unit 자리로 옮긴다."""
+    stages = [s.model_copy(update={"unit": s.real or StageResult()}) for s in real.stages]
+    return real.model_copy(update={"stages": stages})
+
+
+def to_real_status(status: DevStatus, prev_real: DevStatus | None = None) -> DevStatus:
+    """real 모드 판정 결과(단독 자리에 실서버 값)를 `real-result.json` 형식으로 옮긴다.
+
+    stages[].real = 판정 결과, unit·chain은 기본값(pending)으로 비운다 (개발실이 real만 합친다).
+    totals는 real_pass·real_runs_consecutive·total만 채운다. 모든 단계가 pass인 실행이면
+    직전 연속 횟수에 1을 더하고, 아니면 0으로 되돌린다.
+    """
+    stages = [
+        s.model_copy(update={"unit": StageResult(), "chain": StageResult(), "real": s.unit})
+        for s in status.stages
+    ]
+    real_pass = sum(1 for s in stages if s.real is not None and s.real.state == "pass")
+    before = prev_real.totals.real_runs_consecutive if prev_real else 0
+    full = bool(stages) and real_pass == len(stages)
+    totals = Totals(
+        real_pass=real_pass,
+        total=len(stages),
+        real_runs_consecutive=before + 1 if full else 0,
+    )
+    return status.model_copy(update={"stages": stages, "totals": totals})
+
+
 def regressions(status: DevStatus, prev: DevStatus | None = None) -> list[dict]:
     """이슈를 만들 대상: 이번 실행에서 **새로** 통과가 아니게 된 단계.
 
