@@ -54,6 +54,9 @@ jobs:
     needs: guard
     if: vars.AX_REAL_RUN == 'on' && github.ref == 'refs/heads/dev'
     runs-on: [self-hosted, ax-server]
+    defaults:
+      run:
+        shell: bash # Windows 기본은 pwsh라 "$VAR" 같은 bash 문법이 깨진다 (Git for Windows bash 필요)
     # 금요일 3회 연속이 들어가는 전체 예산 (real_run.py의 TOTAL_BUDGET 220분 + 정리)
     timeout-minutes: 240
     permissions:

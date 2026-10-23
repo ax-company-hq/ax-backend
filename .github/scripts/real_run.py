@@ -446,12 +446,8 @@ def cmd_record(args: argparse.Namespace) -> int:
 
 
 def cmd_cleanup(args: argparse.Namespace) -> int:
-    """워크플로 마지막 정리: .env 복사 후 ax-real만 down -v, 복사본은 항상 삭제."""
+    """워크플로 마지막 정리: ax-real만 down -v (서비스 env_file이 required: false라 .env 불필요)."""
     try:
-        try:
-            install_env_copy(resolve_env_source(os.getenv(ENV_FILE_VAR)))
-        except (EnvFileError, OSError):
-            log("정리: env 파일을 쓸 수 없어 복사 없이 down -v를 시도")
         run_cmd([*COMPOSE, "down", "-v", "--remove-orphans"], timeout=DOWN_TIMEOUT)
     finally:
         remove_env_copy()

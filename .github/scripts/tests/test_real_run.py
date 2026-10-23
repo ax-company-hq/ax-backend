@@ -464,8 +464,9 @@ def test_bad_env_path_fails_without_running_compose(space, monkeypatch, tmp_path
     assert not (ws / ".env").exists()
 
 
-def test_cleanup_command_removes_copy_even_if_compose_fails(space, monkeypatch) -> None:
+def test_cleanup_command_needs_no_env_copy_and_leaves_none(space, monkeypatch) -> None:
     ws, _ = space
+    (ws / ".env").write_text("stale", encoding="utf-8")  # 남은 파일도 정리 끝에 지운다
     seen: list = []
 
     def run_cmd(cmd, **kw):
@@ -475,7 +476,7 @@ def test_cleanup_command_removes_copy_even_if_compose_fails(space, monkeypatch) 
     monkeypatch.setattr(run_mod, "run_cmd", run_cmd)
     with pytest.raises(RuntimeError):
         run_mod.cmd_cleanup(run_mod.argparse.Namespace())
-    assert seen[0][0] is True and "down" in seen[0][1] and "ax-real" in seen[0][1]
+    assert "down" in seen[0][1] and "ax-real" in seen[0][1]
     assert not (ws / ".env").exists()
 
 
@@ -522,6 +523,9 @@ def test_workflow_cleans_env_and_locks_deps() -> None:
     assert len(down) == 1 and down[0]["if"] == "always()"
     sync = [s["run"] for s in steps if s.get("run", "").startswith("uv sync")]
     assert sync == ["uv sync --all-packages --locked"]
+    for name, job in wf["jobs"].items():  # Windows 기본 셸은 pwsh라 bash 문법이 깨진다
+        if "self-hosted" in job["runs-on"]:
+            assert job["defaults"]["run"]["shell"] == "bash", name
     assert "AX_REAL_ENV_FILE" not in json.dumps(wf)  # 경로는 runner 환경에서만 온다
 
 

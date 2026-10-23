@@ -32,7 +32,7 @@
 
 - **전용 Windows 계정**을 만든다 (예 `ax-runner`, 일반 사용자, 관리자 아님). runner와 `.env`는 이 계정 폴더에 둔다. 개인 계정·개인 파일과 분리한다.
 - **Docker Desktop + WSL2**: WSL2 백엔드로 설치하고 전용 계정이 Docker를 쓸 수 있게 한다 (`docker` 그룹 또는 Docker Desktop 사용자 권한). Docker Desktop은 계정 로그인 시 자동 시작되게 한다.
-- 설치된 것: Git for Windows(bash 포함), Python 3.12, `uv`. `docker compose version`, `uv --version`이 전용 계정에서 동작해야 한다.
+- 설치된 것: Git for Windows(bash 포함, `bash`가 `ax-runner`의 PATH에 있어야 한다. `real-run.yml`의 서버 PC job이 `shell: bash`로 돈다), Python 3.12, `uv`. `docker compose version`, `uv --version`이 전용 계정에서 동작해야 한다.
 - 절전·최대 절전 끄기 (전원 옵션: 절전 안 함, 디스플레이만 끄기). 야간 02:00 실행이 깨어 있어야 한다.
 - 포트: compose가 쓰는 8000~8107·8010·8020·6379·5432와 게이트웨이(8080)·개발실(8090)이 비어 있어야 한다. Zabbix가 80을 쓸 수 있으므로 게이트웨이는 8080을 유지한다.
 - `.env`는 **서버 PC에만** 둔다 (작업 폴더 밖, 위치는 `AX_REAL_ENV_FILE`. 실행 중에만 `infra/compose.yml`이 읽는 레포 루트 `.env`로 복사된다). 커밋 금지, 채팅·이슈·로그에 붙이지 않는다. real_run.py는 `.env`에서 `*_TOKEN`과 `AX_ZABBIX_URL` 이름만 읽어 e2e와 Zabbix 확인에 쓰고 값을 출력하지 않는다.
@@ -53,13 +53,15 @@
    ```
 
    `--ephemeral`은 쓰지 않는다. 기본 라벨(`windows,x64`)이 같이 붙어도 된다.
-3. `ax-runner` 계정으로 로그온할 때 `run.cmd`를 바로 실행하는 작업 스케줄러 작업을 만든다 (관리자 PowerShell, 경로는 실제 설치 위치로):
+3. `ax-runner` 계정으로 로그온할 때만 `run.cmd`가 대화형으로 돌게 작업 스케줄러 작업을 만든다 (관리자 불필요, `ax-runner`로 로그인한 PowerShell에서):
 
    ```
-   schtasks /Create /TN "ax-runner" /SC ONLOGON /RU ax-runner /TR "C:\Users\ax-runner\actions-runner\run.cmd" /RL LIMITED
+   $a = New-ScheduledTaskAction -Execute "$env:USERPROFILE\actions-runner\run.cmd" -WorkingDirectory "$env:USERPROFILE\actions-runner"
+   $t = New-ScheduledTaskTrigger -AtLogOn -User "$env:COMPUTERNAME\ax-runner"
+   Register-ScheduledTask -TaskName "ax-runner" -Action $a -Trigger $t
    ```
 
-   서버 PC가 재부팅되면 `ax-runner`가 자동 로그인되게 해 둔다 (Docker Desktop도 같은 로그인에서 시작).
+   Docker Desktop이 사용자 세션에서 돌기 때문에 `ax-runner`로 로그인한 채 화면 잠금만 걸어 둔다 (로그아웃하면 runner와 Docker가 멈춘다). 서버 PC가 재부팅되면 `ax-runner`가 자동 로그인되게 한다.
 4. 첫 확인은 `AX_REAL_RUN=on`으로 바꾼 뒤 Actions에서 `real-run`을 수동 실행(`workflow_dispatch`, code owner)해 본다.
 
 **상시 runner의 대가**: 작업 폴더가 job 사이에 남는다. 그래서 상태를 아래로 정리한다.
@@ -75,7 +77,7 @@ checkout이 `clean: true`라 작업 폴더에 둔 `.env`는 매번 지워진다.
 2. `ax-runner`만 읽게 한다:
 
    ```
-   icacls C:\Users\ax-runner\ax-real /inheritance:r /grant:r ax-runner:(OI)(CI)F
+   icacls C:\Users\ax-runner\ax-real /inheritance:r /grant:r "ax-runner:(OI)(CI)F"
    ```
 
 3. runner가 경로를 알게 한다 (둘 중 하나):
