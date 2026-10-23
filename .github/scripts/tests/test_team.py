@@ -442,6 +442,7 @@ def test_token_depts_of(team: Team) -> None:
     assert "contracts" in team_mod.token_depts_of(team, "haakim7")
     assert "contracts" not in team_mod.token_depts_of(team, "2taeyoon")
     assert "shop-web" in team_mod.token_depts_of(team, "areatmadm")
+    assert "planning-web" in team_mod.token_depts_of(team, "NYejin")  # 기획개발 화면 (#156)
 
 
 def cap_run(title: str, conclusion: str | None, run_id: int = 1) -> tuple:

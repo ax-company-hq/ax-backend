@@ -380,7 +380,7 @@ claude-review.yml — 트리거: pull_request_target [opened, synchronize, reope
 ## 상세 설계 — ax-frontend
 
 ax-backend와 같은 구조(prep/claude/apply 분리, environment claude·bot, 관문, sweeper, 스위치)로 만든다.
-멤버·토큰·bot_login은 ax-backend dev의 .github/team.yml을 raw URL로 읽는다 (원본 하나). ax-backend team.yml에도 `frontend_depts: {shop-web: areatmadm, dashboard-web: bxbae}`를
+멤버·토큰·bot_login은 ax-backend dev의 .github/team.yml을 raw URL로 읽는다 (원본 하나). ax-backend team.yml에도 `frontend_depts: {shop-web: areatmadm, dashboard-web: bxbae, planning-web: NYejin}`를
 추가해 cap-ok가 두 레포 잡을 같은 사람에게 합산하게 한다 (이 작업은 ax-backend에 사람 승인 PR로). 이 레포 전용 설정은 .github/team-frontend.yml:
   depts: shop-web { folder: shop-web, owners: [areatmadm], env_prefix: VITE_SHOP } · dashboard-web { folder: dashboard-web, owners: [bxbae], env_prefix: VITE_DASHBOARD }
   reviewers: shop-web ↔ dashboard-web 서로, 둘 다 바뀌면 data 추가. data는 리뷰 전용 부서로 `data: { owners: [JangJaehyeonn], review_only: true }`를 이 파일에 둔다

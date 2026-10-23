@@ -43,7 +43,7 @@ depts:
   contracts: { folder: contracts, owners: [haakim7, 2taeyoon] } # env_prefix 없음 → MOCK 변수 안 씀
 
 # ax-frontend 부서의 실행 토큰 주인 (cap-ok가 두 레포 잡을 같은 사람에게 합산)
-frontend_depts: { shop-web: areatmadm, dashboard-web: bxbae }
+frontend_depts: { shop-web: areatmadm, dashboard-web: bxbae, planning-web: NYejin }
 
 # 바뀐 부서 → 리뷰 부서 (docs/automation-spec.md "리뷰어 배정")
 reviewers:
