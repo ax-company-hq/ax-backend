@@ -22,9 +22,10 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import audit  # noqa: E402
 import team as team_mod  # noqa: E402
 
-CONTEXTS = ("folder-guard", "test-guard", "dev-health", "agent-review")
+CONTEXTS = ("folder-guard", "test-guard", "dev-health", "agent-review", "human-path-audit")
 MARKER = "<!-- guards:{sha} -->"
 NOT_REQUIRED = "not required — 부서 폴더 안 변경 (리뷰 생략)"
 HINT_LINES = 8  # 재대기 힌트에 넣을 위반 줄 수
@@ -131,6 +132,14 @@ def decide(
         plan.status("agent-review", "success", note)
     elif c.depts and not team.review_required(c):
         plan.status("agent-review", "success", NOT_REQUIRED)
+
+    # human-path-audit: 감사 경로를 건드리지 않은 PR은 여기서 success
+    # (감사 경로 PR은 human-path-audit.yml이 쓴다)
+    # 리뷰 생략 봇 브랜치(revert/·openapi/sync-)는 허용 경로만 바꾸므로 감사도 생략
+    if rule and rule[1].get("review") == "skip":
+        plan.status("human-path-audit", "success", f"감사 생략 ({rule[0]})")
+    elif not any(audit.is_audit_path(team, ch.path) for ch in changes):
+        plan.status("human-path-audit", "success", "대상 아님 (감사 경로 변경 없음)")
 
     if is_bot and not rule and (problems or test_violations) and pr.issue:
         reason = (

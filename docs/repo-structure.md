@@ -96,7 +96,8 @@ main        ← 야간 e2e 성공 시 release 워크플로가 머지 (AX_RELEASE
 | PR 종류 | 머지 조건 |
 | --- | --- |
 | 부서 폴더 PR (contracts·agent-template·infra 포함) | ci·contracts-compat·automation-tests 통과 + folder-guard·test-guard·dev-health + 리뷰 부서 에이전트 승인(agent-review) |
-| human_paths PR (`.github/`, `.claude/`, `scripts/`, `CLAUDE.md`, `docs/`, 루트 파일) | 위 체크 + **code owner 승인** (`.github/`·`.claude/`·`scripts/`·`CLAUDE.md`는 재현·준하·태윤, 그 밖은 재현·준하). 에이전트 리뷰는 생략 |
+| 핵심 경로 PR (`.github/`, `.claude/`, `CLAUDE.md`, 루트 파일, `scripts/safe-test.sh`) | 위 체크 + **code owner(재현·준하·태윤 중 한 명) 승인**. 에이전트 리뷰는 생략 |
+| 감사 경로 PR (`docs/`, `contracts/`, `scripts/`, 루트 `pyproject.toml`) | 위 체크 + **human-path-audit**: 기계 규칙 통과 후 감사 에이전트 2개(보안·기준 정합) 승인. 사람 승인 없음 |
 | contracts PR | 위 부서 폴더 PR 조건. 리뷰는 바뀐 계약 파일을 쓰는 부서 에이전트. 깨지는 변경은 contracts-compat이 막음 |
 | 기준표 PR (`thresholds.toml`, `ai_review_policy.toml`) | 체크 + **code owner(태윤·재현·준하) 승인**. 에이전트는 못 바꿈 |
 | 봇 PR (`revert/`, `openapi/sync-`) | 리뷰·호환 검사 생략, 허용 경로만 |
@@ -105,27 +106,14 @@ main        ← 야간 e2e 성공 시 release 워크플로가 머지 (AX_RELEASE
 
 DejaFix에서는 "승인 1명 + 작성자 본인 승인 불가" 때문에 PR 30개가 막혔다. 사람 승인을 부서 에이전트의 교차 리뷰로 바꾸고, 리뷰 부서를 표로 고정해 같은 사람이 자기 PR을 리뷰하는 경우는 자동으로 다른 부서로 대체한다. 브랜치 보호의 Required approvals는 0이다.
 
-### CODEOWNERS는 human_paths만
+### CODEOWNERS는 핵심 경로만
 
 ```
-# .github/CODEOWNERS
-*                    @JangJaehyeonn @haakim7
-/.github/            @JangJaehyeonn @haakim7 @2taeyoon
-/.claude/            @JangJaehyeonn @haakim7 @2taeyoon
-/scripts/            @JangJaehyeonn @haakim7 @2taeyoon
-/CLAUDE.md           @JangJaehyeonn @haakim7 @2taeyoon
-# 부서 폴더·contracts·notes·uv.lock은 owner 없음 (에이전트 리뷰 또는 CI·관문으로 머지)
-/contracts/
-/agent-template/
-/orchestrator/
-/safety/
-/memory/
-/shop-api/
-/dashboard-api/
-/agents/
-/infra/
-/docs/notes/
-/uv.lock
+# .github/CODEOWNERS (요약, 원본 참고)
+*                    @JangJaehyeonn @haakim7 @2taeyoon   # 핵심 기본값
+/docs/  /contracts/  /scripts/  /pyproject.toml           # 감사 경로 (소유자 없음)
+/agent-template/ ... /agents/*/ /infra/ /uv.lock          # 부서 폴더 (소유자 없음)
+/scripts/safe-test.sh  thresholds.toml  ai_review_policy.toml  @재현·준하·태윤  # 맨 뒤
 ```
 
 뒤의 줄이 앞의 `*`를 덮어써서, owner가 없는 줄의 경로는 code owner 승인이 필요 없다. 적힌 owner 중 한 명이 승인하면 된다.

@@ -24,6 +24,17 @@ wip: { open_bot_prs: 2, in_progress_issues: 3 }
 # 매일 1회 정리: 이 시간보다 오래 변화가 없는 봇 PR·봇 이슈를 닫는다
 stale_hours: 48
 
+# 감사 경로 (docs/automation-spec.md 12장): 사람 승인 대신 감사 에이전트 2개(보안·기준 정합)가 둘 다 승인해야 머지.
+# CODEOWNERS에서는 소유자 없는 줄. 핵심 경로(.github/·.claude/·CODEOWNERS·기준표 toml·core_scripts·그 밖의 루트 파일)는 사람 승인
+audit:
+  paths: [docs/, contracts/, scripts/, pyproject.toml]
+  # scripts/ 중 핵심 경로로 남는 것: 결과가 bot 잡(비밀값)으로 넘어가는 스크립트
+  core_scripts: [scripts/safe-test.sh]
+  # 감사 토큰 순번 (owners 첫 번째 = 재현·준하·태윤). 리뷰 상한(review_cap)에 포함
+  token_depts: [data, hr, finance]
+  model_var: AX_MODEL_REVIEW_SHARED
+  notify: JangJaehyeonn # 감사 경로가 머지되면 report 이슈에서 멘션
+
 # id: { folder, aliases, owners(첫 번째가 실행 토큰), env_prefix }
 depts:
   data: { folder: agents/data, owners: [JangJaehyeonn], env_prefix: DATA }

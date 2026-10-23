@@ -42,7 +42,8 @@ def decide(team, p, changes, action="opened", tests=(), dev_red=False, hotfix=Fa
 def test_human_own_folder_ok(team) -> None:
     plan = decide(team, pr(), [ch("agents/data/a.py")])
     assert states(plan) == {"folder-guard": "success", "test-guard": "success",
-                            "dev-health": "success", "agent-review": "success"}
+                            "dev-health": "success", "agent-review": "success",
+                            "human-path-audit": "success"}
     assert plan.comment is None
     review = next(s for s in plan.statuses if s["context"] == "agent-review")
     assert review["description"].startswith("not required")
@@ -100,7 +101,8 @@ def test_bot_openapi_sync_skips_review_and_tests(team) -> None:
     plan = decide(team, pr(BOT, "openapi/sync-abc1234"), [ch("contracts/openapi/shop-api.json")],
                   tests=["x"])
     assert states(plan) == {"folder-guard": "success", "test-guard": "success",
-                            "dev-health": "success", "agent-review": "success"}
+                            "dev-health": "success", "agent-review": "success",
+                            "human-path-audit": "success"}
 
 
 def test_revert_branch_ignores_dev_red(team) -> None:
@@ -264,3 +266,12 @@ def test_apply_second_failure_does_not_redispatch(tmp_path, monkeypatch) -> None
     monkeypatch.setattr(team_mod, "dispatch_write", lambda r, t, n, *dm: dispatched.append(n))
     assert guards.main(["apply", str(f)]) == 0
     assert dispatched == []
+
+
+def test_human_path_audit_status_only_for_non_audit_prs(team) -> None:
+    # 감사 경로가 없으면 guards가 success("대상 아님"), 있으면 human-path-audit.yml이 쓴다
+    assert states(decide(team, pr(), [ch("agents/data/a.py")]))["human-path-audit"] == "success"
+    assert "human-path-audit" not in states(decide(team, pr(branch="docs/x"),
+                                                   [ch("docs/requirements.md")]))
+    assert "human-path-audit" not in states(decide(team, pr("haakim7", "contracts/x"),
+                                                   [ch("contracts/src/x.py")]))

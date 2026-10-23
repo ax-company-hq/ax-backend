@@ -473,9 +473,13 @@ DENY = ["Read(//proc)", "Read(//proc/**)", "Read(**/.git/**)", "Read(**/.env)",
         "Read(//home/runner/runners/**)", "Bash", "WebFetch", "WebSearch"]
 
 
-def claude_settings(dept: str, trusted: Path, out_dir: Path) -> dict:
-    """deny 규칙 + 폴더 훅. 훅 명령에 부서를 직접 넣는다 (env에 의존하지 않음)."""
-    hook = (f'node "{trusted}/.claude/hooks/guard-folder.mjs" --depts {dept} '
+def claude_settings(dept: str, trusted: Path, out_dir: Path, out_only: bool = False) -> dict:
+    """deny 규칙 + 폴더 훅. 훅 명령에 부서를 직접 넣는다 (env에 의존하지 않음).
+
+    out_only: 감사 에이전트처럼 결과 폴더에만 쓰게 한다.
+    """
+    target = "--out-only" if out_only else f"--depts {dept}"
+    hook = (f'node "{trusted}/.claude/hooks/guard-folder.mjs" {target} '
             f'--out "{out_dir}"')
     return {
         "permissions": {"deny": DENY},
@@ -916,6 +920,19 @@ def pr_all_green(sha: str) -> bool:
     return all(r.get("status") == "completed" and r.get("conclusion") in GREEN for r in runs)
 
 
+def audited_merges(now: datetime) -> list[dict]:
+    """지난 24시간 머지된 감사 경로 PR (머지 때 audit-path 라벨이 붙는다)."""
+    since = (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    items = api(f"repos/{repo()}/issues?state=closed&labels=audit-path&since={since}"
+                "&per_page=100") or []
+    out = []
+    for i in items:
+        merged = ((i.get("pull_request") or {}).get("merged_at"))
+        if merged and parse_time(merged) >= now - timedelta(hours=24):
+            out.append(i)
+    return out
+
+
 def stale_sweep(team: team_mod.Team, now: datetime | None = None) -> str:
     now = now or datetime.now(UTC)
     prs = api(f"repos/{repo()}/pulls?state=open&per_page=100") or []
@@ -949,6 +966,7 @@ def stale_sweep(team: team_mod.Team, now: datetime | None = None) -> str:
             "-f", "state_reason=not_planned")
         lines.append(f"- 이슈 #{n} {i['title']}")
     resumed = wip_resume(team)
+    audited = audited_merges(now)
     day = now.strftime("%Y-%m-%d")
     body = [f"{hours}시간 넘게 변화가 없던 봇 PR·이슈 정리 ({day} UTC)", ""]
     body += lines or ["- 닫은 것 없음"]
@@ -957,6 +975,8 @@ def stale_sweep(team: team_mod.Team, now: datetime | None = None) -> str:
                  *[f"- PR #{p['number']} {p['title']}" for p in waiting]]
     if resumed:
         body += ["", "**wip-wait 재개**", *[f"- {r}" for r in resumed]]
+    body += ["", "**지난 24시간 감사 경로 변경** (human-path-audit로 머지)"]
+    body += [f"- #{p['number']} {p['title']}" for p in audited] or ["- 없음"]
     for old in issues:
         if old.get("title", "").startswith(REPORT_PREFIX) and (old.get("user") or {}).get(
                 "login") == team.bot_login:
@@ -1015,6 +1035,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - 단계별 분기
     p.add_argument("--trusted", type=Path, required=True)
     p.add_argument("--out-dir", type=Path, required=True)
     p.add_argument("--file", type=Path, required=True)
+    p.add_argument("--out-only", action="store_true")
     p = sub.add_parser("ruff-targets")
     p.add_argument("--dept", required=True)
     p.add_argument("--base", required=True)
@@ -1051,7 +1072,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - 단계별 분기
         if args.cmd == "claude-settings":
             if args.dept not in team.depts:
                 raise JobError(f"알 수 없는 부서: {args.dept}")
-            data = claude_settings(args.dept, args.trusted, args.out_dir)
+            data = claude_settings(args.dept, args.trusted, args.out_dir, args.out_only)
             args.file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
             return 0
         if args.cmd == "write-apply":

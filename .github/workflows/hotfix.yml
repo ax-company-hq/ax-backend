@@ -46,7 +46,7 @@ jobs:
         run: |
           set -euo pipefail
           if jq -e --arg s "$SENDER" '.hotfix_labelers | index($s) != null' .github/team.json >/dev/null; then
-            for ctx in folder-guard test-guard dev-health agent-review; do
+            for ctx in folder-guard test-guard dev-health agent-review human-path-audit; do
               gh api -X POST "repos/$REPO/statuses/$SHA" -f state=success -f context="$ctx" \
                 -f description="hotfix @$SENDER ${SHA:0:7}" -f target_url="$RUN_URL" >/dev/null
             done

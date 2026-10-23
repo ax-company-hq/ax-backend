@@ -18,6 +18,7 @@ function block(msg) {
 function parseArgs(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--out-only') { out.outOnly = true; continue; }
     const m = /^--(depts|out)(?:=(.*))?$/.exec(argv[i]);
     if (!m) continue;
     out[m[1]] = m[2] !== undefined ? m[2] : argv[++i];
@@ -90,6 +91,19 @@ function main() {
   const forbidden = (team.forbidden_in_dept || []).map((s) => s.toLowerCase());
 
   const args = parseArgs(process.argv.slice(2));
+  // 감사 에이전트: --out 디렉터리 안에만 쓸 수 있다 (레포·trusted 사본 어디에도 못 씀)
+  if (args.outOnly) {
+    if (!args.out) return block('--out-only에는 --out이 필요합니다.');
+    const outOnly = path.resolve(root, args.out);
+    const segs = relInside(outOnly, path.resolve(root, target));
+    if (!segs) return block(`${target}: 감사 에이전트는 결과 폴더에만 쓸 수 있습니다.`);
+    try {
+      if (hasLink(outOnly, path.resolve(root, target))) return block(`${target}: 심볼릭 링크/정션이 개입된 경로라 차단합니다.`);
+    } catch {
+      return block(`${target}: 경로 검사 중 오류가 나 차단합니다.`);
+    }
+    process.exit(0);
+  }
   const list = (args.depts ?? process.env.AX_DEPTS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   if (list.length === 0) {
     return block('AX_DEPTS 설정이 없어 모든 쓰기를 막습니다. .claude/settings.local.example.json 참고');

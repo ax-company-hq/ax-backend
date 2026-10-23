@@ -559,7 +559,7 @@ def test_todays_claude_runs_pages_and_skips_self(monkeypatch) -> None:
     runs = team_mod.todays_claude_runs("2026-10-22")
     assert len(runs) == 100 and all(r[1] != 999 for r in runs)
     assert runs[0] == ("ax-company-hq/ax-backend", 0, "t0", "success")
-    assert len(calls) == 4  # 워크플로 3개 + review 2쪽, 프론트는 아직 없음
+    assert len(calls) == 5  # 워크플로 4개(감사 포함) + review 2쪽, 프론트는 아직 없음
 
 
 def test_cap_status_ok_and_quota(team: Team, monkeypatch) -> None:
@@ -877,3 +877,20 @@ def test_cap_counts_contracts_review_runs_from_jobs(team: Team, monkeypatch) -> 
     # contracts 리뷰는 실제 리뷰 부서(data → 재현)로, data 리뷰는 제목대로(finance → 태윤)
     assert team_mod.usage_by_owner(team, runs, ran, "review") == {
         "JangJaehyeonn": 1, "2taeyoon": 1}
+
+
+def test_audit_runs_counted_as_review_from_jobs(team: Team, monkeypatch) -> None:
+    assert team_mod.run_kind("human-path-audit #12") == "review"
+    assert team_mod.needs_jobs("human-path-audit #12", "success", team)
+    assert not team_mod.needs_jobs("human-path-audit #12", None, team)  # 실행 중은 아직 모름
+    monkeypatch.setattr(team_mod, "gh_api", lambda path, *e: {"jobs": [
+        _job("claude:data:audit", [("Claude Code 설치 (npm)", "success"),
+                                   ("Claude (감사)", "success")]),
+        _job("claude:hr:audit", [("Claude Code 설치 (npm)", "success"),
+                                 ("Claude (감사)", "failure")])]})
+    runs = [cap_run("human-path-audit #12", "success", 30)]
+    ran = team_mod.resolve_failed_runs(runs, {}, team)
+    assert ran == {"30": ["data", "hr"]}
+    assert team_mod.usage_by_owner(team, runs, ran, "review") == {
+        "JangJaehyeonn": 1, "haakim7": 1}
+    assert team_mod.usage_by_owner(team, runs, ran, "write") == {}

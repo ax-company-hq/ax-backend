@@ -1,12 +1,16 @@
-*                       @JangJaehyeonn @haakim7
-# 자동화·규칙 파일: 재현·준하·태윤 중 한 명 승인
-/.github/               @JangJaehyeonn @haakim7 @2taeyoon
-/.claude/               @JangJaehyeonn @haakim7 @2taeyoon
-/scripts/               @JangJaehyeonn @haakim7 @2taeyoon
-/CLAUDE.md              @JangJaehyeonn @haakim7 @2taeyoon
-# 에이전트 리뷰로 머지하는 곳 (소유자 없음)
-# contracts: 영향받는 부서 에이전트 리뷰 + contracts-compat(하위 호환 검사, 깨지는 변경은 막음)
+# 핵심 경로만 사람 승인 (재현·준하·태윤 중 한 명). 나머지 사람 경로는 감사 에이전트 2개(human-path-audit)가 대신한다.
+# 순서가 중요하다: 뒤의 줄이 앞의 줄을 덮어쓴다. 소유자 없는 줄 = code owner 승인 불필요.
+
+# 기본값(핵심): .github/ 전체(CODEOWNERS 포함), .claude/, CLAUDE.md, 그 밖의 루트 파일
+*                       @JangJaehyeonn @haakim7 @2taeyoon
+
+# 감사 경로 (소유자 없음 → human-path-audit 감사 2개 승인으로 머지, docs/automation-spec.md 12장)
+/docs/
 /contracts/
+/scripts/
+/pyproject.toml
+
+# 부서 폴더 (소유자 없음 → 부서 에이전트 리뷰 또는 CI·관문으로 머지)
 /agent-template/
 /orchestrator/
 /safety/
@@ -21,8 +25,11 @@
 /agents/data/
 /agents/infra-dejafix/
 /infra/
-/docs/notes/*/
 /uv.lock
-# 부서 폴더 안의 사람 전용 파일 (team.yml human_files): 위의 소유자 없는 줄보다 뒤에 둔다
+
+# 감사·부서 경로 안의 핵심 파일 (위의 소유자 없는 줄보다 뒤에 둔다)
+# scripts/ 중 결과가 bot 잡(비밀값)으로 넘어가는 스크립트 (team.yml audit.core_scripts)
+/scripts/safe-test.sh                                     @JangJaehyeonn @haakim7 @2taeyoon
+# 부서 폴더 안의 사람 전용 기준표 (team.yml human_files)
 /agents/finance/src/finance_agent/ai_review_policy.toml   @2taeyoon @JangJaehyeonn @haakim7
 /safety/src/ax_safety/rules/thresholds.toml               @2taeyoon @JangJaehyeonn @haakim7

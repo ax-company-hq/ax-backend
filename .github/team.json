@@ -1,4 +1,22 @@
 {
+  "audit": {
+    "core_scripts": [
+      "scripts/safe-test.sh"
+    ],
+    "model_var": "AX_MODEL_REVIEW_SHARED",
+    "notify": "JangJaehyeonn",
+    "paths": [
+      "docs/",
+      "contracts/",
+      "scripts/",
+      "pyproject.toml"
+    ],
+    "token_depts": [
+      "data",
+      "hr",
+      "finance"
+    ]
+  },
   "bot_branches": {
     "openapi/sync-": {
       "compat": "skip",

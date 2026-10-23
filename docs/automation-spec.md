@@ -375,6 +375,29 @@ claude-review.yml — 트리거: pull_request_target [opened, synchronize, reope
 - contracts 리뷰 부서: 바뀐 contracts 경로 → contracts_affected 표의 부서 (team.py `Team.contracts_reviewers`). 표에 없는 파일이 있으면 reviewers.contracts를 더한다.
   cap은 끝난 contracts 리뷰 run의 jobs를 읽어 실제 리뷰 부서로 센다 (run 제목으로는 알 수 없음, 결과는 캐시)
 
+### 12. 핵심만 사람, 나머지는 감사 에이전트 2개 (human-path-audit) — 1~11장보다 우선
+- 경로 두 등급 (team.yml `audit`, CODEOWNERS)
+  - 핵심 경로 (사람 code owner 승인, 재현·준하·태윤 중 한 명): `.github/` 전체(CODEOWNERS 포함), `.claude/`, `CLAUDE.md`와 그 밖의 루트 파일,
+    `human_files`(thresholds.toml, ai_review_policy.toml), `audit.core_scripts`(scripts/safe-test.sh: build 잡에서 돌고 결과 패치·uv.lock이 bot 잡으로 넘어감)
+  - 감사 경로 (CODEOWNERS 소유자 없음 → 감사 2개): `docs/`(부서 notes 제외), `contracts/`, `scripts/`(core_scripts 제외), 루트 `pyproject.toml`
+  - 브랜치 보호의 "code owner 리뷰 필수"는 그대로 두고 CODEOWNERS 목록만 줄인다. `human-path-audit`은 필수 체크로 추가한다 (봇 커밋 상태, 앱 5419374)
+- human-path-audit.yml (pull_request_target → dev, workflow_dispatch(pr), AX_AUTOMATION=on)
+  - 감사 경로가 없는 PR: guards가 `human-path-audit` success("대상 아님"). hotfix도 success를 쓴다
+  - ① 기계 규칙(LLM 없음, audit.py `mechanical_findings`)에 걸리면 감사 없이 `needs-human` 라벨 + failure + 코멘트:
+    워크플로 권한 상승(permissions·앱 토큰 permission-*), 새 `secrets.*` 참조, environment 변경, pull_request_target·workflow_run 트리거 추가,
+    PR head를 받는 줄(head.sha·head.ref·head_ref·refs/pull/) 추가, CODEOWNERS·브랜치 보호 관련 줄, team.yml 권한·한도 키(members·hotfix_labelers·human_files·wip·audit 등, depts owners),
+    기준표 toml 한도 상향(숫자 증가·false→true·새 키), 감사 워크플로·프롬프트·audit.py 변경, 심볼릭 링크·서브모듈, YAML·TOML 파싱 실패
+  - ② 감사 2개 (matrix): 보안 감사(`.github/claude/audit-security.md`)·기준 정합 감사(`audit-standards.md`). 서로 다른 프롬프트, 모델 `AX_MODEL_REVIEW_SHARED`,
+    도구는 Write만(Bash·Edit 등 금지), guard-folder `--out-only`로 결과 폴더에만 쓰기. PR 본문·diff는 `<untrusted>`로 감싼다.
+    contracts-compat 결과를 meta.json으로 넘긴다 (기준 정합 감사가 참고)
+  - 판정 JSON `{head_sha, role, verdict: approve|reject, findings: [{severity, file, detail}], summary}` — 정해진 키만. 형식이 다르거나 파일이 없으면 통과 아님 (fail-closed).
+    high finding이 있는 approve도 형식 오류. 둘 다 approve여야 success → 기존 auto-merge
+  - 감사 토큰: `audit.token_depts`(data·hr·finance = 재현·준하·태윤) 순번(PR 번호 기준 시작점), 리뷰 상한(review_cap)이 남은 서로 다른 2명. 모자라면 pending("quota").
+    잡 이름 `claude:<토큰 부서>:audit`, run 제목 `human-path-audit #<PR>` — cap은 끝난 감사 run의 jobs로 센다
+- 사후 확인: 감사 경로 PR이 머지되면 `audit-path` 라벨 + 열린 report 이슈에 `@JangJaehyeonn 감사 경로 머지: #N 제목 — 파일` 한 줄 (없으면 report 이슈를 만든다).
+  매일 정리(stale-sweep) report에 "지난 24시간 감사 경로 변경" 목록
+- 핵심 경로 PR: code owner 승인. 재현이 작성한 것은 재현이 `--admin`으로 머지한다
+
 ### 완료 기준 (각 단계는 자기 범위에 해당하는 항목만)
 - team.py 단위 테스트: 리뷰어 표 모든 행, 같은 사람 대체, contracts 대체, 빈 목록 실패, check-diff(human_paths·루트 파일·notes 예외·uv.lock·심볼릭 링크 거부·bot_branches),
   사람 PR 다부서, dept-of-branch 별칭, cap 계산(token_dept 기준), requeue 단계

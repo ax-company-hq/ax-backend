@@ -113,6 +113,12 @@ class Team:
         for f in self.human_files:
             if not self._dept_folder_of(f):
                 raise TeamError(f"human_files {f}가 부서 폴더 안이 아님")
+        audit = self.data.get("audit", {})
+        for d in audit.get("token_depts", []):
+            if d not in self.depts:
+                raise TeamError(f"audit.token_depts의 {d}가 depts에 없음")
+        if audit and len({self.depts[d]["owners"][0] for d in audit.get("token_depts", [])}) < 2:
+            raise TeamError("audit.token_depts는 서로 다른 토큰 주인이 2명 이상이어야 함")
         for login, m in self.members.items():
             for kind in CAP_KINDS:
                 if not isinstance(m.get(f"{kind}_cap"), int):
@@ -514,19 +520,23 @@ def show(rev: str, path: str) -> str:
 CAP_KINDS = ("write", "review")
 
 CLAUDE_RUN_WORKFLOWS = {
-    "ax-company-hq/ax-backend": ("_claude-write.yml", "claude-request.yml", "claude-review.yml"),
+    "ax-company-hq/ax-backend": ("_claude-write.yml", "claude-request.yml", "claude-review.yml",
+                                 "human-path-audit.yml"),
     "ax-company-hq/ax-frontend": (),  # F-1단계에서 Claude 워크플로가 생기면 추가
 }
 WRITE_TITLE = re.compile(r"^claude:([a-z0-9-]+):[a-z-]+(?: |$)")
 REQUEST_TITLE = re.compile(r"^claude-request to:([a-z0-9-]+) by (\S+)$")
 REVIEW_TITLE = re.compile(r"^claude-review (\S+) by (\S+)$")
+#   human-path-audit:          "human-path-audit #<PR>"
+#                              → 감사 토큰은 실행 때 정해져 jobs로 센다 (리뷰 상한)
+AUDIT_TITLE = re.compile(r"^human-path-audit #\d+$")
 
 
 def run_kind(title: str) -> str | None:
     """run 제목 → 상한 종류 (작성 write / 리뷰 review)."""
     if WRITE_TITLE.match(title) or REQUEST_TITLE.match(title):
         return "write"
-    if REVIEW_TITLE.match(title):
+    if REVIEW_TITLE.match(title) or AUDIT_TITLE.match(title):
         return "review"
     return None
 
@@ -562,7 +572,7 @@ def run_token_depts(team: Team, title: str) -> list[str]:
 
 # 끝났지만 성공이 아닌 run: Claude 단계까지 갔는지 jobs로 한 번 확인한다 (결과는 캐시)
 FAILED_CONCLUSIONS = {"failure", "cancelled", "timed_out", "startup_failure"}
-CLAUDE_STEPS = ("Claude", "Claude (리뷰)")
+CLAUDE_STEPS = ("Claude", "Claude (리뷰)", "Claude (감사)")
 CLAUDE_INSTALL_STEP = "Claude Code 설치"
 CLAUDE_JOB = re.compile(r"(?:^|/ )claude:([a-z0-9-]+):")
 
@@ -614,6 +624,8 @@ def needs_jobs(title: str, conclusion: str | None, team: Team | None = None) -> 
     """
     if conclusion in FAILED_CONCLUSIONS:
         return True
+    if AUDIT_TITLE.match(title):
+        return bool(conclusion) and conclusion != "skipped"
     m = REVIEW_TITLE.match(title)
     return bool(team and conclusion and conclusion != "skipped" and m
                 and team.dept_of_branch(m.group(1)) == "contracts")
