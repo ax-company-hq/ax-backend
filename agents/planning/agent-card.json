@@ -41,7 +41,7 @@
     },
     {
       "id": "list_in_progress",
-      "description": "담당자(owner_id = 명부 member_id)·영역(area = 명부 area)의 진행 중 항목을 돌려준다: deployment(dev에 머지됐지만 복구·확인이 끝나지 않은 PR), ticket(끝나지 않은 작업), pr(열린 PR). 담당자는 작업 owner, 영역은 PR 바뀐 경로·기획서 문단에서 코드로 정한다. 다른 담당자·영역 항목은 넣지 않는다. 상태를 바꾸지 않는다.",
+      "description": "담당자(owner_id = 명부 member_id)·영역(area = 명부 area)의 진행 중 항목을 돌려준다: deployment(dev에 머지됐지만 복구·확인이 끝나지 않은 PR), ticket(끝나지 않은 작업), pr(열린 PR). 담당자는 작업 owner, 영역은 PR 바뀐 경로·기획서 문단에서 코드로 정하고 명부 영역 값(payment·search·catalog·support-desk·infra-ops·inventory)만 쓴다. 명부에 없는 area 값이면 지어내지 않고 빈 목록+collected_at. 다른 담당자·영역 항목은 넣지 않는다. 상태를 바꾸지 않는다.",
       "input_schema": "contracts/src/ax_contracts/schemas/planning.py#ListInProgressInput",
       "output_schema": "contracts/src/ax_contracts/schemas/planning.py#ListInProgressOutput",
       "grade": "read",

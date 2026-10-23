@@ -30,7 +30,7 @@ from ax_contracts.schemas.planning import (
     VerifyRollbackTargetInput,
     VerifyRollbackTargetOutput,
 )
-from planning_agent.domain.handover import Item
+from planning_agent.domain.handover import ROSTER_AREAS, Item, is_roster_area
 from planning_agent.domain.models import PR
 from planning_agent.domain.rules import ROLLBACK_LOOKBACK
 from planning_agent.domain.service import GateRefused
@@ -241,12 +241,15 @@ async def list_in_progress(request: AgentRequest) -> AgentResult:
         area=inp.area,
     )
     kinds = {k: sum(1 for i in rows if i.kind == k) for k in ("deployment", "ticket", "pr")}
-    summary = (
-        f"진행 중 항목 {len(rows)}건 (배포 확인 전 {kinds['deployment']}, "
-        f"미완료 작업 {kinds['ticket']}, 열린 PR {kinds['pr']})"
-        if rows
-        else f"확인할 수 없음: {inp.owner_id}의 진행 중 항목 없음"
-    )
+    if rows:
+        summary = (
+            f"진행 중 항목 {len(rows)}건 (배포 확인 전 {kinds['deployment']}, "
+            f"미완료 작업 {kinds['ticket']}, 열린 PR {kinds['pr']})"
+        )
+    elif inp.area is not None and not is_roster_area(inp.area):
+        summary = f"확인할 수 없음: 명부에 없는 영역 '{inp.area}' ({', '.join(ROSTER_AREAS)})"
+    else:
+        summary = f"확인할 수 없음: {inp.owner_id}의 진행 중 항목 없음"
     return AgentResult(
         meta=request.meta,
         status=TaskStatus.COMPLETED,
@@ -270,6 +273,14 @@ async def verify_handover(request: AgentRequest) -> AgentResult:
         inp = VerifyHandoverInput.model_validate(request.input)
     except ValidationError as exc:
         return _invalid(request, exc)
+    if inp.area is not None and not is_roster_area(inp.area):
+        # 비교할 영역을 모르면 승인하지 않는다 (safety는 failed를 무응답으로 보고 보류한다)
+        return AgentResult(
+            meta=request.meta,
+            status=TaskStatus.FAILED,
+            outcome="invalid_input",
+            output={"message": f"명부에 없는 영역 '{inp.area}' ({', '.join(ROSTER_AREAS)})"},
+        )
     check, at = await get_service().verify_handover(
         context_id=request.meta.context_id,
         requester=_requester(request),

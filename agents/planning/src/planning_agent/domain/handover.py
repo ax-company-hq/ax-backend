@@ -18,8 +18,9 @@
 
 - 담당자: 작업 `owner` 라벨 → 명부 `RosterEntry.member_id` (`OWNER_MEMBER_IDS`). 대응이 없는
   작업(에이전트가 혼자 끝낸 작업 등)은 사람 인계 대상이 아니라서 돌려주지 않는다.
-- 영역: PR 바뀐 경로 접두사(`AREA_BY_PATH`) → 없으면 기획서 문단·제목 낱말(`AREA_BY_WORD`).
-  값 집합은 명부 `RosterEntry.area`와 같다.
+- 영역: PR 바뀐 경로 접두사(`AREA_BY_PATH`, 경로 단위 비교) → 없으면 기획서 문단·제목 낱말
+  (`AREA_BY_WORD`). 값 집합은 명부 `RosterEntry.area`(`ROSTER_AREAS`)와 같다. 어느 것에도 안
+  맞으면 `None`(지어내지 않는다). 입력 area가 명부 값이 아니면 빈 목록이다.
 """
 
 from __future__ import annotations
@@ -35,18 +36,40 @@ OWNER_MEMBER_IDS: dict[str, str] = {
     "프론트": "emp_02",
 }
 
-# 바뀐 경로 접두사 → 명부 area (앞에서부터 처음 맞는 것)
+# 명부 `RosterEntry.area` 값 집합 (hr 명부 시드와 같다, #179). 영역 판정은 이 값만 돌려준다.
+ROSTER_AREAS: tuple[str, ...] = (
+    "payment",
+    "search",
+    "catalog",
+    "support-desk",
+    "infra-ops",
+    "inventory",
+)
+
+# 바뀐 경로 접두사(디렉터리) → 명부 area (앞에서부터 처음 맞는 것).
+# `shop-api/payment`는 `shop-api/payment`·`shop-api/payment/...`에 맞고
+# `shop-api/payments_old/...`에는 맞지 않는다 (경로 단위로 비교).
 AREA_BY_PATH: list[tuple[str, str]] = [
-    ("shop-api/payment/", "payment"),
-    ("shop-api/cart/", "payment"),
-    ("shop-web/checkout/", "payment"),
-    ("shop-api/orders/", "payment"),
-    ("shop-api/search/", "search"),
-    ("shop-web/search/", "search"),
-    ("shop-api/inventory/", "inventory"),
-    ("shop-api/catalog/", "catalog"),
-    ("shop-web/catalog/", "catalog"),
-    ("infra/", "infra-ops"),
+    ("shop-api/payment", "payment"),
+    ("shop-api/cart", "payment"),
+    ("shop-api/orders", "payment"),
+    ("shop-api/settlement", "payment"),
+    ("shop-web/checkout", "payment"),
+    ("shop-web/payment", "payment"),
+    ("shop-web/cart", "payment"),
+    ("shop-web/orders", "payment"),
+    ("shop-api/search", "search"),
+    ("shop-web/search", "search"),
+    ("shop-api/inventory", "inventory"),
+    ("shop-web/inventory", "inventory"),
+    ("shop-api/catalog", "catalog"),
+    ("shop-api/products", "catalog"),
+    ("shop-web/catalog", "catalog"),
+    ("shop-web/products", "catalog"),
+    ("shop-api/support", "support-desk"),
+    ("shop-web/support", "support-desk"),
+    ("shop-web/help", "support-desk"),
+    ("infra", "infra-ops"),
 ]
 
 # 경로로 못 정하면 기획서 문단·제목 낱말 → 명부 area
@@ -57,11 +80,14 @@ AREA_BY_WORD: list[tuple[str, str]] = [
     ("환불", "payment"),
     ("검색", "search"),
     ("재고", "inventory"),
+    ("품절", "inventory"),
     ("상품", "catalog"),
     ("신간", "catalog"),
+    ("카탈로그", "catalog"),
     ("문의", "support-desk"),
     ("고객센터", "support-desk"),
     ("배포", "infra-ops"),
+    ("서버", "infra-ops"),
 ]
 
 ITEM_PREFIXES = ("tkt_", "pr_", "dep_pr_")
@@ -97,10 +123,19 @@ def is_planning_item_id(item_id: str) -> bool:
     return item_id.startswith(ITEM_PREFIXES)
 
 
+def is_roster_area(area: str | None) -> bool:
+    return area in ROSTER_AREAS
+
+
+def _under(path: str, prefix: str) -> bool:
+    path = path.strip().removeprefix("./")
+    return path == prefix or path.startswith(prefix.rstrip("/") + "/")
+
+
 def area_of_paths(paths: list[str]) -> str | None:
     for path in paths:
         for prefix, area in AREA_BY_PATH:
-            if path.startswith(prefix):
+            if _under(path, prefix):
                 return area
     return None
 
@@ -210,7 +245,12 @@ def all_items(s: State) -> list[Item]:
 
 
 def in_progress(s: State, owner_id: str, area: str | None = None) -> list[Item]:
-    """담당자(`member_id`)·영역(`area`, 없으면 전체)의 진행 중 항목."""
+    """담당자(`member_id`)·영역(`area`, 없으면 전체)의 진행 중 항목.
+
+    명부에 없는 영역 값이면 지어내지 않고 빈 목록이다 (경로 접두사를 area로 받지 않는다).
+    """
+    if area is not None and not is_roster_area(area):
+        return []
     return [i for i in all_items(s) if i.owner_id == owner_id and (area is None or i.area == area)]
 
 

@@ -13,6 +13,14 @@ from fastapi.testclient import TestClient
 from ax_contracts.schemas import ExecuteDecision
 from ax_contracts.schemas.planning import ListInProgressOutput, VerifyHandoverOutput
 from ax_contracts.schemas.record import RecordCase, RecordKind
+from planning_agent.domain.handover import (
+    AREA_BY_PATH,
+    AREA_BY_WORD,
+    ROSTER_AREAS,
+    all_items,
+    area_of_paths,
+    area_of_text,
+)
 from planning_agent.domain.service import ActionError, PlanningService
 from planning_agent.main import app
 from planning_agent.runtime import get_service, set_service
@@ -145,6 +153,61 @@ def test_list_in_progress_area_filter_and_unknown_owner(service, a2a_body) -> No
     assert none["evidence"]["data_summary"].startswith("확인할 수 없음")
     nobody = _list(a2a_body, "emp_99")
     assert nobody["output"]["items"] == []
+
+
+def test_area_values_match_roster(service) -> None:
+    """#179: area는 명부 영역 값(payment·search·catalog·support-desk·infra-ops·inventory)만 쓴다."""
+    assert set(ROSTER_AREAS) == {
+        "payment",
+        "search",
+        "catalog",
+        "support-desk",
+        "infra-ops",
+        "inventory",
+    }
+    assert {area for _, area in AREA_BY_PATH} <= set(ROSTER_AREAS)
+    assert {area for _, area in AREA_BY_WORD} <= set(ROSTER_AREAS)
+    assert set(ROSTER_AREAS) <= {area for _, area in AREA_BY_PATH}  # 영역마다 경로 대응이 있다
+    cases = {
+        "shop-api/payment": "payment",
+        "shop-api/payment/config.py": "payment",
+        "./shop-api/cart/service.py": "payment",
+        "shop-web/checkout/FailNotice.tsx": "payment",
+        "shop-api/search/index.py": "search",
+        "shop-web/catalog/List.tsx": "catalog",
+        "shop-api/inventory/stock.py": "inventory",
+        "shop-web/support/Faq.tsx": "support-desk",
+        "infra/compose.yml": "infra-ops",
+    }
+    for path, area in cases.items():
+        assert area_of_paths([path]) == area, path
+    assert area_of_paths(["shop-api/payments_old/x.py"]) is None  # 경로 단위로만 맞춘다
+    assert area_of_paths(["docs/readme.md"]) is None  # 모르면 지어내지 않는다
+    assert area_of_text("반품 정책") is None
+    for item in all_items(service.state):
+        assert item.area is None or item.area in ROSTER_AREAS
+        assert item.owner_id.startswith("emp_")
+
+
+def test_list_in_progress_unknown_area_is_empty_not_guessed(service, a2a_body) -> None:
+    _start_spec7(service)
+    # 경로 접두사나 명부에 없는 값은 영역으로 받지 않는다 → 빈 목록 + 수집 시각
+    for area in ("shop-api/payment", "결제", "Payment"):
+        result = _list(a2a_body, "emp_01", area=area)
+        assert result["status"] == "completed"
+        out = ListInProgressOutput.model_validate(result["output"])
+        assert out.items == [] and out.collected_at is not None
+        assert "명부에 없는 영역" in result["evidence"]["data_summary"]
+    # 명부에 있지만 항목이 없는 영역도 빈 목록
+    for area in ("support-desk", "inventory", "infra-ops", "catalog"):
+        assert _list(a2a_body, "emp_01", area=area)["output"]["items"] == []
+
+
+def test_verify_handover_unknown_area_is_not_approved(service, a2a_body) -> None:
+    """명부에 없는 영역이면 비교할 수 없다 → 승인하지 않고 failed (safety는 무응답 → 보류)."""
+    result = _verify(a2a_body, [], area="shop-api/payment")
+    assert (result["status"], result["outcome"]) == ("failed", "invalid_input")
+    assert "approved" not in result["output"]
 
 
 def test_list_in_progress_merged_pr_becomes_deployment_until_request_closed(
