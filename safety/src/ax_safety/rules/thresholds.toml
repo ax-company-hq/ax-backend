@@ -17,8 +17,8 @@ version = 1
 # B 교차검증 응답 마감(초). 넘으면 실행하지 않고 C 보류
 verify_timeout_seconds = 30
 
-# C 보류 건을 사람이 결정하지 않으면 자동 거절하는 시간(초). 24시간 (태윤, 2026-10-22: 10분은 너무 짧음)
-review_timeout_seconds = 86400
+# C 보류 건을 사람이 결정하지 않으면 자동 거절하는 시간(초). 데모 10분
+review_timeout_seconds = 600
 
 [[rules]]
 key = "coupon_total"

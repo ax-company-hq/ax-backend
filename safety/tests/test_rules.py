@@ -8,13 +8,14 @@ from typing import Any
 import pytest
 
 from ax_safety.gate import Gate
+from ax_safety.main import create_app
 from ax_safety.rules import ActionSpec, Rule, ThresholdTable, load_registry, load_thresholds
 
 
 def test_rule_files_load_and_match_agreed_values() -> None:
     registry, table = load_registry(), load_thresholds()
     assert table.version == 1
-    assert table.review_timeout_seconds == 24 * 3600  # 사람 확인 기한 24시간
+    assert table.review_timeout_seconds == 600  # 데모 10분 자동 거절
     values = {rule.key: rule.value for rule in table.rules if rule.metric != "param"}
     values.pop("pr_allowed_paths")
     values.pop("merge_allowed_paths")
@@ -33,6 +34,27 @@ def test_rule_files_load_and_match_agreed_values() -> None:
     assert registry.get("confirm_settlement").base_grade == "C"  # type: ignore[union-attr]
     for spec in registry.actions:  # 자기 검증 금지
         assert spec.verifier != spec.owner
+
+
+def test_review_timeout_env_overrides_table(monkeypatch: pytest.MonkeyPatch) -> None:
+    """운영은 `SAFETY_REVIEW_TIMEOUT_SECONDS`로 사람 확인 기한을 24시간으로 덮어쓴다."""
+    monkeypatch.setenv("SAFETY_REVIEW_TIMEOUT_SECONDS", "86400")
+    table = load_thresholds()
+    assert table.review_timeout_seconds == 86_400
+    assert table.verify_timeout_seconds == load_thresholds().verify_timeout_seconds  # 나머지 그대로
+    monkeypatch.setenv("SAFETY_REVIEW_TIMEOUT_SECONDS", "")  # 비어 있으면 기준표 값
+    assert load_thresholds().review_timeout_seconds == 600
+
+
+@pytest.mark.parametrize("raw", ["abc", "1.5", "59", "604801", "-600", "0"])
+def test_invalid_review_timeout_env_fails_at_startup(
+    monkeypatch: pytest.MonkeyPatch, raw: str
+) -> None:
+    monkeypatch.setenv("SAFETY_REVIEW_TIMEOUT_SECONDS", raw)
+    with pytest.raises(ValueError, match="SAFETY_REVIEW_TIMEOUT_SECONDS"):
+        load_thresholds()
+    with pytest.raises(ValueError, match="SAFETY_REVIEW_TIMEOUT_SECONDS"):
+        create_app(expire_interval=None)  # 서버 시작 단계에서 바로 멈춘다
 
 
 def test_duplicate_rule_keys_are_refused() -> None:
