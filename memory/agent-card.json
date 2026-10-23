@@ -11,7 +11,7 @@
   "skills": [
     {
       "id": "card_write",
-      "description": "카드(사건·결정·사례·공지·정책·사기)를 저장한다. 카드 문장은 쓰는 부서가 만들고 memory는 내용을 바꾸지 않는다. 같은 context_id+kind+제목이면 새로 만들지 않고 기존 card_id를 돌려준다. 외부 입력은 extra.untrusted에만 보관한다.",
+      "description": "카드(사건·결정·사례·공지·정책·사기)를 저장한다. 카드 문장은 쓰는 부서가 만들고 memory는 내용을 바꾸지 않는다. 같은 context_id+kind+제목이면 새로 만들지 않고 기존 card_id를 돌려준다. 외부 입력은 extra.untrusted에만 보관한다. MCP 도구 이름은 memory_write_card.",
       "input_schema": "contracts/src/ax_contracts/schemas/record.py#CardWriteInput",
       "output_schema": "contracts/src/ax_contracts/schemas/record.py#CardWriteOutput",
       "grade": "A",
@@ -21,7 +21,7 @@
     },
     {
       "id": "card_search",
-      "description": "질의와 의미가 가까운 카드를 찾는다(kind·status·since 필터, top_k 1~20). 확신도가 낮은 카드는 low_confidence로 표시하며 판정 근거로 쓰지 않는다. 검색 호출은 memory_referenced 로그로 남는다. 상태를 바꾸지 않는다.",
+      "description": "질의와 의미가 가까운 카드를 찾는다(kind·status·since 필터, top_k 1~20). 확신도가 낮은 카드는 low_confidence로 표시하며 판정 근거로 쓰지 않는다. 검색 호출은 memory_referenced 로그로 남는다. 상태를 바꾸지 않는다. MCP 도구 이름은 memory_search_card.",
       "input_schema": "contracts/src/ax_contracts/schemas/record.py#CardSearchInput",
       "output_schema": "contracts/src/ax_contracts/schemas/record.py#CardSearchOutput",
       "grade": "read",
@@ -31,7 +31,7 @@
     },
     {
       "id": "card_get",
-      "description": "card_id로 카드 한 장을 조회한다. 없으면 card_not_found로 거부한다. 상태를 바꾸지 않는다.",
+      "description": "card_id로 카드 한 장을 조회한다. 없으면 card_not_found로 거부한다. 상태를 바꾸지 않는다. MCP 도구 이름은 memory_get_card.",
       "input_schema": "contracts/src/ax_contracts/schemas/record.py#CardGetInput",
       "output_schema": "contracts/src/ax_contracts/schemas/record.py#CardGetOutput",
       "grade": "read",
@@ -41,7 +41,7 @@
     },
     {
       "id": "card_link",
-      "description": "옛 카드를 새 카드로 대체(superseded)하거나 폐기(retired)로 연결한다. 새 카드가 없으면 거부한다. 옛 카드는 검색에서 빠진다.",
+      "description": "옛 카드를 새 카드로 대체(superseded)하거나 폐기(retired)로 연결한다. 새 카드가 없으면 거부한다. 옛 카드는 검색에서 빠진다. MCP 도구 이름은 memory_link_card.",
       "input_schema": "contracts/src/ax_contracts/schemas/record.py#CardLinkInput",
       "output_schema": "contracts/src/ax_contracts/schemas/record.py#CardLinkOutput",
       "grade": "A",
