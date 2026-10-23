@@ -358,6 +358,19 @@ async def test_planning_record_actions_are_a(gate: Gate, act, action: str) -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("requester", ["support", "hr", "data"])
+async def test_receive_change_result_is_a(gate: Gate, act, requester: str) -> None:
+    decision = await gate.execute(act("receive_change_result", requester, f"rcr-{requester}"))
+    assert (decision.grade, decision.status) == ("A", "executed")
+
+
+@pytest.mark.asyncio
+async def test_receive_change_result_refuses_other_requesters(gate: Gate, act) -> None:
+    decision = await gate.execute(act("receive_change_result", "marketing", "rcr-marketing"))
+    assert decision.status != "executed"
+
+
+@pytest.mark.asyncio
 async def test_confirm_spec_rules(gate: Gate, act) -> None:
     clean = dict(open_questions=0, warnings=0, basis_count=2, irreversible_count=0)
     ok = await gate.execute(act("confirm_spec", "planning", "spec-ok", **clean))
