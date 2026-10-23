@@ -79,23 +79,34 @@ class Rule(_Strict):
     - 금액: `amount`·`unit`·`daily_total`·`context_total`·`customer_total` (`op`·`value`)
     - 숫자 파라미터: `param` + `field` (`op`·`value`), 예: `pr_changed_lines`
     - 경로 목록: `paths_within` + `field` + `allowed` (하나라도 허용 접두사 밖이면 걸림)
+    - 보호 경로: `paths_avoid` + `field` + `protected` (하나라도 보호 경로와 같거나 그 아래면 걸림)
     """
 
     key: str
     action: str
     metric: Literal[
-        "amount", "unit", "daily_total", "context_total", "customer_total", "param", "paths_within"
+        "amount",
+        "unit",
+        "daily_total",
+        "context_total",
+        "customer_total",
+        "param",
+        "paths_within",
+        "paths_avoid",
     ]
     op: Literal[">=", ">", "<", "<="] = ">="
     value: int = Field(default=0, ge=0)
     field: str | None = None
     allowed: list[str] = Field(default_factory=list)
+    protected: list[str] = Field(default_factory=list)
     when: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _field_needed(self) -> Rule:
-        if self.metric in ("param", "paths_within") and not self.field:
+        if self.metric in ("param", "paths_within", "paths_avoid") and not self.field:
             raise ValueError(f"{self.key}: {self.metric} 규칙에는 field가 필요하다")
+        if self.metric == "paths_avoid" and not [p for p in self.protected if p]:
+            raise ValueError(f"{self.key}: paths_avoid 규칙에는 protected가 필요하다")
         return self
 
     def hit(self, observed: int) -> bool:
@@ -111,6 +122,11 @@ class Rule(_Strict):
 
     def paths_outside(self, paths: list[str]) -> list[str]:
         return [p for p in paths if not any(p.startswith(prefix) for prefix in self.allowed)]
+
+    def paths_protected(self, paths: list[str]) -> list[str]:
+        """보호 경로와 같거나 그 접두사로 시작하는 경로. 빈 문자열 접두사는 무시한다."""
+        prefixes = [prefix for prefix in self.protected if prefix]
+        return [p for p in paths if any(p.startswith(prefix) for prefix in prefixes)]
 
 
 class ThresholdTable(_Strict):

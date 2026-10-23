@@ -9,6 +9,7 @@
 # - daily_total: 같은 tenant·같은 액션의 오늘(UTC) 실행 누적 + 이번 금액
 # - context_total: 같은 context_id·같은 액션의 실행 누적 + 이번 금액
 # - customer_total: 같은 context_id·같은 고객의 실행 누적 + 이번 금액
+# - param·paths_within·paths_avoid: 금액이 아닌 규칙(아래 각 규칙 주석 참고)
 # op: ">=", ">", "<=", "<". when은 params가 이 값일 때만 규칙을 적용한다.
 
 version = 1
@@ -95,6 +96,32 @@ metric = "paths_within"
 field = "changed_paths"
 allowed = ["shop-api/", "docs/"]
 
+# 보호 경로 (#169, 안전 담당). 결제·인증·데이터에 닿는 변경은 허용 경로·크기 안이어도
+# planning이 보낸 irreversible_count와 상관없이 항상 C. 값은 제안값.
+# 경로는 ax-backend·ax-frontend 저장소 루트 기준. 같은 경로이거나 그 접두사로 시작하면 걸린다.
+# 필드가 없거나 문자열 목록이 아니면 걸린 것으로 본다(fail-closed).
+[[rules]]
+key = "pr_protected_paths"
+action = "generate_pr"
+metric = "paths_avoid"
+field = "changed_paths"
+protected = [
+  # shop-web (ax-frontend): 결제 화면, 로그인·인증, API 클라이언트, 환경값
+  "shop-web/src/pages/Checkout.tsx",
+  "shop-web/src/lib/auth.tsx",
+  "shop-web/src/lib/api.ts",
+  "shop-web/src/lib/env.ts",
+  # shop-api: DB 스키마, 주문·결제 로직, 쿠폰 지급 로직, 시드 데이터
+  "shop-api/src/ax_shop_api/db.py",
+  "shop-api/src/ax_shop_api/service.py",
+  "shop-api/src/ax_shop_api/promotions.py",
+  "shop-api/src/ax_shop_api/seed.py",
+  # 관문 규칙·CI·계약. 허용 경로 밖이지만 허용 목록이 넓어져도 막히도록 같이 둔다
+  ".github/",
+  "safety/",
+  "contracts/",
+]
+
 # ---- 기획개발 자동화 (#166). 값은 제안값. params 키는 planning이 맞춰 보낸다.
 # 필드가 없거나 정수가 아니면 걸린 것으로 본다(fail-closed).
 [[rules]]
@@ -180,6 +207,29 @@ action = "merge_pr"
 metric = "paths_within"
 field = "changed_paths"
 allowed = ["shop-api/", "docs/"]
+
+# 보호 경로: pr_protected_paths와 같은 목록. 값은 제안값
+[[rules]]
+key = "merge_protected_paths"
+action = "merge_pr"
+metric = "paths_avoid"
+field = "changed_paths"
+protected = [
+  # shop-web (ax-frontend): 결제 화면, 로그인·인증, API 클라이언트, 환경값
+  "shop-web/src/pages/Checkout.tsx",
+  "shop-web/src/lib/auth.tsx",
+  "shop-web/src/lib/api.ts",
+  "shop-web/src/lib/env.ts",
+  # shop-api: DB 스키마, 주문·결제 로직, 쿠폰 지급 로직, 시드 데이터
+  "shop-api/src/ax_shop_api/db.py",
+  "shop-api/src/ax_shop_api/service.py",
+  "shop-api/src/ax_shop_api/promotions.py",
+  "shop-api/src/ax_shop_api/seed.py",
+  # 관문 규칙·CI·계약. 허용 경로 밖이지만 허용 목록이 넓어져도 막히도록 같이 둔다
+  ".github/",
+  "safety/",
+  "contracts/",
+]
 
 [[rules]]
 key = "pr_review_mismatch"

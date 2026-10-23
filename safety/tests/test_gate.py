@@ -8,7 +8,7 @@ import pytest
 
 from ax_contracts.schemas import HoldReason
 from ax_safety.gate import Gate
-from ax_safety.rules import ActionSpec, ThresholdTable, load_registry, load_thresholds
+from ax_safety.rules import ActionSpec, Rule, ThresholdTable, load_registry, load_thresholds
 
 
 def test_rule_files_load_and_match_agreed_values() -> None:
@@ -18,6 +18,8 @@ def test_rule_files_load_and_match_agreed_values() -> None:
     values = {rule.key: rule.value for rule in table.rules if rule.metric != "param"}
     values.pop("pr_allowed_paths")
     values.pop("merge_allowed_paths")
+    values.pop("pr_protected_paths")
+    values.pop("merge_protected_paths")
     assert values == {
         "coupon_total": 300_000,
         "coupon_unit": 20_000,
@@ -392,7 +394,8 @@ async def test_merge_pr_rules(gate: Gate, verifier: Any, act) -> None:
     for key, bad in {
         "merge_changed_lines": {"changed_lines": 301},
         "merge_changed_files": {"changed_files": 21},
-        "merge_allowed_paths": {"changed_paths": [".github/x.yml"]},
+        "merge_allowed_paths": {"changed_paths": ["scripts/x.sh"]},
+        "merge_protected_paths": {"changed_paths": ["shop-api/src/ax_shop_api/service.py"]},
         "pr_review_mismatch": {"review_mismatch_count": 2},
         "pr_linked_incident": {"linked_incident_count": 1},
         "merge_irreversible": {"irreversible_count": 1},
@@ -414,7 +417,103 @@ async def test_missing_rule_fields_fail_closed(gate: Gate, act) -> None:
     assert {hit["key"] for hit in review.report["rules"]} == {  # type: ignore[union-attr]
         "pr_changed_files",
         "pr_allowed_paths",
+        "pr_protected_paths",
     }
+
+
+def test_protected_paths_rules_are_loaded_for_both_actions() -> None:
+    """#169: 보호 경로는 generate_pr·merge_pr에 같은 목록으로 걸려 있다."""
+    table = load_thresholds()
+    rules = {rule.key: rule for rule in table.rules if rule.metric == "paths_avoid"}
+    assert set(rules) == {"pr_protected_paths", "merge_protected_paths"}
+    pr, merge = rules["pr_protected_paths"], rules["merge_protected_paths"]
+    assert (pr.action, merge.action) == ("generate_pr", "merge_pr")
+    assert pr.field == merge.field == "changed_paths"
+    assert pr.protected == merge.protected
+    for path in ("shop-web/src/pages/Checkout.tsx", "shop-api/src/ax_shop_api/service.py"):
+        assert path in pr.protected
+
+
+def test_paths_avoid_rule_needs_protected() -> None:
+    base = {"key": "p", "action": "generate_pr", "metric": "paths_avoid", "field": "changed_paths"}
+    with pytest.raises(ValueError, match="protected가 필요하다"):
+        Rule.model_validate(base)
+    with pytest.raises(ValueError, match="protected가 필요하다"):
+        Rule.model_validate({**base, "protected": [""]})  # 빈 접두사는 모든 경로와 맞으므로 금지
+    with pytest.raises(ValueError, match="field가 필요하다"):
+        Rule.model_validate(
+            {**{k: v for k, v in base.items() if k != "field"}, "protected": ["a/"]}
+        )
+    rule = Rule.model_validate({**base, "protected": ["shop-web/src/lib/auth.tsx", ".github/"]})
+    assert rule.paths_protected(
+        ["shop-web/src/lib/auth.tsx", ".github/workflows/ci.yml", "shop-web/src/pages/Home.tsx"]
+    ) == ["shop-web/src/lib/auth.tsx", ".github/workflows/ci.yml"]
+
+
+_PR_CLEAN = dict(changed_lines=10, changed_files=1)
+_MERGE_CLEAN = dict(
+    changed_lines=10,
+    changed_files=1,
+    review_mismatch_count=0,
+    linked_incident_count=0,
+    irreversible_count=0,
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("action", "key", "clean"),
+    [
+        ("generate_pr", "pr_protected_paths", _PR_CLEAN),
+        ("merge_pr", "merge_protected_paths", _MERGE_CLEAN),
+    ],
+)
+async def test_protected_path_is_always_c(
+    gate: Gate, verifier: Any, act, action: str, key: str, clean: dict[str, int]
+) -> None:
+    """허용 경로·크기 안이고 irreversible_count가 0이어도 보호 경로에 닿으면 C."""
+    protected = "shop-api/src/ax_shop_api/service.py"
+    decision = await gate.execute(
+        act(action, "planning", f"{key}-hit", changed_paths=["docs/a.md", protected], **clean)
+    )
+    assert (decision.grade, decision.status) == ("C", "held")
+    assert verifier.tasks == []
+    review = gate.store.get_review(decision.review_id or "")
+    assert review is not None
+    [hit] = review.report["rules"]
+    assert (hit["key"], hit["protected_hit"]) == (key, [protected])
+    assert "shop-web/src/pages/Checkout.tsx" in hit["protected"]
+
+    unrelated = await gate.execute(
+        act(
+            action,
+            "planning",
+            f"{key}-ok",
+            changed_paths=["shop-api/src/ax_shop_api/lookups.py", "docs/a.md"],
+            **clean,
+        )
+    )
+    assert (unrelated.grade, unrelated.status) == ("B", "executed")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("action", "key", "clean"),
+    [
+        ("generate_pr", "pr_protected_paths", _PR_CLEAN),
+        ("merge_pr", "merge_protected_paths", _MERGE_CLEAN),
+    ],
+)
+async def test_protected_paths_fail_closed(
+    gate: Gate, act, action: str, key: str, clean: dict[str, int]
+) -> None:
+    """changed_paths가 없거나 문자열 목록이 아니면 보호 경로 규칙도 걸린 것으로 본다."""
+    for suffix, extra in {"none": {}, "str": {"changed_paths": "docs/a.md"}}.items():
+        decision = await gate.execute(act(action, "planning", f"{key}-{suffix}", **clean, **extra))
+        assert decision.status == "held"
+        review = gate.store.get_review(decision.review_id or "")
+        hits = {hit["key"]: hit for hit in review.report["rules"]}  # type: ignore[union-attr]
+        assert hits[key] == {"key": key, "invalid": "changed_paths"}
 
 
 @pytest.mark.asyncio
