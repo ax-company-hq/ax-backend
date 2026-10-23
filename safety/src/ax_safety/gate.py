@@ -244,7 +244,6 @@ class Gate:
                 metric: self._amount_metric(metric, spec, request, amount, unit, customer)
                 for metric in ("daily_total", "context_total", "customer_total")
             }
-        if amount is not None:
             mismatched = claimed_mismatches(spec, request.params, amount)
             if mismatched:
                 report["claimed"] = mismatched
