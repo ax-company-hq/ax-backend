@@ -15,6 +15,7 @@ A_ACTIONS = [
     "request_assignment_change",
     "start_onboarding",
     "update_onboarding_step",
+    "decide_candidate_card",
 ]
 
 
