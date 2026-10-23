@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "NOT_EXECUTED",
+    "message": "실행되지 않았다 (held). 승인 대기 또는 거부 상태"
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "title": "기록 3건 → 카드 2장 + 기록만 1건",
+  "description": "기획안의 hr 고유 시험: 결정이 있는 기록 2건은 카드로, 결정이 없는 기록 1건은 '기록만 저장'된다.",
+  "steps": [
+    {
+      "label": "기획 확정(결정 있음)",
+      "skill": "record_case",
+      "requester": "planning",
+      "input": {
+        "context_id": "ctx_a",
+        "kind": "spec_confirmed",
+        "summary": "결제 재시도를 최대 2회로 확정했다",
+        "decision_reason": "중복 결제 위험을 줄이기 위해",
+        "alternatives_considered": [
+          "재시도 없음",
+          "무제한 재시도"
+        ],
+        "source_refs": [
+          "pr:412",
+          "area:payment"
+        ],
+        "author": "planning"
+      },
+      "expect": {
+        "outcome": "card_created"
+      }
+    },
+    {
+      "label": "롤백 실행(결정 있음)",
+      "skill": "record_case",
+      "requester": "infra",
+      "input": {
+        "context_id": "ctx_b",
+        "kind": "rollback_executed",
+        "summary": "shop-api v1.4.0 → v1.3.2 롤백을 실행했다",
+        "decision_reason": "중복 결제 위험을 줄이기 위해",
+        "alternatives_considered": [
+          "재시도 없음",
+          "무제한 재시도"
+        ],
+        "source_refs": [
+          "execution:exe_7",
+          "area:payment"
+        ],
+        "author": "infra"
+      },
+      "expect": {
+        "outcome": "card_created"
+      }
+    },
+    {
+      "label": "요청 종료(결정 없음)",
+      "skill": "record_case",
+      "requester": "planning",
+      "input": {
+        "context_id": "ctx_c",
+        "kind": "request_closed",
+        "summary": "결제 재시도 요청을 종료했다",
+        "decision_reason": null,
+        "alternatives_considered": [],
+        "source_refs": [
+          "req:88"
+        ],
+        "author": "planning"
+      },
+      "expect": {
+        "outcome": "record_only",
+        "card_count": 2
+      }
+    }
+  ]
+}

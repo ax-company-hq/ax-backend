@@ -1,0 +1,28 @@
+{
+  "data": [
+    {
+      "at": "2026-10-22T09:00:00Z",
+      "kind": "start_handover",
+      "payload": {
+        "completeness": 60,
+        "id": "hnd_748c7c4358f6",
+        "status": "input_required"
+      },
+      "seq": 1
+    },
+    {
+      "at": "2026-10-22T09:00:00Z",
+      "kind": "answer_handover_question",
+      "payload": {
+        "completeness": 80,
+        "q": "qst_hnd_748c7c4358f6_rollback_criteria",
+        "status": "input_required"
+      },
+      "seq": 2
+    }
+  ],
+  "meta": {
+    "tenant_id": "shop-demo",
+    "total": 2
+  }
+}
