@@ -26,7 +26,7 @@ RECEIPT = {
     "delivered_at": "2026-10-14T00:00:00Z",
     "items": [
         {
-            "id": 1,
+            "id": "itm_1",
             "title": "고양이의 하루",
             "qty": 1,
             "paid_amount": 15000,
@@ -39,9 +39,9 @@ CLAIM = {
     "id": 1,
     "tenant_id": "shop-demo",
     "context_id": "ctx_ui_0001",
-    "order_id": 101,
+    "order_id": "101",
     "order_no": "ORD-2026-0101",
-    "user_id": 1,
+    "buyer_id": "usr_1",
     "customer": "김하늘",
     "type": "return",
     "reason": "defect",
@@ -65,7 +65,7 @@ CLAIM = {
     ],
     "lines": [
         {
-            "order_item_id": 1,
+            "order_item_id": "itm_1",
             "title": "고양이의 하루",
             "qty": 1,
             "requested_qty": 1,
@@ -379,3 +379,25 @@ def test_detail_without_receipt_is_a_bad_gateway(client: TestClient, fake: Fake)
     response = client.get(BASE + "/claims/1")
     assert response.status_code == 502
     assert response.json()["error"]["code"] == "UPSTREAM_ERROR"
+
+
+def test_string_order_and_buyer_ids_pass_through_and_user_id_is_derived(
+    client: TestClient, fake: Fake
+) -> None:
+    fake.outputs["list_claims"] = {
+        "items": [
+            claim(id=1, order_id="ord_0201", buyer_id="usr_7"),
+            claim(id=2, order_id="ord_0202", buyer_id="buyer-x"),  # usr_<번호> 형식이 아니다
+        ]
+    }
+    rows = {c["id"]: c for c in client.get(BASE + "/claims").json()["data"]}
+    assert rows[1]["order_id"] == "ord_0201" and rows[1]["user_id"] == 7
+    assert rows[2]["order_id"] == "ord_0202" and rows[2]["user_id"] is None  # 지어내지 않는다
+
+
+def test_detail_keeps_string_item_ids(client: TestClient, fake: Fake) -> None:
+    fake.outputs["get_claim"] = claim(order_id="ord_0201")
+    data = client.get(BASE + "/claims/1").json()["data"]
+    assert data["order_id"] == "ord_0201"
+    assert data["lines"][0]["order_item_id"] == "itm_1"
+    assert data["receipt"]["items"][0]["id"] == "itm_1"

@@ -46,7 +46,7 @@ TABLES: tuple[Table, ...] = (
     Table("inquiries", ("inquiry_id",), ("tenant_id", "context_id", "status", "updated_at")),
     Table("inquiry_results", ("tenant_id", "idempotency_key"), ("context_id",)),
     Table("draft_events", ("event_id",), ("tenant_id", "context_id", "inquiry_id")),
-    Table("claims", ("claim_id",), ("tenant_id", "context_id", "order_id", "user_id", "status")),
+    Table("claims", ("claim_id",), ("tenant_id", "context_id", "order_id", "buyer_id", "status")),
     Table("change_requests", ("tenant_id", "context_id", "inquiry_id"), ("status",)),
     Table("compensation_sequences", ("tenant_id", "context_id")),
     Table("compensation_results", ("tenant_id", "idempotency_key"), ("context_id",)),
@@ -57,14 +57,30 @@ COLUMN_TYPES = {
     "inquiry_id": "bigint",
     "event_id": "bigint",
     "claim_id": "bigint",
-    "order_id": "bigint",
-    "user_id": "bigint",
     "updated_at": "timestamptz",
 }
 
 
 def column_type(column: str) -> str:
     return COLUMN_TYPES.get(column, "text")
+
+
+# 주문·구매자 ID가 숫자였던 예전 `claims` 테이블을 문자열 열로 옮긴다 (`user_id` → `buyer_id`).
+# 새로 만든 테이블에는 아무 일도 하지 않고, 여러 번 실행해도 안전하다. 예전 기록의 `doc`은
+# `Claim` 모델이 읽을 때 문자열로 바꿔 준다 (`claim_schemas.EntityId`).
+LEGACY_CLAIMS_MIGRATION = """DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema()
+             AND table_name = 'claims' AND column_name = 'user_id') THEN
+    ALTER TABLE claims RENAME COLUMN user_id TO buyer_id;
+    ALTER TABLE claims ALTER COLUMN buyer_id TYPE text USING 'usr_' || buyer_id::text;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema()
+             AND table_name = 'claims' AND column_name = 'order_id'
+             AND data_type = 'bigint') THEN
+    ALTER TABLE claims ALTER COLUMN order_id TYPE text USING order_id::text;
+  END IF;
+END $$;"""
 
 
 def schema_sql() -> str:
@@ -77,6 +93,7 @@ def schema_sql() -> str:
         statements.append(
             f"CREATE TABLE IF NOT EXISTS {table.name} (\n" + ",\n".join(columns) + "\n);"
         )
+    statements.append(LEGACY_CLAIMS_MIGRATION)
     statements.append("CREATE INDEX IF NOT EXISTS claims_status_idx ON claims (tenant_id, status);")
     statements.append(
         "CREATE INDEX IF NOT EXISTS inquiries_status_idx ON inquiries (tenant_id, status);"
@@ -261,7 +278,7 @@ class PersistentClaimStore(ClaimStore):
                 "tenant_id": claim.tenant_id,
                 "context_id": claim.context_id,
                 "order_id": claim.order_id,
-                "user_id": claim.user_id,
+                "buyer_id": claim.buyer_id,
                 "status": claim.status,
             },
             claim.model_dump(mode="json"),
