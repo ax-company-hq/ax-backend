@@ -100,6 +100,7 @@ async def test_small_refund_within_paid_passes_with_evidence() -> None:
         "통과",
         "recomputed_match",
     )
+    assert item["rule_check"] == "passed"
     assert (item["paid_amount"], item["refunded_before"], item["refund_amount"]) == (
         25000,
         0,
@@ -157,15 +158,20 @@ async def test_deductions_and_shipping_are_recomputed() -> None:
 
 @pytest.mark.asyncio
 async def test_big_refund_within_ai_limit_passes_but_must_go_through_safety() -> None:
+    """재무 재설계: 큰 환불도 규칙 확인은 통과하지만 재무 AI가 대신 승인하지 않는다.
+
+    안전 장치 기준(10만 원) 이상이면 "규칙 확인 통과 / 사람 확인 필요"이고 지급은 안전 장치 C에서.
+    """
     line = [{"order_item_id": 600, "title": "전집", "qty": 1, "refund_cash": 135000}]
     claim = _claim(8, 60, lines=line, expected_refund=135000, payable=135000)
     _, items, _ = await _sync([claim], {60: _receipt(60, 135000, item_paid=135000)})
     item = items[8]
     assert (item["result"], item["reason_code"], item["needs_safety"]) == (
-        "pass",
-        "within_ai_limit",
+        "needs_human",
+        "rule_passed_needs_human",
         True,
     )
+    assert (item["rule_check"], item["rule_check_ko"]) == ("passed", "규칙 확인 통과")
     assert "안전 장치" in item["explanation"] and "catbooks_order" not in item["explanation"]
 
 
@@ -177,8 +183,9 @@ async def test_refund_over_ai_limit_needs_a_person() -> None:
     assert (items[9]["result"], items[9]["result_ko"], items[9]["reason_code"]) == (
         "needs_human",
         "사람 확인 필요",
-        "over_ai_limit",
+        "rule_passed_needs_human",
     )
+    assert items[9]["rule_check"] == "passed" and items[9]["needs_safety"] is True
 
 
 @pytest.mark.asyncio
@@ -246,8 +253,8 @@ async def test_catbooks_down_keeps_previous_items() -> None:
 @pytest.mark.asyncio
 async def test_sync_does_not_touch_other_finance_records() -> None:
     await _sync([_claim(1, 10)], {10: _receipt(10, 30000)})
-    ledger = handlers.state().ledger
-    assert ledger.verify_log == [] and ledger.ai_reviews == [] and ledger.refunds == {}
+    ledger, records = handlers.state().ledger, handlers.state().records
+    assert ledger.market_ops == [] and records.recon_notes == {} and ledger.refunds == {}
 
 
 def test_endpoints_sync_and_list(monkeypatch: pytest.MonkeyPatch) -> None:
