@@ -99,6 +99,7 @@ INBOUND_KINDS = (
     "support_simple",
     "marketing_simple",
 )
+ADVANCE_LIMIT = 40  # 다음 단계 반복 상한 (무한 반복 방지)
 _TICKET_KINDS = ("support_ticket", "marketing_ticket", "support_simple", "marketing_simple")
 
 SAMPLE_TICKETS = {
@@ -437,6 +438,7 @@ class PlanningService:
             s = self.state.model_copy(deep=True)
             before = len(s.activity)
             result = await fn(s, **params) or ActionResult()
+            await self._advance(s)
             self._to_outbox(s, before)
             result.changed = s != self.state
             if result.changed:
@@ -724,6 +726,7 @@ class PlanningService:
                     title=title,
                     evidence=f"{DEPT_NAME[frm]} 시뮬레이터에서 보냄",
                     state="접수",
+                    flow=True,
                 )
             )
             point = "ticket_draft_propose" if frm == "hr" else "개선 초안 (루프 ③)"
@@ -897,13 +900,14 @@ class PlanningService:
             judged = "간단 요청 판정 → 사람 승인 없이 끝까지 처리"
         else:
             need = [r for r in auto.reasons if "필요" in r or "초과" in r]
-            judged = f"사람 확정 필요 · {', '.join(need)}"
+            judged = f"일반 요청 · {', '.join(need)} → 기획서 초안부터 사람 클릭 없이 진행"
         s.activity.append(
             self._act(t, ctx_req, "planning", "planning", "classify_request", "A2A", judged, "read")
         )
         if auto.ok:
             await self._auto_complete(s, req)
             return ActionResult(output={"request_id": req_id, "auto": True})
+        req.flow = True
         s.activity.append(
             self._act(
                 t,
@@ -912,11 +916,86 @@ class PlanningService:
                 frm,
                 "get_request_status",
                 "A2A",
-                f"{req_id} 접수됨 (팀장 확정 대기)",
+                f"{req_id} 접수됨 → 기획서 작성",
                 "read",
             )
         )
         return ActionResult(output={"request_id": req_id, "auto": False})
+
+    # ---- 사람 클릭 없이 다음 단계로 (flow 요청만, 시드 건은 그대로)
+
+    async def _advance(self, s: State) -> None:
+        """액션마다 더 진행할 게 없을 때까지 다음 단계를 돈다: 기획서 초안(개선 초안은 채택 먼저) →
+        자동 확정 검사 → PR 만들기 → 검수 불일치면 수정 후 재검수 → 자동 머지 검사.
+
+        멈추는 곳: 자동 확정·머지 규칙에 걸린 건(`auto_review` 대기열), 검수 불일치 2회,
+        safety 보류·거절. 관문이 거부하면 그 단계에서 멈추고 앞선 단계는 그대로 둔다."""
+        if s.auto_policy.level == 0:  # L0 = 자동 처리 중지: 접수에서 멈춘다
+            return
+        for _ in range(ADVANCE_LIMIT):
+            try:
+                if not await self._advance_step(s):
+                    return
+            except GateRefused:
+                return
+
+    async def _advance_step(self, s: State) -> bool:
+        flow = {r.id for r in s.requests if r.flow}
+        for r in s.requests:
+            if r.flow and r.state == "접수" and r.spec is None and r.duplicate_of is None:
+                if r.via != "create_ticket":
+                    await self._accept_draft(s, r.id)
+                await self._draft_spec(s, r)
+                return True
+        for sp in s.specs:
+            if sp.request not in flow or sp.status != "확정":
+                continue
+            has_pr = {p.task for p in s.prs}
+            if any(
+                t.spec == sp.id and t.state == "진행 중" and t.id not in has_pr for t in s.tasks
+            ):
+                await self._generate_prs(s, sp.id)
+                return True
+        for p in s.prs:
+            task = next((t for t in s.tasks if t.id == p.task), None)
+            sp = next((x for x in s.specs if task and x.id == task.spec), None)
+            if sp is None or sp.request not in flow or p.merged or p.auto_review is not None:
+                continue
+            if p.reviews and p.reviews[-1] == "불일치" and p.reviews.count("불일치") < 2:
+                await self._review_pr(s, p.id)
+                return True
+        return False
+
+    async def _draft_spec(self, s: State, req: Request) -> None:
+        """요청으로 기획서 초안을 쓰고(write_spec) 자동 확정 규칙으로 넘긴다."""
+        spec_id = f"SPEC-{len(s.specs) + 6}"
+        ctx = req.context_id
+        t = self.clock()
+        s.activity.append(
+            self._act(
+                t, ctx, "planning", "hr", "check_plan", "A2A", "② 기각 이력 질의 → 없음", "read"
+            )
+        )
+        text = f"{spec_id} 초안 작성 (요구사항 1, 완료 기준 1, 질문 0) → 확정 조건 확인"
+        await self._execute("write_spec", ctx, spec_id, text, {"request": req.id})
+        sp = Spec(
+            id=spec_id,
+            title=req.title,
+            request=req.id,
+            status="초안",
+            problem=f"{DEPT_NAME[req.from_]}에서 받은 요청: {req.evidence}",
+            goal=req.title,
+            paras=[
+                Para(id="R1", kind="req", text=req.title),
+                Para(id="C1", kind="done", text="바뀐 뒤 같은 문의·이상 신호가 다시 생기지 않는다"),
+            ],
+            basis=[f"{req.id} ({DEPT_NAME[req.from_]})", req.evidence],
+        )
+        s.specs.append(sp)
+        req.spec = spec_id
+        req.state = "기획 중"
+        s.activity.append(self._act(t, ctx, "planning", "planning", "write_spec", "A2A", text, "A"))
+        await self._try_auto_confirm(s, sp)
 
     async def _auto_complete(self, s: State, req: Request) -> None:
         """간단 요청 한 번에 처리: write_spec → 자동 확정 → split_tasks → generate_pr(B) →

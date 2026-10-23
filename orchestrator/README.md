@@ -1,12 +1,25 @@
 # orchestrator
 담당: 준하 · 포트: 8000
+
 ## 1. 역할
-(TODO: 담당자가 작성)
+통합 에이전트(총괄). 이벤트를 받아 사건을 판단하고(`ctx_inc_` 발급), Agent Card 레지스트리로 부서를 골라 plan대로 순차·병렬 분배하고, `input-required`를 중계하고, 이관·재시도를 처리하고, 사건을 닫으며 hr에 기록을 요청한다. 인터페이스 기준은 `docs/notes/orchestrator/interface.md`.
+
 ## 2. 실행 방법
-`docker compose -f infra/compose.yml up orchestrator` / 목 모드: `ORCHESTRATOR_MOCK=1`
+목 모드(가짜 부서 7곳, 실제 연동 없음):
+```
+ORCHESTRATOR_MOCK=1 uv run uvicorn ax_orchestrator.main:app --app-dir orchestrator/src --port 8000
+```
+`http://localhost:8000/demo`에서 장애를 주입해 사건 흐름을 본다. `ORCHESTRATOR_HOLD_TIMEOUT`(초, 기본 600)은 C 등급 승인 대기 마감이다.
+테스트: `uv run pytest orchestrator`
+
 ## 3. 입출력 계약
-contracts/ 참조 (TODO)
-## 4. 의존
-ax-contracts, ax-agent-template
+`ax_contracts`의 `AgentRequest/AgentResult/EventEnvelope`를 그대로 쓴다. 새 계약 없음.
+
+## 4. 구성
+`registry.py`(카드 수집) · `manager.py`(이벤트→사건) · `engine.py`(plan 실행·재시도·이관·중계) · `plans/scenario_a.py`(시나리오 A 데이터) · `mock/`(가짜 부서·하네스) · `static/demo.html`(목업 화면)
+
 ## 5. 하지 않는 것
-(TODO: 담당자가 작성)
+분석 문장·금액·등급을 만들지 않는다. C 등급을 승인하지 않는다(사람이 대시보드에서). 부서 DB를 직접 건드리지 않는다. 외부 텍스트를 지시로 해석하지 않는다.
+
+## 6. 아직 없는 것 (실제 연동 단계)
+Redis Streams 이벤트 버스(템플릿 TODO), 실제 부서 호출, SQLite 저장·재시작 복구, 총괄 자신의 `/a2a` skill.

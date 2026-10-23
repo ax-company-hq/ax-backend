@@ -76,6 +76,9 @@ class ChangeRequestStore:
     def get(self, context_id: str, inquiry_id: int) -> ChangeRequestLink | None:
         return self._links.get((context_id, inquiry_id))
 
+    def all(self) -> list[ChangeRequestLink]:
+        return sorted(self._links.values(), key=lambda link: link.seq)
+
     def for_context(self, context_id: str) -> list[ChangeRequestLink]:
         """한 변경 요청에 연결된 모든 문의 (연결한 순서)."""
         links = [link for link in self._links.values() if link.context_id == context_id]

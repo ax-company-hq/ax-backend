@@ -14,8 +14,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ax_agent_template.execute import execute
-from ax_contracts.schemas import AgentRequest, AgentResult, Evidence
-from support_agent import claim_rules, orders, persistence
+from ax_agent_template.server import error_result
+from ax_contracts.schemas import AgentRequest, AgentResult, Evidence, TaskStatus
+from support_agent import claim_rules, persistence, shop_client
 from support_agent import handlers as h
 from support_agent.claim_schemas import (
     ClaimReasonHit,
@@ -38,6 +39,7 @@ HELD_MESSAGE = {
     "held": "안전 레이어 보류 (사람 확인 대기)",
     "rejected": "실행이 거부됨",
     "failed": "실행에 실패함",
+    "shop_refund_failed": "shop-api 환불 실패 (다시 처리하면 같은 키로 재시도)",
 }
 
 
@@ -91,7 +93,10 @@ async def create_claim(request: AgentRequest) -> AgentResult:
     parsed = h._parse(request, CreateClaimInput)
     if isinstance(parsed, AgentResult):
         return parsed
-    order = orders.get_order(parsed.order_id)
+    try:
+        order = await shop_client.load_order(parsed.order_id)
+    except shop_client.ShopError as exc:
+        return error_result(request.meta, TaskStatus.FAILED, "shop_unavailable", str(exc))
     if order is None or order.buyer_id != parsed.buyer_id:
         return h._done(
             request, {"message": f"주문 {parsed.order_id}를 찾을 수 없다"}, outcome="not_found"
@@ -304,7 +309,32 @@ async def process_claim_queue(request: AgentRequest) -> AgentResult:
                 )
             )
             continue
-        # TODO: shop-api 환불 API(SHOP-12) 호출. 지금은 실행 허가와 지급 기록만 남긴다
+        if claim.payment_id and shop_client.order_source() == "shop-api":
+            # 같은 키로 다시 불러도 shop-api가 이전 환불을 돌려주므로 실패했다면 다시 처리하면 된다
+            try:
+                await shop_client.refund(
+                    claim.payment_id,
+                    claim.expected_refund,
+                    meta.idempotency_key or "",
+                    claim.context_id,
+                )
+            except shop_client.ShopError as exc:
+                held += 1
+                results.append(
+                    QueueRunResult(
+                        claim_id=claim.id,
+                        result="held",
+                        detail=f"shop_refund_failed:{exc.code}",
+                        blockers=[
+                            ClaimReasonHit(
+                                code="ON_HOLD",
+                                level="block",
+                                message=f"{HELD_MESSAGE['shop_refund_failed']} ({exc.code})",
+                            )
+                        ],
+                    )
+                )
+                continue
         claim.refund_paid = claim.expected_refund
         claim.processed_at = now_iso()
         CLAIMS.set_status(

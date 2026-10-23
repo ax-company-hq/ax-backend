@@ -3,6 +3,8 @@
 설정 파일(`registry.toml`, `thresholds.toml`)은 사람만 바꾼다. 여기는 읽고 검증만 한다.
 실행 중 숫자 기준 바꾸기는 `gate.Gate.request_threshold_change`가 메모리에서 한다.
 `SAFETY_REGISTRY_PATH`·`SAFETY_THRESHOLDS_PATH`로 다른 파일을 쓸 수 있다(테스트용).
+`SAFETY_REVIEW_TIMEOUT_SECONDS`가 있으면 기준표의 `review_timeout_seconds`(데모 10분)를 덮어쓴다
+(운영 24시간 = 86400). 값이 정수가 아니거나 범위 밖이면 시작할 때 실패한다.
 """
 
 from __future__ import annotations
@@ -19,6 +21,11 @@ GRADE_ORDER: dict[str, int] = {"A": 0, "B": 1, "C": 2}
 
 # 검증자가 이 값이면 에이전트가 아니라 안전 레이어의 코드 규칙(기준표)이 B를 검증한다
 RULES_VERIFIER = "safety"
+
+# 사람 확인 기한 환경변수 덮어쓰기. 1분~7일만 받는다(오타로 0초·몇 년이 되지 않게)
+REVIEW_TIMEOUT_ENV = "SAFETY_REVIEW_TIMEOUT_SECONDS"
+REVIEW_TIMEOUT_MIN = 60
+REVIEW_TIMEOUT_MAX = 7 * 24 * 3600
 
 
 class _Strict(BaseModel):
@@ -193,8 +200,28 @@ def load_registry() -> Registry:
     return Registry.model_validate(_read_toml("SAFETY_REGISTRY_PATH", "registry.toml"))
 
 
+def _review_timeout_override() -> int | None:
+    """`SAFETY_REVIEW_TIMEOUT_SECONDS` 값(초). 없으면 None, 잘못되면 ValueError로 시작을 멈춘다."""
+    raw = os.getenv(REVIEW_TIMEOUT_ENV)
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        seconds = int(raw.strip())
+    except ValueError:
+        raise ValueError(f"{REVIEW_TIMEOUT_ENV}는 정수(초)여야 한다: {raw!r}") from None
+    if not REVIEW_TIMEOUT_MIN <= seconds <= REVIEW_TIMEOUT_MAX:
+        allowed = f"{REVIEW_TIMEOUT_MIN}~{REVIEW_TIMEOUT_MAX}초"
+        raise ValueError(f"{REVIEW_TIMEOUT_ENV}는 {allowed}여야 한다: {seconds}")
+    return seconds
+
+
 def load_thresholds() -> ThresholdTable:
-    return ThresholdTable.model_validate(_read_toml("SAFETY_THRESHOLDS_PATH", "thresholds.toml"))
+    """기준표를 읽는다. 사람 확인 기한은 환경변수가 있으면 그 값을 쓴다(운영 24시간)."""
+    data = _read_toml("SAFETY_THRESHOLDS_PATH", "thresholds.toml")
+    override = _review_timeout_override()
+    if override is not None:
+        data["review_timeout_seconds"] = override
+    return ThresholdTable.model_validate(data)
 
 
 def higher(a: str, b: str) -> str:

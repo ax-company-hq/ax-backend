@@ -412,7 +412,9 @@ async def confirm_reassignment(svc: Services, request: AgentRequest) -> AgentRes
         "change_id": change["change_id"],
         "target": f"{change['change_id']}>{successor}",
         "ops": [list(op) for op in ops],
-        "summary": summary,
+        "unassigned_count": len(coverage.gap_areas),  # safety 규칙(#186)이 읽는 0 이상 정수
+        "duplicate_count": len(coverage.duplicate_areas),
+        "summary": summary[:200],
     }
     decision = await svc.gate.execute(
         "confirm_reassignment",

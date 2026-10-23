@@ -51,12 +51,9 @@ def test_create_ticket_created_issues_req_and_ctx(service, a2a_body) -> None:
     assert out.context_id.startswith("ctx_req_")
     assert out.context_id not in {"ctx_sup_0001"}  # planning이 발급한다
     req = next(r for r in service.state.requests if r.id == out.request_id)
-    assert (req.from_, req.via, req.state, req.context_id) == (
-        "support",
-        "create_ticket",
-        "접수",
-        out.context_id,
-    )
+    assert (req.from_, req.via, req.context_id) == ("support", "create_ticket", out.context_id)
+    # 일반 요청도 접수에서 멈추지 않고 기획서 초안부터 사람 클릭 없이 이어 간다
+    assert req.flow and req.spec is not None and req.state != "접수"
     assert req.source_ref == "inq_42" and req.evidence_ids == ["inq_42"]
     assert req.evidence == "같은 문의 42건 (최근 7일)"
     refs = result["evidence"]["ref_ids"]
