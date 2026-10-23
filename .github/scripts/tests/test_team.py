@@ -560,7 +560,7 @@ def test_todays_claude_runs_pages_and_skips_self(monkeypatch) -> None:
     runs = team_mod.todays_claude_runs("2026-10-22")
     assert len(runs) == 100 and all(r[1] != 999 for r in runs)
     assert runs[0] == ("ax-company-hq/ax-backend", 0, "t0", "success")
-    assert len(calls) == 4  # 워크플로 3개 + review 2쪽, 프론트는 아직 없음
+    assert len(calls) == 5  # 워크플로 4개(morning 포함) + review 2쪽, 프론트는 아직 없음
 
 
 def test_cap_status_ok_and_quota(team: Team, monkeypatch) -> None:

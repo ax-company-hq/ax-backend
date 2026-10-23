@@ -546,7 +546,9 @@ def show(rev: str, path: str) -> str:
 CAP_KINDS = ("write", "review")
 
 CLAUDE_RUN_WORKFLOWS = {
-    "ax-company-hq/ax-backend": ("_claude-write.yml", "claude-request.yml", "claude-review.yml"),
+    "ax-company-hq/ax-backend": (
+        "_claude-write.yml", "claude-request.yml", "claude-review.yml", "morning.yml",
+    ),
     "ax-company-hq/ax-frontend": (),  # F-1단계에서 Claude 워크플로가 생기면 추가
 }
 WRITE_TITLE = re.compile(r"^claude:([a-z0-9-]+):[a-z-]+(?: |$)")
