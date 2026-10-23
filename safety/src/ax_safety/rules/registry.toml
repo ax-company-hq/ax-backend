@@ -60,6 +60,27 @@ action = "set_inquiry_status"
 owner = "support"
 base_grade = "A"
 
+# 클레임 처리 기록 (#105). 돈이 나가지 않는 기록만. 환불 지급은 refund_request(B, 재무 검증)
+[[actions]]
+action = "create_claim"
+owner = "support"
+base_grade = "A"
+
+[[actions]]
+action = "decide_claim"
+owner = "support"
+base_grade = "A"
+
+[[actions]]
+action = "receive_return"
+owner = "support"
+base_grade = "A"
+
+[[actions]]
+action = "inspect_return"
+owner = "support"
+base_grade = "A"
+
 # ---- 인사 (준하)
 [[actions]]
 action = "record_case"

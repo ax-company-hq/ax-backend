@@ -105,7 +105,20 @@ def _decision(status: str = "executed", grade: str = "B", **kw: Any) -> ExecuteD
 def test_agent_card(client: TestClient) -> None:
     card = load_card()
     skills = {s.id: s for s in card.skills}
-    assert set(skills) == {"verify_amount", "loss_aggregation", "seller_review", "settlement_hold"}
+    assert set(skills) == {
+        "verify_amount",
+        "loss_aggregation",
+        "seller_review",
+        "settlement_hold",
+        "review_hold",
+        "review_threshold_change",
+    }
+    assert skills["review_hold"].allowed_requesters == ["safety"]
+    assert skills["review_threshold_change"].allowed_requesters == ["safety"]
+    assert (
+        skills["review_threshold_change"].grade,
+        skills["review_threshold_change"].priority,
+    ) == ("read", "recommended")
     assert skills["verify_amount"].allowed_requesters == ["safety"]
     assert (skills["verify_amount"].priority, skills["loss_aggregation"].priority) == (
         "required",
@@ -113,7 +126,7 @@ def test_agent_card(client: TestClient) -> None:
     )
     assert (skills["seller_review"].grade, skills["seller_review"].verifier) == ("B", "data")
     served = client.get("/.well-known/agent-card.json").json()
-    assert served["name"] == "finance" and len(served["skills"]) == 4
+    assert served["name"] == "finance" and len(served["skills"]) == 6
 
 
 # ---------------------------------------------------------------- verify_amount (DEP-FIN-02)
@@ -451,3 +464,166 @@ def test_loss_reports_are_listed_for_dashboard(client: TestClient) -> None:
     rows = client.get("/api/finance/loss-reports").json()["data"]
     assert (rows[0]["context_id"], rows[0]["lost_amount"]) == ("ctx_inc_0002", 214_500)
     assert rows[0]["total_loss"] == 214_500  # 보상 지급 기록이 없으면 피해 금액만
+
+
+# ---------------------------------------------------------------- 추가 테스트
+def test_campaign_coupon_skips_affected_check(client: TestClient) -> None:
+    """캠페인 쿠폰은 장애 피해 고객 확인을 하지 않고 금액만 다시 계산한다."""
+    params = _coupon(buyer="buy_anyone") | {"purpose_code": "campaign", "campaign_id": "cmp_1"}
+    out = _call(client, "verify_amount", _verify(params))["output"]
+    assert (out["decision"], out["reason_code"]) == ("approved", "recomputed_match")
+
+
+def test_partial_refunds_add_up(client: TestClient) -> None:
+    """같은 주문 환불이 쌓이면 결제 금액(ord_1002 50,000원)을 넘는 순간 거절."""
+    import asyncio
+
+    async def refunded(amount: int, n: int) -> None:
+        await handlers.on_event(
+            EventEnvelope(
+                event_id=f"evt_rf{n}",
+                type=EventType.PAYMENT_REFUNDED,
+                occurred_at=datetime.now(UTC),
+                source="shop-api",
+                idempotency_key=f"rf{n}",
+                data={
+                    "payment_id": "pay_2",
+                    "order_id": "ord_1002",
+                    "refund_id": f"rfd_{n}",
+                    "refund_amount": amount,
+                },
+            )
+        )
+
+    asyncio.run(refunded(30_000, 1))
+    ok = _call(
+        client,
+        "verify_amount",
+        _verify({"order_id": "ord_1002", "refund_amount": 20_000}, action="refund_request"),
+    )["output"]
+    assert ok["decision"] == "approved"
+    asyncio.run(refunded(20_000, 2))
+    over = _call(
+        client,
+        "verify_amount",
+        _verify(
+            {"order_id": "ord_1002", "refund_amount": 1},
+            action="refund_request",
+            execution_id="exe_9",
+        ),
+    )["output"]
+    assert (over["reason_code"], over["recomputed"]["refunded_before"]) == ("exceeds_paid", 50_000)
+
+
+@pytest.mark.asyncio
+async def test_coupons_of_other_incidents_are_not_mixed(client: TestClient) -> None:
+    for n, ctx in enumerate([CTX, "ctx_inc_0002", "ctx_inc_0002"]):
+        await handlers.on_event(
+            EventEnvelope(
+                event_id=f"evt_m{n}",
+                type=EventType.COUPON_ISSUED,
+                occurred_at=datetime.now(UTC),
+                context_id=ctx,
+                source="marketing",
+                idempotency_key=f"m{n}",
+                data={
+                    "coupon_id": f"cpn_m{n}",
+                    "campaign_id": None,
+                    "purpose_code": "compensation",
+                    "count": 1,
+                    "total_value": 5000,
+                },
+            )
+        )
+    out = _call(client, "loss_aggregation", WINDOW, token="mock:orchestrator")["output"]
+    assert (out["compensation_coupon_count"], out["compensation_total"]) == (1, 5000)
+    other = _call(
+        client,
+        "loss_aggregation",
+        WINDOW | {"context_id": "ctx_inc_0002"},
+        token="mock:orchestrator",
+    )["output"]
+    assert (other["compensation_total"], other["total_loss"]) == (10_000, 224_500)
+
+
+def test_settlement_hold_rejects_unknown_reason(client: TestClient) -> None:
+    result = _call(
+        client,
+        "settlement_hold",
+        {"seller_id": "sel_3", "reason_code": "because"},
+        token="mock:orchestrator",
+    )
+    assert (result["status"], result["outcome"]) == ("failed", "invalid_input")
+
+
+def test_loss_report_needs_a_window(client: TestClient) -> None:
+    result = _call(client, "loss_aggregation", {}, token="mock:orchestrator")
+    assert (result["status"], result["outcome"]) == ("failed", "invalid_input")
+
+
+def test_expired_deadline_is_canceled(client: TestClient) -> None:
+    body = _body("verify_amount", _verify(_coupon()))
+    body["meta"]["deadline"] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+    result = client.post("/a2a", json=body).json()
+    assert (result["status"], result["outcome"]) == ("canceled", "TIMEOUT")
+
+
+def test_too_many_hops_are_refused(client: TestClient) -> None:
+    result = _call(
+        client,
+        "verify_amount",
+        _verify(_coupon()),
+        path=["orchestrator", "support", "marketing", "safety"],
+    )
+    assert (result["status"], result["outcome"]) == ("rejected", "HOP_LIMIT")
+
+
+def test_held_seller_review_can_be_asked_again(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """사람 확인 중인 심사는 결과를 저장하지 않아서, 다시 물으면 안전 장치에 다시 묻는다."""
+    calls = _fake_execute(
+        monkeypatch,
+        _decision("held", "C", hold_reason=HoldReason.OVER_THRESHOLD, review_id="rev_1"),
+    )
+    for _ in range(2):
+        _call(client, "seller_review", SELLER | {"seller_id": "sel_3"}, token="mock:orchestrator")
+    assert len(calls) == 2
+
+
+def test_card_descriptions_say_whether_state_changes() -> None:
+    """다른 AI가 고를 수 있게, 보기만 하는 skill은 '상태를 바꾸지 않는다'를 적는다."""
+    for skill in load_card().skills:
+        if skill.grade == "read":
+            assert "상태를 바꾸지 않는다" in skill.description
+        else:
+            assert "execute" in skill.description
+
+
+def test_every_seller_review_outcome_is_listed(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """서류 없음·점수 없음으로 멈춘 심사도 대시보드 목록에 남는다."""
+    _fake_execute(monkeypatch, _decision())
+    for seller, docs in (("sel_1", True), ("sel_2", False), ("sel_unknown", True)):
+        _call(
+            client,
+            "seller_review",
+            SELLER | {"seller_id": seller, "documents_verified": docs},
+            token="mock:orchestrator",
+        )
+    ops = client.get("/api/finance/market-ops").json()["data"]
+    assert [(o["seller_id"], o["decision"]) for o in ops] == [
+        ("sel_unknown", "undetermined"),
+        ("sel_2", "rejected"),
+        ("sel_1", "approved"),
+    ]
+
+
+def test_verify_amount_models_come_from_contracts() -> None:
+    """#90: safety와 함께 쓰는 형식은 contracts가 원본이다(중복 정의 없음)."""
+    from ax_contracts import schemas as contract
+    from finance_agent import schemas
+
+    assert schemas.VerifyAmountInput is contract.VerifyAmountInput
+    assert schemas.VerifyAmountOutput is contract.VerifyAmountOutput

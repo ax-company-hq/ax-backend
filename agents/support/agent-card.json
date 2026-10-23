@@ -98,6 +98,126 @@
       "allowed_requesters": ["dashboard-api", "orchestrator"],
       "verifier": null,
       "priority": "required"
+    },
+    {
+      "id": "request_compensation",
+      "description": "보상 단가·대상을 코드 정책표로 판정해 마케팅 issue_coupon(compensation)에 사건별 sequence로 직렬 요청한다. 지급과 execute()는 마케팅이 하고, 고객지원 자신의 상태는 바꾸지 않는다. 보상 대상이 아니면 not_eligible로 돌려준다.",
+      "input_schema": "agents/support/src/support_agent/schemas.py#RequestCompensationInput",
+      "output_schema": "agents/support/src/support_agent/schemas.py#RequestCompensationOutput",
+      "grade": "A",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "required"
+    },
+    {
+      "id": "list_claims",
+      "description": "클레임 목록을 최근 순으로 돌려준다. 상태로 거를 수 있다. 상태를 바꾸지 않는다.",
+      "input_schema": "agents/support/src/support_agent/claim_schemas.py#ListClaimsInput",
+      "output_schema": "agents/support/src/support_agent/claim_schemas.py#Claim",
+      "grade": "read",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "get_claim",
+      "description": "클레임 하나의 판정 근거(규칙 적중, 품목별 금액, 공제)와 감사 기록을 돌려준다.",
+      "input_schema": "agents/support/src/support_agent/claim_schemas.py#GetClaimInput",
+      "output_schema": "agents/support/src/support_agent/claim_schemas.py#Claim",
+      "grade": "read",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "claim_stats",
+      "description": "클레임 상태별 건수와 규칙 적중 횟수를 코드로 센다.",
+      "input_schema": "agents/support/src/support_agent/claim_schemas.py#ListClaimsInput",
+      "output_schema": "agents/support/src/support_agent/claim_schemas.py#ClaimStats",
+      "grade": "read",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "claim_queue",
+      "description": "보상 큐(환불할 금액이 있는 승인·입고 건)와 반품 대기 목록을 돌려준다. 검수 전·불합격 건은 ready=false와 이유를 담는다.",
+      "input_schema": "agents/support/src/support_agent/claim_schemas.py#ListClaimsInput",
+      "output_schema": "agents/support/src/support_agent/claim_schemas.py#ClaimQueue",
+      "grade": "read",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "create_claim",
+      "description": "취소·반품·교환 클레임을 접수하고 주문 사실로 규칙 판정한다(자동 거절·정보 필요·사람 확인·반품 대기·자동 승인). 금액은 입력으로 받지 않고 코드가 계산한다. 사유 설명은 untrusted.description. 상태 변경이라 execute()를 거친다.",
+      "input_schema": "agents/support/src/support_agent/claim_schemas.py#CreateClaimInput",
+      "output_schema": "agents/support/src/support_agent/claim_schemas.py#Claim",
+      "grade": "A",
+      "allowed_requesters": ["dashboard-api", "shop-api", "orchestrator"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "decide_claim",
+      "description": "사람 확인이 필요한 클레임을 상담원이 승인·거절한다. 메모는 untrusted.note. 상태 변경이라 execute()를 거친다.",
+      "input_schema": "agents/support/src/support_agent/claim_schemas.py#DecideClaimInput",
+      "output_schema": "agents/support/src/support_agent/claim_schemas.py#Claim",
+      "grade": "A",
+      "allowed_requesters": ["dashboard-api"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "receive_return",
+      "description": "반품 입고를 기록한다(선택으로 검수 결과). 상태 변경이라 execute()를 거친다.",
+      "input_schema": "agents/support/src/support_agent/claim_schemas.py#ReceiveReturnInput",
+      "output_schema": "agents/support/src/support_agent/claim_schemas.py#Claim",
+      "grade": "A",
+      "allowed_requesters": ["dashboard-api", "shop-api"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "inspect_return",
+      "description": "입고한 반품의 검수 결과(pass·fail·partial)를 기록한다. 상태 변경이라 execute()를 거친다.",
+      "input_schema": "agents/support/src/support_agent/claim_schemas.py#InspectReturnInput",
+      "output_schema": "agents/support/src/support_agent/claim_schemas.py#Claim",
+      "grade": "A",
+      "allowed_requesters": ["dashboard-api"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "process_claim_queue",
+      "description": "보상 큐의 준비된 건을 refund_request(execute, 재무 교차검증·기준 이상 C 보류)로 지급 처리한다. 지급 연동(shop-api 환불 API)은 아직 없다.",
+      "input_schema": "agents/support/src/support_agent/claim_schemas.py#ProcessClaimQueueInput",
+      "output_schema": "agents/support/src/support_agent/claim_schemas.py#QueueRun",
+      "grade": "B",
+      "allowed_requesters": ["dashboard-api"],
+      "verifier": "finance",
+      "priority": "recommended"
+    },
+    {
+      "id": "inquiry_overview",
+      "description": "문의 KPI(초안 채택률·수정 정도·가드 적중·분류별 건수)와 답변 대기 문의를 코드로 집계해 돌려준다. 상태를 바꾸지 않는다.",
+      "input_schema": "agents/support/src/support_agent/schemas.py#ListInquiriesInput",
+      "output_schema": "agents/support/src/support_agent/insight_schemas.py#InquiryOverview",
+      "grade": "read",
+      "allowed_requesters": ["dashboard-api", "orchestrator", "data"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "detect_inquiry_surge",
+      "description": "최근 창의 분류별 문의 수를 평소(앞선 기간의 같은 길이 창 평균)와 견줘 급증한 분류를 돌려준다 (DEP-CS-05). 샘플은 문의 ID만 담고 원문은 담지 않는다. 총량 이상은 data 소관이다.",
+      "input_schema": "agents/support/src/support_agent/insight_schemas.py#SurgeInput",
+      "output_schema": "agents/support/src/support_agent/insight_schemas.py#SurgeReport",
+      "grade": "read",
+      "allowed_requesters": ["dashboard-api", "orchestrator", "data"],
+      "verifier": null,
+      "priority": "recommended"
     }
   ]
 }

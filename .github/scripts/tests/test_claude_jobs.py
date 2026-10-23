@@ -276,3 +276,11 @@ def test_review_apply_sets_status_before_comment_and_survives_comment_error(
     plan = {"head_sha": head, "reviewers": [{"dept": "finance", "name": "태윤"}]}
     assert cj.review_apply(team, 27, plan, tmp_path) == "success"
     assert events.index(("status", "agent-review", "success")) < events.index(("comment",))
+
+
+def test_ruff_targets_cli_prints_nothing_when_empty(team, tmp_path, monkeypatch, capsys) -> None:
+    # 바뀐 .py가 없으면 빈 줄도 출력하지 않는다
+    # (빈 줄이 빈 파일 이름으로 들어가 git diff가 실패했음)
+    monkeypatch.setattr(cj.team_mod, "git", lambda *a: "M\0agents/data/README.md\0")
+    assert cj.main(["ruff-targets", "--dept", "data", "--base", "origin/dev"]) == 0
+    assert capsys.readouterr().out == ""

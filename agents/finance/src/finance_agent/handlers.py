@@ -6,6 +6,8 @@
 | `loss_aggregation` | read | orchestrator | data 영향 분석 + 지급 보상 = 손실 리포트 (DEP-FIN-01) |
 | `seller_review` | B | orchestrator | 마켓운영: 서류·위험 점수로 판매자 승인 요청 (DEP-FIN-03) |
 | `settlement_hold` | B | orchestrator | 마켓운영: 위험 판매자 정산 보류 요청 (DEP-FIN-04) |
+| `review_hold` | read | safety | 사람 확인(C) 건 AI 1차 판단 |
+| `review_threshold_change` | read | safety | 기준 바꾸기 판단 (`threshold_review.py`) |
 
 - 숫자는 전부 코드로 계산한다. 요청 쪽이 적은 총액·등급은 믿지 않는다.
 - 상태 변경(판매자 승인, 정산 보류)은 `execute()`가 `executed`를 돌려준 뒤에만 기록한다.
@@ -32,17 +34,21 @@ from ax_contracts.schemas import (
     InputReason,
     TaskStatus,
 )
+from finance_agent.review import ReviewPolicy, decide, load_policy
 from finance_agent.schemas import (
     LossAggregationInput,
     LossReport,
+    ReviewHoldInput,
     SellerReviewInput,
     SellerReviewOutput,
     SettlementHoldInput,
     SettlementHoldOutput,
+    ThresholdReviewInput,
     VerifyAmountInput,
     VerifyAmountOutput,
 )
-from finance_agent.sources import LiveSources, MockSources, Sources
+from finance_agent.sources import LiveSources, MockSources, Sources, order_key
+from finance_agent.threshold_review import decide_threshold
 
 CLAIMED_TOTAL_FIELDS = ("total_value", "claimed_total")
 
@@ -59,6 +65,10 @@ class Ledger:
         self.done: dict[str, AgentResult] = {}  # 멱등성 키 → 끝난 상태 변경 결과
         self.market_ops: list[dict[str, Any]] = []  # 판매자 심사·정산 보류 결과 기록
         self.loss_reports: dict[str, dict[str, Any]] = {}  # context_id → 마지막 손실 리포트
+        self.reviewed: dict[str, AgentResult] = {}  # review_id → AI 1차 판단
+        self.ai_reviews: list[dict[str, Any]] = []  # 대시보드 조회용 AI 판단 기록
+        self.threshold_reviewed: dict[str, AgentResult] = {}  # change_id → 기준 바꾸기 판단
+        self.threshold_reviews: list[dict[str, Any]] = []  # 대시보드 조회용 기준 바꾸기 판단
 
     def compensation(self, context_id: str) -> dict[str, int]:
         return self.coupons.get(context_id, {"count": 0, "total": 0})
@@ -68,6 +78,8 @@ class State:
     def __init__(self, sources: Sources | None = None) -> None:
         self.sources: Sources = sources or (MockSources() if is_mock("finance") else LiveSources())
         self.ledger = Ledger()
+        self.policy: ReviewPolicy = load_policy()
+        self.last_self_test: dict[str, Any] | None = None  # 마지막 "재무 AI 테스트" 결과
 
 
 STATE: State | None = None
@@ -134,8 +146,8 @@ async def on_event(envelope: EventEnvelope) -> None:
         row["count"] += count
         row["total"] += total
     elif envelope.type == EventType.PAYMENT_REFUNDED:
-        order_id, amount = data.get("order_id"), _positive_int(data.get("refund_amount"))
-        if isinstance(order_id, str) and amount is not None:
+        order_id, amount = order_key(data.get("order_id")), _positive_int(data.get("refund_amount"))
+        if order_id is not None and amount is not None:
             ledger.refunds[order_id] = ledger.refunds.get(order_id, 0) + amount
 
 
@@ -143,8 +155,18 @@ SUBSCRIBED_EVENTS = [EventType.COUPON_ISSUED, EventType.PAYMENT_REFUNDED]
 
 
 # ---------------------------------------------------------------- verify_amount
-async def recompute(request: AgentRequest, data: VerifyAmountInput) -> VerifyAmountOutput:
-    """원천 데이터로 다시 계산한다. 근거가 없으면 승인하지 않는다."""
+async def recompute(
+    request: AgentRequest,
+    data: VerifyAmountInput,
+    sources: Sources | None = None,
+    refunds: dict[str, int] | None = None,
+) -> VerifyAmountOutput:
+    """원천 데이터로 다시 계산한다. 근거가 없으면 승인하지 않는다.
+
+    `sources`·`refunds`를 주면 그것을 쓴다(자체 점검용). 없으면 에이전트 상태를 쓴다.
+    """
+    sources = sources or state().sources
+    refunds = state().ledger.refunds if refunds is None else refunds
 
     def reject(reason: str, **recomputed: int) -> VerifyAmountOutput:
         return VerifyAmountOutput(
@@ -166,7 +188,7 @@ async def recompute(request: AgentRequest, data: VerifyAmountInput) -> VerifyAmo
         if any(c != total for c in claimed):
             return reject("amount_mismatch", count=count, unit_value=unit, total_value=total)
         if params.get("purpose_code") == "compensation":
-            impact = await state().sources.impact(meta, meta.context_id, None)
+            impact = await sources.impact(meta, meta.context_id, None)
             if impact is None or not impact.affected_customer_ids:
                 return reject("source_unavailable", total_value=total)
             if params.get("buyer_id") not in impact.affected_customer_ids:
@@ -179,15 +201,18 @@ async def recompute(request: AgentRequest, data: VerifyAmountInput) -> VerifyAmo
         )
 
     if data.action == "refund_request":
-        amount, order_id = _positive_int(params.get("refund_amount")), params.get("order_id")
-        if amount is None or not isinstance(order_id, str):
+        amount, order_id = (
+            _positive_int(params.get("refund_amount")),
+            order_key(params.get("order_id")),
+        )
+        if amount is None or order_id is None:
             return reject("invalid_params")
         if data.computed_amount is not None and data.computed_amount != amount:
             return reject("amount_mismatch", refund_amount=amount)
-        paid = await state().sources.paid_amount(meta, order_id)
+        paid = await sources.paid_amount(meta, order_id)
         if paid is None:
             return reject("source_unavailable", refund_amount=amount)
-        already = state().ledger.refunds.get(order_id, 0)
+        already = refunds.get(order_id, 0)
         if already + amount > paid:
             return reject(
                 "exceeds_paid", refund_amount=amount, paid_amount=paid, refunded_before=already
@@ -335,6 +360,7 @@ async def seller_review(request: AgentRequest) -> AgentResult:
         return data
 
     def done(output: SellerReviewOutput, evidence: Evidence, **status: Any) -> AgentResult:
+        _log_market_op(request, "seller_review", output.model_dump(mode="json"))
         return _result(
             request,
             output=output.model_dump(mode="json"),
@@ -387,7 +413,6 @@ async def seller_review(request: AgentRequest) -> AgentResult:
     result = done(output, evidence, **mapped)
     if result.status == TaskStatus.COMPLETED:
         state().ledger.done[key] = result
-    _log_market_op(request, "seller_review", output.model_dump(mode="json"))
     return result
 
 
@@ -421,9 +446,87 @@ async def settlement_hold(request: AgentRequest) -> AgentResult:
     return result
 
 
+# ---------------------------------------------------------------- review_hold (AI 1차 판단)
+async def review_hold(request: AgentRequest) -> AgentResult:
+    data = _parse(request, ReviewHoldInput)
+    if isinstance(data, AgentResult):
+        return data
+    ledger = state().ledger
+    if data.review_id in ledger.reviewed:  # 같은 보류 건은 같은 판단
+        return ledger.reviewed[data.review_id].model_copy(update={"meta": request.meta})
+    order_id = order_key(data.params.get("order_id"))
+    refunded = ledger.refunds.get(order_id, 0) if order_id else 0
+    output = await decide(data, request.meta, state().sources, refunded, state().policy)
+    result = _result(
+        request,
+        TaskStatus.COMPLETED,
+        outcome=output.decision,
+        output=output.model_dump(mode="json"),
+        evidence=_evidence(
+            ["ai_review_policy", f"review:{data.action}"],
+            output.explanation,
+            [data.review_id, data.execution_id],
+        ),
+    )
+    ledger.reviewed[data.review_id] = result
+    ledger.ai_reviews.append(
+        {
+            "review_id": data.review_id,
+            "context_id": request.meta.context_id,
+            "action": data.action,
+            "requester": data.requester,
+            "computed_amount": data.computed_amount,
+            "hold_reason": data.hold_reason,
+            **output.model_dump(mode="json"),
+            "at": _now().isoformat(),
+        }
+    )
+    return result
+
+
+# ---------------------------------------------------------------- review_threshold_change
+async def review_threshold_change(request: AgentRequest) -> AgentResult:
+    """safety의 기준 바꾸기 요청 판단. 요청 이유(`request.untrusted`)는 읽지 않는다."""
+    data = _parse(request, ThresholdReviewInput)
+    if isinstance(data, AgentResult):
+        return data
+    ledger = state().ledger
+    if data.change_id in ledger.threshold_reviewed:  # 같은 요청은 같은 판단
+        return ledger.threshold_reviewed[data.change_id].model_copy(update={"meta": request.meta})
+    output = decide_threshold(data, state().policy.threshold_change)
+    result = _result(
+        request,
+        TaskStatus.COMPLETED,
+        outcome=output.decision,
+        output=output.model_dump(mode="json"),
+        evidence=_evidence(
+            ["ai_review_policy:threshold_change", f"safety:stats:{data.key}"],
+            output.explanation,
+            [data.change_id],
+        ),
+    )
+    ledger.threshold_reviewed[data.change_id] = result
+    ledger.threshold_reviews.append(
+        {
+            "change_id": data.change_id,
+            "context_id": request.meta.context_id,
+            "key": data.key,
+            "current_value": data.current_value,
+            "new_value": data.new_value,
+            "baseline": data.baseline,
+            "stats": data.stats,
+            **output.model_dump(mode="json"),
+            "at": _now().isoformat(),
+        }
+    )
+    return result
+
+
 HANDLERS = {
     "verify_amount": verify_amount,
     "loss_aggregation": loss_aggregation,
     "seller_review": seller_review,
     "settlement_hold": settlement_hold,
+    "review_hold": review_hold,
+    "review_threshold_change": review_threshold_change,
 }

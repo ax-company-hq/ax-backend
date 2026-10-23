@@ -356,3 +356,33 @@ async def test_seller_review_risk_score(gate: Gate, verifier: Any, act) -> None:
         act("seller_review", "finance", "sel-2", seller_id="sel_2", risk_score=70)
     )
     assert (high.grade, high.status) == ("C", "held")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action", ["create_claim", "decide_claim", "receive_return", "inspect_return"]
+)
+async def test_support_claim_records_are_grade_a(gate: Gate, act, action: str) -> None:
+    """#105: 클레임 처리 기록은 돈이 나가지 않으므로 A. 다른 부서가 요청하면 미등록과 같다."""
+    decision = await gate.execute(act(action, "support", f"claim-{action}", claim_id=1))
+    assert (decision.grade, decision.status) == ("A", "executed")
+    other = await gate.execute(act(action, "marketing", f"claim-{action}-x", claim_id=1))
+    assert other.hold_reason == HoldReason.UNREGISTERED_ACTION
+
+
+@pytest.mark.asyncio
+async def test_claim_refund_still_needs_finance_check(gate: Gate, verifier: Any, act) -> None:
+    """클레임 환불 지급은 refund_request(B)로 재무가 검증한다."""
+    decision = await gate.execute(
+        act(
+            "refund_request",
+            "support",
+            "claim-refund",
+            claim_id=1,
+            order_id=3,
+            buyer_id="usr_1",
+            refund_amount=20_000,
+        )
+    )
+    assert (decision.grade, decision.status, decision.verifier) == ("B", "executed", "finance")
+    assert verifier.tasks[-1].input["params"]["claim_id"] == 1
