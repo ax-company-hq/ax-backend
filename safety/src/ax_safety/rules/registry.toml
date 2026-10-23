@@ -87,6 +87,58 @@ action = "record_case"
 owner = "hr"
 base_grade = "A"
 
+# 인수인계·온보딩·담당 변경 (#180). 기록·진행은 A, 확정은 B, 퇴직 확정은 항상 사람 승인(C)
+[[actions]]
+action = "start_handover"
+owner = "hr"
+base_grade = "A"
+
+[[actions]]
+action = "answer_handover_question"
+owner = "hr"
+base_grade = "A"
+
+[[actions]]
+action = "request_assignment_change"
+owner = "hr"
+base_grade = "A"
+
+[[actions]]
+action = "start_onboarding"
+owner = "hr"
+base_grade = "A"
+
+[[actions]]
+action = "update_onboarding_step"
+owner = "hr"
+base_grade = "A"
+
+# 인수인계 확정: planning이 verify_handover로 검증. 완성도가 기준 미만이면 C (thresholds.toml)
+[[actions]]
+action = "confirm_handover"
+owner = "hr"
+base_grade = "B"
+verifier = "planning"
+verify_skill = "verify_handover"
+
+# 완성도 미달 상태로 확정하려면 항상 사람 승인
+[[actions]]
+action = "confirm_handover_incomplete"
+owner = "hr"
+base_grade = "C"
+
+# 담당 변경 확정: 검증자 = 안전 레이어 코드 규칙(변경 뒤 담당 공백·중복 건수, thresholds.toml)
+[[actions]]
+action = "confirm_reassignment"
+owner = "hr"
+base_grade = "B"
+verifier = "safety"
+
+[[actions]]
+action = "confirm_offboarding"
+owner = "hr"
+base_grade = "C"
+
 # ---- 인프라 DejaFix (예진). 서버 재부팅·파일 삭제는 등록하지 않는다(미등록 = C)
 [[actions]]
 action = "rollback_deployment"

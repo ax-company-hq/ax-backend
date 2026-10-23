@@ -130,6 +130,33 @@ field = "irreversible_count"
 op = ">"
 value = 0
 
+# ---- 인사 (#180). 값은 제안값. 필드가 없거나 정수가 아니면 걸린 것으로 본다(fail-closed).
+# 인수인계 완성도(0~100 정수 %). 기준 미만이면 confirm_handover도 C
+[[rules]]
+key = "handover_completeness"
+action = "confirm_handover"
+metric = "param"
+field = "completeness_percent"
+op = "<"
+value = 80
+
+# 담당 변경 뒤 담당 공백·중복 건수. 0이 아니면 C
+[[rules]]
+key = "reassignment_gap"
+action = "confirm_reassignment"
+metric = "param"
+field = "unassigned_count"
+op = ">"
+value = 0
+
+[[rules]]
+key = "reassignment_duplicate"
+action = "confirm_reassignment"
+metric = "param"
+field = "duplicate_count"
+op = ">"
+value = 0
+
 # merge_pr: generate_pr와 같은 크기·경로 기준
 [[rules]]
 key = "pr_changed_lines"
