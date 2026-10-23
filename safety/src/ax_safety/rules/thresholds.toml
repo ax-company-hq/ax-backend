@@ -93,7 +93,7 @@ key = "pr_allowed_paths"
 action = "generate_pr"
 metric = "paths_within"
 field = "changed_paths"
-allowed = ["shop-api/", "docs/"]
+allowed = ["shop-api/", "shop-web/", "docs/"]
 
 # ---- 기획개발 자동화 (#166). 값은 제안값. params 키는 planning이 맞춰 보낸다.
 # 필드가 없거나 정수가 아니면 걸린 것으로 본다(fail-closed).
@@ -179,7 +179,7 @@ key = "merge_allowed_paths"
 action = "merge_pr"
 metric = "paths_within"
 field = "changed_paths"
-allowed = ["shop-api/", "docs/"]
+allowed = ["shop-api/", "shop-web/", "docs/"]
 
 [[rules]]
 key = "pr_review_mismatch"
