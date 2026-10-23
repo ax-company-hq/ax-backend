@@ -96,6 +96,19 @@ def hop_of(body: str) -> int:
 
 
 # ── 결과 형식 검사 ────────────────────────────────────────
+CHAT_COMMENT = re.compile(r"<!--\s*chat:\s*(.*?)\s*-->", re.S)
+MAX_CHAT = 120
+
+
+def chat_line(text: str) -> str:
+    """Claude가 남긴 마지막 chat 주석의 내용을 한 줄·120자로 정제한다 (없으면 빈 문자열)."""
+    found = CHAT_COMMENT.findall(text or "")
+    if not found:
+        return ""
+    line = re.sub(r"\s+", " ", HTML_COMMENT.sub("", found[-1]).replace("<!--", "")).strip()
+    return line.replace("-->", "").replace("@", "")[:MAX_CHAT]
+
+
 def check_result(data: object, team: team_mod.Team) -> dict:
     """result.json {"title","body","summary","requests":[{"to","text"}]}"""
     if not isinstance(data, dict):
@@ -106,8 +119,12 @@ def check_result(data: object, team: team_mod.Team) -> dict:
         if not isinstance(v, str) or len(v) > limit:
             raise JobError(f"result.json {key}가 문자열이 아니거나 너무 김")
         out[key] = v
+    chat = chat_line(out["body"]) or chat_line(out["summary"])
+    out["summary"] = HTML_COMMENT.sub("", out["summary"]).replace("<!--", "")
     # 봇 표시(<!-- ax-issue:N --> 등)를 흉내 내지 못하게 Claude가 쓴 HTML 주석은 지운다
     out["body"] = HTML_COMMENT.sub("", out["body"]).replace("<!--", "")
+    if chat:  # 개발실 피드용 한 줄만 다시 붙인다 (정제한 한 줄, 다른 주석은 그대로 지워짐)
+        out["body"] = out["body"].rstrip() + "\n\n<!-- chat: " + chat + " -->"
     if not out["title"].strip():
         raise JobError("result.json title이 비어 있음")
     if any(ord(ch) < 32 for ch in out["title"]):
@@ -121,7 +138,8 @@ def check_result(data: object, team: team_mod.Team) -> dict:
             r.get("text"), str
         ) or len(r["text"]) > 4000:
             raise JobError("requests 항목 형식 오류")
-        out["requests"].append({"to": r["to"], "text": r["text"]})
+        text = HTML_COMMENT.sub("", r["text"]).replace("<!--", "")  # 봇 표시 위조 방지
+        out["requests"].append({"to": r["to"], "text": text})
     return out
 
 
@@ -524,6 +542,25 @@ def existing_request_bodies(team: team_mod.Team) -> list[str]:
     return [i.get("body") or "" for i in issues if i["user"]["login"] == team.bot_login]
 
 
+BLOCKED_BY = re.compile(r"(?i)\bblocked-by\s+#(\d+)")
+
+
+def request_label(to: str, text: str) -> str:
+    """요청 이슈의 첫 라벨: AX_RELAY=on이고 blocked-by 선행이 열려 있으면 waiting, 아니면 to:<부서>.
+
+    relay가 꺼져 있으면 waiting을 아무도 풀지 않으므로 항상 to:<부서> (예전과 같은 동작).
+    """
+    if os.environ.get("AX_RELAY") != "on":
+        return f"to:{to}"
+    for n in {int(x) for x in BLOCKED_BY.findall(text)}:
+        try:
+            if api(f"repos/{repo()}/issues/{n}").get("state") != "closed":
+                return "waiting"
+        except subprocess.CalledProcessError:
+            return "waiting"  # 읽지 못하면 relay가 다시 확인한다
+    return f"to:{to}"
+
+
 def write_apply(team: team_mod.Team, dept: str, mode: str, issue_no: int, retry: int,
                 result_file: Path, patch_file: Path, report_file: Path | None) -> str:
     """패치 검사 → requests → push·PR. 위반이면 아무것도 push하지 않고 requeue."""
@@ -539,9 +576,12 @@ def write_apply(team: team_mod.Team, dept: str, mode: str, issue_no: int, retry:
     for r in create:
         body = (f"hop: {r['hop']}\n\n요청 출처: #{issue_no} ({dept})\n\n"
                 f"{r['text']}\n\n{r['marker']}")
+        first_label = request_label(r["to"], r["text"])  # 한 번만 정해 라벨과 댓글이 어긋나지 않게
         new = api(f"repos/{repo()}/issues", "-X", "POST", "-f",
                   f"title=[요청 {dept}→{r['to']}] {result['title'][:80]}", "-f", f"body={body}",
-                  "-f", "labels[]=request", "-f", f"labels[]=to:{r['to']}")
+                  "-f", "labels[]=request", "-f", f"labels[]={first_label}")
+        if first_label == "waiting":
+            comment(new["number"], team_mod.relay_to_comment(f"to:{r['to']}"))
         lock(new["number"])
         made.append(new["number"])
     for n in notes:

@@ -546,7 +546,9 @@ def show(rev: str, path: str) -> str:
 CAP_KINDS = ("write", "review")
 
 CLAUDE_RUN_WORKFLOWS = {
-    "ax-company-hq/ax-backend": ("_claude-write.yml", "claude-request.yml", "claude-review.yml"),
+    "ax-company-hq/ax-backend": (
+        "_claude-write.yml", "claude-request.yml", "claude-review.yml", "morning.yml",
+    ),
     "ax-company-hq/ax-frontend": (),  # F-1단계에서 Claude 워크플로가 생기면 추가
 }
 WRITE_TITLE = re.compile(r"^claude:([a-z0-9-]+):[a-z-]+(?: |$)")
@@ -850,6 +852,14 @@ def requeue(repo: str, team: Team, issue: int, reason: str, pr: int | None = Non
     return ",".join(add)
 
 
+# relay가 되돌릴 to: 라벨을 적어 두는 봇 댓글. 이 형식과 정확히 같은 봇 댓글만 믿는다
+RELAY_TO_COMMENT = re.compile(r"<!-- autopilot -->\n<!-- relay-to: (to:[a-z0-9-]+) -->")
+
+
+def relay_to_comment(label: str) -> str:
+    return f"<!-- autopilot -->\n<!-- relay-to: {label} -->"
+
+
 WRITE_WORKFLOW = "_claude-write.yml"
 
 
@@ -875,8 +885,10 @@ def dispatch_write(repo: str, team: Team, issue: int, dept: str | None = None,
     run 제목이 claude:<부서>:<모드> #<이슈>라 cap이 작성으로 센다. 실패해도 예외를 올리지 않는다.
     """
     try:
+        info = gh_api(f"repos/{repo}/issues/{issue}") or {}
+        if "answered" in [lb["name"] for lb in info.get("labels", [])]:
+            return f"#{issue}: answered라서 다시 실행하지 않음"
         if not (dept in team.depts and mode in ("task", "request")):
-            info = gh_api(f"repos/{repo}/issues/{issue}") or {}
             target = write_target(team, [lb["name"] for lb in info.get("labels", [])])
             if not target:
                 return f"#{issue}: to:/dept: 라벨이 없어 다시 실행하지 않음"
