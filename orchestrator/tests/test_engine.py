@@ -27,7 +27,7 @@ async def test_scenario_a_completes(harness) -> None:
     assert inc.status == "resolved"
     assert all(s.status == "completed" for s in inc.steps.values())
     assert harness.events == ["incident.opened", "incident.resolved"]
-    assert inc.metrics["steps_total"] == 13
+    assert inc.metrics["steps_total"] == 14
 
 
 @pytest.mark.asyncio
@@ -36,6 +36,8 @@ async def test_calls_carry_context_and_unique_idempotency_keys(harness) -> None:
     for _, req in harness.fakes.calls:
         assert req.meta.context_id == inc.context_id
         assert req.meta.idempotency_key.startswith(f"{inc.context_id}:{req.skill}:")
+    for _, req in harness.fakes.calls:  # 새 요청은 path에 자기 이름을 붙이고 3홉 이내여야 한다
+        assert "orchestrator" in req.meta.path and len(req.meta.path) <= 3
     keys = [r.meta.idempotency_key for _, r in harness.fakes.calls]
     assert len(keys) == len(set(keys))
 
@@ -186,7 +188,7 @@ async def test_dept_input_is_relayed(harness) -> None:
     inc = await run(harness)
     assert inc.status == "resolved"
     skills = [r.skill for _, r in harness.fakes.calls]
-    assert "verify_amount" in skills
+    assert skills.count("impact_analysis") == 2  # 총괄이 필요한 부서에 질의
     again = [r for _, r in harness.fakes.calls if r.skill == "request_compensation"][-1]
     assert "answers" in again.input
 
@@ -197,3 +199,59 @@ async def test_coupon_is_sent_once_with_sequence(harness) -> None:
     coupons = [r for _, r in harness.fakes.calls if r.skill == "issue_coupon"]
     assert len(coupons) == 1 and coupons[0].sequence == 1
     assert inc.steps["coupon"].grade == "B"
+
+
+@pytest.mark.asyncio
+async def test_loss_aggregation_gets_window_and_context_only(harness) -> None:
+    inc = await run(harness)
+    req = next(r for _, r in harness.fakes.calls if r.skill == "loss_aggregation")
+    assert set(req.input) == {"window_from", "window_to", "context_id"}
+    assert req.input["context_id"] == inc.context_id
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_does_not_call_verify_amount(harness) -> None:
+    await run(harness)
+    assert "verify_amount" not in [r.skill for _, r in harness.fakes.calls]
+
+
+@pytest.mark.asyncio
+async def test_record_case_carries_facts_not_fixed_text(harness) -> None:
+    harness.fakes.script("marketing", "publish_notice", "fail", "fail", "fail")
+    await run(harness)
+    req = next(r for _, r in harness.fakes.calls if r.skill == "record_case")
+    assert "publish_notice" in req.input["decision_reason"]
+    assert req.input["alternatives_considered"]
+
+
+@pytest.mark.asyncio
+async def test_marketing_notice_follows_draft_then_publish_contract(harness) -> None:
+    await run(harness)
+    calls = [r for _, r in harness.fakes.calls if r.skill in ("draft_notice", "publish_notice")]
+    drafts = [r for r in calls if r.skill == "draft_notice"]
+    assert [d.input["kind"] for d in drafts] == ["incident_opened", "incident_resolved"]
+    assert set(drafts[0].input["facts"]) == {"component", "opened_at"}
+    publishes = [r for r in calls if r.skill == "publish_notice"]
+    assert [set(p.input) for p in publishes] == [{"draft_id"}, {"draft_id"}]
+    assert publishes[0].input["draft_id"] != publishes[1].input["draft_id"]
+
+
+@pytest.mark.asyncio
+async def test_link_incident_uses_pr_number_from_related_prs(harness) -> None:
+    await run(harness)
+    link = next(r for _, r in harness.fakes.calls if r.skill == "link_incident")
+    assert link.input["pr_numbers"] == [412, 418]
+
+
+@pytest.mark.asyncio
+async def test_human_approval_resume_is_not_counted_as_retry(harness) -> None:
+    harness.fakes.script("marketing", "issue_coupon", "hold")
+    harness.hold_timeout = 5
+    engine = await harness.start()
+    inc = new_incident()
+    task = asyncio.create_task(engine.run(inc, scenario_a()))
+    await wait_hold(inc, "coupon")
+    engine.decide_hold(inc, "coupon", True)
+    await task
+    assert inc.steps["coupon"].attempts == 1
+    assert inc.metrics["retries"] == 0
