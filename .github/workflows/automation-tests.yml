@@ -43,6 +43,9 @@ jobs:
       - name: team.json 동기화 검사
         run: '"$RUNNER_TEMP/venv/bin/python" -I .github/scripts/team.py export-json --check'
 
+      - name: 서버 PC runner 라벨 사용처 검사 (허용 워크플로 밖에서 쓰면 실패)
+        run: '"$RUNNER_TEMP/venv/bin/python" -I .github/scripts/real_guard.py check-runner-label'
+
       - name: team.py · guards.py · compat-check 테스트
         run: '"$RUNNER_TEMP/venv/bin/python" -m pytest .github/scripts/tests scripts/tests -q -p no:cacheprovider'
 
