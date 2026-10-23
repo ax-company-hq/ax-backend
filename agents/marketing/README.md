@@ -15,7 +15,7 @@
 | `draft_notice` | read | orchestrator | 사건·상품 사실, `promises[]` → 공지 초안 |
 | `publish_notice` | A | orchestrator | `draft_id` → `notice_id`, `notice.published` 발행 |
 | `get_notice` | read | support, finance, orchestrator | `notice_id` → 사실·약속·기간·공개 문구·상태(`published`·`ended`). 없으면 "확인할 수 없음" |
-| `issue_coupon` | B (기준 이상 C), 검증자 finance | orchestrator, support | `purpose_code`, `buyer_id`, 건수, 단가 → `coupon_id`, `coupon.issued` 발행 |
+| `issue_coupon` | B (기준 이상 C), 검증자 finance | support | `purpose_code`, `buyer_id`, 건수, 단가 → `coupon_id`, `coupon.issued` 발행 |
 - 입출력 모델: `src/marketing_agent/schemas.py`, Agent Card: `agent-card.json`
 - 이벤트 data는 `contracts`의 `NoticePublishedData`·`CouponIssuedData`·`Promise`를 쓴다.
 - 공지는 복구 공지(`incident_resolved`)를 게시하면 같은 `context_id`의 장애 공지가 `ended`가 되고, `valid_to`가 지나도 `ended`다. 끝난 공지도 사실·약속은 그대로 돌려주고 `status`로 구분한다(고객지원이 "종료된 공지"로 표시).
