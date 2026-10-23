@@ -38,7 +38,7 @@ RECEIPT = {
 CLAIM = {
     "id": 1,
     "tenant_id": "shop-demo",
-    "context_id": "ctx_req_0001",
+    "context_id": "ctx_ui_0001",
     "order_id": 101,
     "order_no": "ORD-2026-0101",
     "user_id": 1,
