@@ -53,9 +53,14 @@ jobs:
         run: |
           sha="$(uv run python .github/scripts/e2e_follow.py prev --run-id "$GITHUB_RUN_ID" --out prev)"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: e2e 테스트 (판정 로직)
+        run: uv run pytest e2e -q
       - name: e2e 실행 (같은 입력 3회)
+        # e2e는 workspace 패키지가 아니라 일반 폴더라 e2e/에서 ax_e2e를 찾는다
+        env:
+          PYTHONPATH: e2e
         run: |
-          uv run ax-e2e run --out out --prev prev/e2e-result.json --commit "$GITHUB_SHA" | tee summary.txt
+          uv run python -m ax_e2e.scenario_a.cli run --out out --prev prev/e2e-result.json --commit "$GITHUB_SHA" | tee summary.txt
           cat summary.txt >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:

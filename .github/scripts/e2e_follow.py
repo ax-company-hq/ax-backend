@@ -108,7 +108,8 @@ def issue_body(reg: dict, sha: str, prev_sha: str | None) -> str:
         "사유:",
         *[f"- {clean(n)}" for n in reg["notes"]],
         "",
-        "재현: `AX_E2E_MODE=mock uv run ax-e2e run --out out` (결과의 `e2e-detail.json` 참고)",
+        "재현: `AX_E2E_MODE=mock PYTHONPATH=e2e uv run python -m ax_e2e.scenario_a.cli run"
+        " --out out` (결과의 `e2e-detail.json` 참고)",
     ]
     if prev_sha:
         lines += ["", f"의심 범위: `{prev_sha[:10]}..{sha[:10]}`"]

@@ -12,8 +12,8 @@ def repo_root() -> Path:
     override = os.getenv("AX_E2E_ROOT")
     if override:
         return Path(override)
-    # e2e/src/ax_e2e/scenario_a/paths.py → 레포 루트
-    return Path(__file__).resolve().parents[4]
+    # e2e/ax_e2e/scenario_a/paths.py → 레포 루트
+    return Path(__file__).resolve().parents[3]
 
 
 @lru_cache(maxsize=1)

@@ -4,12 +4,12 @@ import asyncio
 from datetime import UTC, datetime
 
 import pytest
-
-from ax_contracts.data_access.dev_status import DevStatus, Stage, StageResult
 from ax_e2e.scenario_a import customer, judge
 from ax_e2e.scenario_a.once import run_once
 from ax_e2e.scenario_a.result import Outcome
 from ax_e2e.scenario_a.stages import CUSTOMER, INCIDENT, build_stage_table
+
+from ax_contracts.data_access.dev_status import DevStatus, Stage, StageResult
 
 NOW = datetime(2026, 10, 23, tzinfo=UTC)
 

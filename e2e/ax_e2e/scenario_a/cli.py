@@ -23,7 +23,10 @@ from ax_e2e.scenario_a.stages import build_stage_table
 
 def run_subprocess(n: int, tmp: Path) -> dict:
     out = tmp / f"run{n}.json"
-    env = {**os.environ, "PYTHONUTF8": "1"}
+    # e2e는 패키지로 설치하지 않으므로 하위 프로세스도 e2e/ 폴더에서 ax_e2e를 찾게 한다
+    e2e_dir = str(Path(__file__).resolve().parents[2])
+    pythonpath = os.pathsep.join(p for p in (e2e_dir, os.environ.get("PYTHONPATH", "")) if p)
+    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONPATH": pythonpath}
     proc = subprocess.run(
         [sys.executable, "-m", "ax_e2e.scenario_a.once", "--out", str(out)],
         env=env,
