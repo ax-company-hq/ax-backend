@@ -12,6 +12,7 @@ from ax_agent_template import events
 from ax_contracts.schemas import EventEnvelope, EventType, ExecuteDecision, HoldReason
 from finance_agent import handlers
 from finance_agent.main import app, load_card, subscribe_events
+from finance_agent.recheck import VerifyAmountInput, recompute
 from finance_agent.sources import MockSources
 
 CTX = "ctx_inc_0001"
@@ -75,6 +76,27 @@ def _verify(
     }
 
 
+def _recheck(data: dict, sources: MockSources | None = None, refunds: dict | None = None) -> dict:
+    """금액 다시 계산 규칙(`recheck.recompute`). verify_amount skill은 없어졌고 계산은 남았다."""
+    import asyncio
+
+    from ax_contracts.schemas import RequestMeta
+
+    meta = RequestMeta(
+        context_id=CTX, token="x", deadline=datetime.now(UTC) + timedelta(seconds=30)
+    )
+    state = handlers.state()
+    out = asyncio.run(
+        recompute(
+            meta,
+            VerifyAmountInput.model_validate(data),
+            sources or state.sources,
+            state.ledger.refunds if refunds is None else refunds,
+        )
+    )
+    return {"status": "completed", "output": out.model_dump(mode="json")}
+
+
 def _coupon(count: int = 1, unit: int = 5000, buyer: str = "buy_a1", **extra: Any) -> dict:
     return {
         "purpose_code": "compensation",
@@ -106,22 +128,22 @@ def test_agent_card(client: TestClient) -> None:
     card = load_card()
     skills = {s.id: s for s in card.skills}
     assert set(skills) == {
-        "verify_amount",
         "loss_aggregation",
         "seller_review",
         "settlement_hold",
-        "review_hold",
+        "closing_report",
+        "audit_report",
         "review_threshold_change",
     }
-    assert skills["review_hold"].allowed_requesters == ["safety"]
+    assert skills["closing_report"].allowed_requesters == ["orchestrator", "data"]
     assert skills["review_threshold_change"].allowed_requesters == ["safety"]
     assert (
         skills["review_threshold_change"].grade,
         skills["review_threshold_change"].priority,
     ) == ("read", "recommended")
-    assert skills["verify_amount"].allowed_requesters == ["safety"]
-    assert (skills["verify_amount"].priority, skills["loss_aggregation"].priority) == (
-        "required",
+    assert skills["audit_report"].allowed_requesters == ["orchestrator", "data"]
+    assert (skills["audit_report"].grade, skills["loss_aggregation"].priority) == (
+        "read",
         "required",
     )
     assert (skills["seller_review"].grade, skills["seller_review"].verifier) == ("B", "data")
@@ -129,9 +151,9 @@ def test_agent_card(client: TestClient) -> None:
     assert served["name"] == "finance" and len(served["skills"]) == 6
 
 
-# ---------------------------------------------------------------- verify_amount (DEP-FIN-02)
+# ------------------------------------------- 금액 다시 계산 (예전 verify_amount, recheck.py)
 def test_verify_approves_recomputed_match(client: TestClient) -> None:
-    result = _call(client, "verify_amount", _verify(_coupon(2, 5000), computed=10_000))
+    result = _recheck(_verify(_coupon(2, 5000), computed=10_000))
     assert result["status"] == "completed"
     assert result["output"]["decision"] == "approved"
     assert result["output"]["recomputed"] == {"count": 2, "unit_value": 5000, "total_value": 10_000}
@@ -140,25 +162,25 @@ def test_verify_approves_recomputed_match(client: TestClient) -> None:
 def test_verify_rejects_amount_mismatch(client: TestClient) -> None:
     """⑦ 계산: 요청 총액 10,000원이어도 2 × 5,000 = 10,000이 아니라 3 × 5,000이면 거절."""
     params = _coupon(3, 5000) | {"total_value": 10_000}
-    out = _call(client, "verify_amount", _verify(params))["output"]
+    out = _recheck(_verify(params))["output"]
     assert (out["decision"], out["reason_code"]) == ("rejected", "amount_mismatch")
     assert out["recomputed"]["total_value"] == 15_000
 
 
 def test_verify_rejects_when_safety_amount_differs(client: TestClient) -> None:
-    out = _call(client, "verify_amount", _verify(_coupon(1, 5000), computed=9_999))["output"]
+    out = _recheck(_verify(_coupon(1, 5000), computed=9_999))["output"]
     assert out["reason_code"] == "amount_mismatch"
 
 
 def test_verify_rejects_unaffected_buyer(client: TestClient) -> None:
     """보상 쿠폰은 data 영향 고객에게만. 시드의 영향 고객은 buy_a1·buy_b2·buy_c3."""
-    out = _call(client, "verify_amount", _verify(_coupon(buyer="buy_zz")))["output"]
+    out = _recheck(_verify(_coupon(buyer="buy_zz")))["output"]
     assert (out["decision"], out["reason_code"]) == ("rejected", "not_affected")
 
 
 def test_verify_fails_closed_without_source(client: TestClient) -> None:
     handlers.reset_state(MockSources({"impacts": {}}))
-    out = _call(client, "verify_amount", _verify(_coupon()))["output"]
+    out = _recheck(_verify(_coupon()))["output"]
     assert (out["decision"], out["reason_code"]) == ("rejected", "source_unavailable")
 
 
@@ -166,20 +188,16 @@ def test_verify_fails_closed_without_source(client: TestClient) -> None:
     "bad", [{"count": "2"}, {"count": 0}, {"unit_value": True}, {"count": None}]
 )
 def test_verify_rejects_invalid_params(client: TestClient, bad: dict) -> None:
-    out = _call(client, "verify_amount", _verify(_coupon() | bad))["output"]
+    out = _recheck(_verify(_coupon() | bad))["output"]
     assert out["reason_code"] == "invalid_params"
 
 
 def test_verify_refund_against_paid_amount(client: TestClient) -> None:
-    ok = _call(
-        client,
-        "verify_amount",
+    ok = _recheck(
         _verify({"order_id": "ord_1001", "refund_amount": 24_000}, action="refund_request"),
     )["output"]
     assert ok["decision"] == "approved"
-    over = _call(
-        client,
-        "verify_amount",
+    over = _recheck(
         _verify(
             {"order_id": "ord_1001", "refund_amount": 24_001},
             action="refund_request",
@@ -187,9 +205,7 @@ def test_verify_refund_against_paid_amount(client: TestClient) -> None:
         ),
     )["output"]
     assert (over["decision"], over["reason_code"]) == ("rejected", "exceeds_paid")
-    unknown = _call(
-        client,
-        "verify_amount",
+    unknown = _recheck(
         _verify(
             {"order_id": "ord_x", "refund_amount": 1000},
             action="refund_request",
@@ -199,56 +215,68 @@ def test_verify_refund_against_paid_amount(client: TestClient) -> None:
     assert unknown["reason_code"] == "source_unavailable"
 
 
-@pytest.mark.asyncio
-async def test_refunds_accumulate_from_events(client: TestClient) -> None:
-    await handlers.on_event(
-        EventEnvelope(
-            event_id="evt_r1",
-            type=EventType.PAYMENT_REFUNDED,
-            occurred_at=datetime.now(UTC),
-            source="shop-api",
-            idempotency_key="r1",
-            data={
-                "payment_id": "pay_1",
-                "order_id": "ord_1001",
-                "refund_id": "rfd_1",
-                "refund_amount": 20_000,
-            },
+def test_refunds_accumulate_from_events(client: TestClient) -> None:
+    import asyncio
+
+    asyncio.run(
+        handlers.on_event(
+            EventEnvelope(
+                event_id="evt_r1",
+                type=EventType.PAYMENT_REFUNDED,
+                occurred_at=datetime.now(UTC),
+                source="shop-api",
+                idempotency_key="r1",
+                data={
+                    "payment_id": "pay_1",
+                    "order_id": "ord_1001",
+                    "refund_id": "rfd_1",
+                    "refund_amount": 20_000,
+                },
+            )
         )
     )
-    out = _call(
-        client,
-        "verify_amount",
+    out = _recheck(
         _verify({"order_id": "ord_1001", "refund_amount": 5_000}, action="refund_request"),
     )["output"]
     assert (out["reason_code"], out["recomputed"]["refunded_before"]) == ("exceeds_paid", 20_000)
 
 
 def test_verify_unsupported_action(client: TestClient) -> None:
-    out = _call(client, "verify_amount", _verify({}, action="publish_notice"))["output"]
+    out = _recheck(_verify({}, action="publish_notice"))["output"]
     assert out["reason_code"] == "unsupported_action"
 
 
 def test_verify_is_deterministic_and_idempotent(client: TestClient) -> None:
-    """② 결정성, ⑤ 멱등성: 같은 execution_id는 같은 판정, 시드가 바뀌어도 이전 판정."""
-    first = _call(client, "verify_amount", _verify(_coupon()))
-    handlers.state().sources = MockSources({"impacts": {}})
-    second = _call(client, "verify_amount", _verify(_coupon()))
+    """② 결정성: 같은 입력은 같은 재계산 결과. ⑤ 읽기 skill은 몇 번 불러도 결과가 같다."""
+    first = _recheck(_verify(_coupon()))
+    second = _recheck(_verify(_coupon()))
     assert first["output"] == second["output"]
+    a = _call(client, "closing_report", {"period": "day"}, token="mock:orchestrator")
+    b = _call(client, "closing_report", {"period": "day"}, token="mock:orchestrator")
+    assert a["output"] == b["output"]
 
 
 # ---------------------------------------------------------------- 공통 안전장치
 def test_loop_is_rejected(client: TestClient) -> None:
     """③ path에 자기 이름이 있는 새 요청은 거부."""
-    result = _call(client, "verify_amount", _verify(_coupon()), path=["finance"])
+    result = _call(client, "closing_report", {}, token="mock:orchestrator", path=["finance"])
     assert (result["status"], result["outcome"]) == ("rejected", "LOOP_DETECTED")
 
 
-@pytest.mark.parametrize("token", ["mock:marketing", "mock:support", "mock:orchestrator"])
-def test_only_safety_can_ask_verify(client: TestClient, token: str) -> None:
-    """④ 권한: 요청 부서가 재무를 직접 부를 수 없다 (안전 레이어만 라우팅)."""
-    result = _call(client, "verify_amount", _verify(_coupon()), token=token)
-    assert (result["status"], result["outcome"]) == ("rejected", "FORBIDDEN_SKILL")
+@pytest.mark.parametrize("token", ["mock:marketing", "mock:support", "mock:safety"])
+def test_only_orchestrator_and_data_can_ask_reports(client: TestClient, token: str) -> None:
+    """④ 권한: 결산·감사 리포트는 통합 에이전트와 데이터 AI만 부른다."""
+    for skill in ("closing_report", "audit_report"):
+        result = _call(client, skill, {}, token=token)
+        assert (result["status"], result["outcome"]) == ("rejected", "FORBIDDEN_SKILL")
+
+
+@pytest.mark.parametrize("skill", ["verify_amount", "review_hold"])
+def test_removed_skills_are_not_served(client: TestClient, skill: str) -> None:
+    """재무 재설계: 건별 교차검증·AI 1차 판단 skill은 없다(안전 장치가 불러도 거부)."""
+    result = _call(client, skill, {}, token="mock:safety")
+    assert result["status"] == "rejected"
+    assert skill not in {s.id for s in load_card().skills}
 
 
 def test_market_ops_skills_only_from_orchestrator(client: TestClient) -> None:
@@ -419,17 +447,12 @@ def test_impact_parser_uses_data_field_names() -> None:
 
 
 # ---------------------------------------------------------------- 대시보드 조회 API
-def test_read_api_lists_verifications_and_market_ops(
+def test_read_api_lists_market_ops_and_removed_lists_are_gone(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _call(client, "verify_amount", _verify(_coupon(2, 5000)))
-    _call(client, "verify_amount", _verify(_coupon(buyer="buy_zz"), execution_id="exe_2"))
-    rows = client.get("/api/finance/verifications").json()["data"]
-    assert [(r["execution_id"], r["decision"], r["reason_code"]) for r in rows] == [
-        ("exe_2", "rejected", "not_affected"),
-        ("exe_1", "approved", "recomputed_match"),
-    ]
-    assert rows[0]["action"] == "issue_coupon" and rows[0]["requester"] == "marketing"
+    """재무 재설계로 `/verifications`·`/ai-reviews`는 없어졌다. 기존 조회는 남는다."""
+    assert client.get("/api/finance/verifications").status_code == 404
+    assert client.get("/api/finance/ai-reviews").status_code == 404
 
     _fake_execute(monkeypatch, _decision())
     _call(
@@ -470,7 +493,7 @@ def test_loss_reports_are_listed_for_dashboard(client: TestClient) -> None:
 def test_campaign_coupon_skips_affected_check(client: TestClient) -> None:
     """캠페인 쿠폰은 장애 피해 고객 확인을 하지 않고 금액만 다시 계산한다."""
     params = _coupon(buyer="buy_anyone") | {"purpose_code": "campaign", "campaign_id": "cmp_1"}
-    out = _call(client, "verify_amount", _verify(params))["output"]
+    out = _recheck(_verify(params))["output"]
     assert (out["decision"], out["reason_code"]) == ("approved", "recomputed_match")
 
 
@@ -496,16 +519,12 @@ def test_partial_refunds_add_up(client: TestClient) -> None:
         )
 
     asyncio.run(refunded(30_000, 1))
-    ok = _call(
-        client,
-        "verify_amount",
+    ok = _recheck(
         _verify({"order_id": "ord_1002", "refund_amount": 20_000}, action="refund_request"),
     )["output"]
     assert ok["decision"] == "approved"
     asyncio.run(refunded(20_000, 2))
-    over = _call(
-        client,
-        "verify_amount",
+    over = _recheck(
         _verify(
             {"order_id": "ord_1002", "refund_amount": 1},
             action="refund_request",
@@ -562,7 +581,7 @@ def test_loss_report_needs_a_window(client: TestClient) -> None:
 
 
 def test_expired_deadline_is_canceled(client: TestClient) -> None:
-    body = _body("verify_amount", _verify(_coupon()))
+    body = _body("closing_report", {}, token="mock:orchestrator")
     body["meta"]["deadline"] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
     result = client.post("/a2a", json=body).json()
     assert (result["status"], result["outcome"]) == ("canceled", "TIMEOUT")
@@ -571,9 +590,10 @@ def test_expired_deadline_is_canceled(client: TestClient) -> None:
 def test_too_many_hops_are_refused(client: TestClient) -> None:
     result = _call(
         client,
-        "verify_amount",
-        _verify(_coupon()),
-        path=["orchestrator", "support", "marketing", "safety"],
+        "audit_report",
+        {},
+        token="mock:orchestrator",
+        path=["orchestrator", "support", "marketing", "data"],
     )
     assert (result["status"], result["outcome"]) == ("rejected", "HOP_LIMIT")
 
@@ -623,7 +643,7 @@ def test_every_seller_review_outcome_is_listed(
 def test_verify_amount_models_come_from_contracts() -> None:
     """#90: safety와 함께 쓰는 형식은 contracts가 원본이다(중복 정의 없음)."""
     from ax_contracts import schemas as contract
-    from finance_agent import schemas
+    from finance_agent import recheck
 
-    assert schemas.VerifyAmountInput is contract.VerifyAmountInput
-    assert schemas.VerifyAmountOutput is contract.VerifyAmountOutput
+    assert recheck.VerifyAmountInput is contract.VerifyAmountInput
+    assert recheck.VerifyAmountOutput is contract.VerifyAmountOutput

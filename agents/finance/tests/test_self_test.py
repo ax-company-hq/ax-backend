@@ -17,11 +17,13 @@ from finance_agent.sources import MockSources
 
 REGISTRY = {
     "actions": [
-        {"action": "issue_coupon", "verifier": "finance"},
-        {"action": "refund_request", "verifier": "finance"},
+        {"action": "issue_coupon", "base_grade": "A", "verifier": None},
+        {"action": "refund_request", "base_grade": "A", "verifier": None},
+        {"action": "confirm_settlement", "base_grade": "C", "verifier": None},
     ]
 }
-THRESHOLDS = {"auto_review": {"enabled": True, "reviewer": "finance"}}
+THRESHOLDS = {"version": 1, "rules": [{"key": "refund_single", "value": 100000}]}
+ROUTING = "쿠폰·환불은 규칙 검사, 정산 확정은 사람 승인"
 
 
 @pytest.fixture(autouse=True)
@@ -59,6 +61,7 @@ async def test_all_green_when_everything_is_up() -> None:
     assert result["passed"] == result["total"] >= 14
     names = {c["name"] for c in result["checks"]}
     assert {"금액을 틀리게 적은 쿠폰 막기", "결제보다 큰 환불 막기", "안전 장치 연결"} <= names
+    assert {"결산 계산 공식", "대사 상태 나누기", "판매자 정산 공식", "사후 감사 규칙"} <= names
 
 
 @pytest.mark.asyncio
@@ -82,34 +85,60 @@ async def test_safety_down_fails() -> None:
     result = await _run(_network({"shop-api", "data", "catbooks"}))
     assert result["result"] == "fail"
     failed = {c["name"] for c in result["checks"] if not c["ok"] and c["level"] == "fail"}
-    assert {"안전 장치 연결", "쿠폰·환불 검증을 재무 AI가 맡는지"} <= failed
+    assert {"안전 장치 연결", ROUTING} <= failed
 
 
 @pytest.mark.asyncio
-async def test_wrong_routing_and_auto_review_off_are_reported() -> None:
-    registry = {
+async def test_old_finance_routing_or_missing_settlement_action_fails() -> None:
+    """안전 장치가 아직 쿠폰을 재무 검증으로 보내거나 정산 확정이 C가 아니면 빨간불."""
+    old = {
         "actions": [
-            {"action": "issue_coupon", "verifier": "data"},
-            {"action": "refund_request", "verifier": "finance"},
+            {"action": "issue_coupon", "base_grade": "B", "verifier": "finance"},
+            {"action": "refund_request", "base_grade": "A", "verifier": None},
+            {"action": "confirm_settlement", "base_grade": "C", "verifier": None},
         ]
     }
-    result = await _run(
-        _network(
-            {"safety", "shop-api", "data", "catbooks"},
-            registry,
-            {"auto_review": {"enabled": False}},
-        )
-    )
+    result = await _run(_network({"safety", "shop-api", "data", "catbooks"}, old))
     by = {c["name"]: c for c in result["checks"]}
-    assert not by["쿠폰·환불 검증을 재무 AI가 맡는지"]["ok"]
-    assert (by["AI 1차 판단 켜짐"]["ok"], by["AI 1차 판단 켜짐"]["level"]) == (False, "warn")
+    assert (by[ROUTING]["ok"], by[ROUTING]["level"]) == (False, "fail")
     assert result["result"] == "fail"
+
+    no_settle = {"actions": REGISTRY["actions"][:2]}
+    result = await _run(_network({"safety", "shop-api", "data", "catbooks"}, no_settle))
+    assert not {c["name"]: c for c in result["checks"]}[ROUTING]["ok"]
+
+
+@pytest.mark.asyncio
+async def test_thresholds_unreadable_only_warns() -> None:
+    result = await _run(
+        _network({"safety", "shop-api", "data", "catbooks"}, thresholds={"version": 1})
+    )
+    bad = [(c["name"], c["level"]) for c in result["checks"] if not c["ok"]]
+    assert bad == [("기준표 읽기", "warn")]
+    assert result["result"] == "warn"
+
+
+@pytest.mark.asyncio
+async def test_module_checks_cover_every_new_module() -> None:
+    """결산·대사·정산·예산·감사 규칙 점검이 모두 통과한다(가짜 자료, 실제 기록 없음)."""
+    result = await _run(_network({"safety", "shop-api", "data", "catbooks"}))
+    by = {c["name"]: c for c in result["checks"]}
+    for name in (
+        "결산 계산 공식",
+        "대사 상태 나누기",
+        "판매자 정산 공식",
+        "예산 경보 기준",
+        "사후 감사 규칙",
+        "기준 바꾸기 판단 기준표 읽기",
+    ):
+        assert by[name]["ok"], (name, by[name]["detail"])
+    assert "13,000원" in by["판매자 정산 공식"]["detail"]
 
 
 @pytest.mark.asyncio
 async def test_broken_judgement_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
     """판단 코드가 고장 나면(무조건 통과) 테스트가 빨간불을 켠다."""
-    from finance_agent.schemas import VerifyAmountOutput
+    from finance_agent.recheck import VerifyAmountOutput
 
     async def always_approve(*args: Any, **kwargs: Any) -> VerifyAmountOutput:
         return VerifyAmountOutput(decision="approved", reason_code="recomputed_match")
@@ -127,8 +156,8 @@ async def test_broken_judgement_is_caught(monkeypatch: pytest.MonkeyPatch) -> No
 @pytest.mark.asyncio
 async def test_self_test_leaves_no_trace_in_real_records() -> None:
     await _run(_network({"safety", "shop-api", "data", "catbooks"}))
-    ledger = handlers.state().ledger
-    assert ledger.verify_log == [] and ledger.ai_reviews == [] and ledger.refunds == {}
+    ledger, records = handlers.state().ledger, handlers.state().records
+    assert records.closings == {} and records.batches == {} and ledger.refunds == {}
 
 
 def test_endpoints_run_and_remember_last(monkeypatch: pytest.MonkeyPatch) -> None:

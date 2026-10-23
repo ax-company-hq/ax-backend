@@ -6,21 +6,28 @@ import asyncio
 import contextlib
 import logging
 import os
+import re
 from collections.abc import AsyncIterator
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ax_agent_template.events import subscribe
 from ax_agent_template.server import create_agent_app
 from ax_contracts.schemas import AgentCard
 from finance_agent import catbooks
+from finance_agent.finance_api import add_finance_api
 from finance_agent.handlers import HANDLERS, SUBSCRIBED_EVENTS, on_event, recompute, state
 from finance_agent.selftest import SELF_TEST_TTL_HOURS, is_fresh, run_self_test
 
-# 대시보드(dashboard-web)는 조회(GET)만 한다. A2A(`POST /a2a`)는 에이전트끼리만 쓴다
+# 대시보드(dashboard-web)는 브라우저에서 이 서버를 바로 부른다. 대부분 조회(GET)이고, 사람 결정
+# 경로(`DECISION_PATHS`)만 POST·Authorization을 허용한다. A2A(`POST /a2a`)는 에이전트끼리만 쓴다
 DEFAULT_CORS_ORIGINS = "http://localhost:3001,http://127.0.0.1:3001"
+DECISION_PATHS = re.compile(
+    r"^/api/finance/(closing/confirm|reconciliation/[^/]+/note|settlements/batch)$"
+)
 
 logger = logging.getLogger("ax.finance")
 
@@ -53,15 +60,34 @@ def subscribe_events() -> bool:
     return True
 
 
-def add_read_api(app: FastAPI) -> None:
-    """대시보드용 조회 API. 상태를 바꾸지 않는다. 응답은 `{data, meta}`."""
+class DashboardCORS:
+    """출처는 `FINANCE_CORS_ORIGINS`. 사람 결정 경로만 POST를 열고, 나머지는 GET만 연다."""
 
-    @app.get("/api/finance/verifications")
-    def verifications(context_id: str | None = None) -> dict:
-        rows = state().ledger.verify_log
-        if context_id:
-            rows = [r for r in rows if r["context_id"] == context_id]
-        return {"data": list(reversed(rows)), "meta": {"count": len(rows)}}
+    def __init__(self, app: ASGIApp, origins: list[str]) -> None:
+        self.get_only = CORSMiddleware(app, allow_origins=origins, allow_methods=["GET"])
+        self.decisions = CORSMiddleware(
+            app,
+            allow_origins=origins,
+            allow_methods=["GET", "POST"],
+            allow_headers=["Authorization", "Content-Type"],
+        )
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        path = scope.get("path", "") if scope["type"] == "http" else ""
+        target = self.decisions if DECISION_PATHS.match(path) else self.get_only
+        await target(scope, receive, send)
+
+
+def cors_origins() -> list[str]:
+    raw = os.getenv("FINANCE_CORS_ORIGINS", DEFAULT_CORS_ORIGINS)
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
+
+def add_read_api(app: FastAPI) -> None:
+    """대시보드용 기존 조회 API. 상태를 바꾸지 않는다. 응답은 `{data, meta}`.
+
+    재무 재설계 API(overview·closing·reconciliation·settlements·policy·audit)는 `finance_api.py`.
+    """
 
     @app.get("/api/finance/ledger")
     def ledger() -> dict:
@@ -109,11 +135,6 @@ def add_read_api(app: FastAPI) -> None:
             },
         }
 
-    @app.get("/api/finance/ai-reviews")
-    def ai_reviews() -> dict:
-        rows = state().ledger.ai_reviews
-        return {"data": list(reversed(rows)), "meta": {"count": len(rows)}}
-
     @app.get("/api/finance/threshold-reviews")
     def threshold_reviews() -> dict:
         rows = state().ledger.threshold_reviews
@@ -142,13 +163,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     app = create_agent_app(load_card(), HANDLERS)
     app.router.lifespan_context = lifespan
-    origins = os.getenv("FINANCE_CORS_ORIGINS", DEFAULT_CORS_ORIGINS)
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[o.strip() for o in origins.split(",") if o.strip()],
-        allow_methods=["GET"],
-    )
+    app.add_middleware(DashboardCORS, origins=cors_origins())
     add_read_api(app)
+    add_finance_api(app)
     return app
 
 

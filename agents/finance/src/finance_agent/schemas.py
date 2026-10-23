@@ -1,24 +1,18 @@
-"""finance skill 입출력 (재무 구성안 4-2, 공통 구성안 12장).
+"""finance skill 입출력 (재무 구성안 4-2, 공통 구성안 12장, 재무 재설계 2026-10-23 7장).
 
-다른 부서와 함께 쓰는 `VerifyAmountInput`·`VerifyAmountOutput`·`VerifyReason`은
-contracts가 원본이다.
-금액은 모두 정수 원이다.
+`verify_amount`·`review_hold` skill은 재무 재설계로 없앴다. 금액 다시 계산 규칙은
+`recheck.py`에 남아 있고 형식은 contracts 원본(`VerifyAmountInput`·`VerifyAmountOutput`)을 쓴다.
+금액은 모두 정수 원, 시각은 UTC ISO8601 문자열이다.
 """
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import Any, Literal
 
 from pydantic import Field
 
-from ax_contracts import schemas as _contract
 from ax_contracts.schemas import AxModel, UtcDatetime
-
-# ---------------------------------------------------------------- verify_amount (safety → finance)
-# 안전 레이어와 함께 쓰는 형식은 contracts가 원본이다(#82, #92). 여기서는 다시 내보내기만 한다.
-VerifyAmountInput = _contract.VerifyAmountInput
-VerifyAmountOutput = _contract.VerifyAmountOutput
-VerifyReason = _contract.VerifyReason
 
 
 # ---------------------------------------------------------------- loss_aggregation (손실 리포트)
@@ -79,27 +73,6 @@ class SettlementHoldOutput(AxModel):
     review_id: str | None = None
 
 
-# -------------------------------------------- review_hold (safety → finance, AI 1차 판단)
-class ReviewHoldInput(AxModel):
-    """사람 확인(C)으로 넘어온 건. 금액·누적은 안전 장치가 계산한 값이다."""
-
-    review_id: str
-    execution_id: str
-    action: str
-    requester: str
-    params: dict[str, Any] = Field(default_factory=dict)
-    computed_amount: int | None = None
-    hold_reason: str
-    rules: list[dict[str, Any]] = Field(default_factory=list)
-    totals: dict[str, int | None] = Field(default_factory=dict)
-
-
-class ReviewHoldOutput(AxModel):
-    decision: Literal["approve", "reject", "escalate"]
-    reason_code: str
-    explanation: str
-
-
 # ---------------------------------- review_threshold_change (safety → finance, 기준 바꾸기 판단)
 class ThresholdReviewInput(AxModel):
     """안전 장치 범위 안의 기준 바꾸기 요청. 숫자·`stats`는 safety가 코드로 센 값이다.
@@ -119,3 +92,80 @@ class ThresholdReviewOutput(AxModel):
     decision: Literal["approve", "reject", "escalate"]
     reason_code: str
     explanation: str
+
+
+# ---------------------------------------------- closing_report (orchestrator·data → finance, 읽기)
+class ClosingReportInput(AxModel):
+    """기간 손익 요약. `date`가 없으면 오늘(UTC), `month`면 그 달."""
+
+    period: Literal["day", "month"] = "day"
+    date: dt.date | None = None
+
+
+class ClosingLine(AxModel):
+    code: str
+    label: str
+    amount: int
+
+
+class JournalLine(AxModel):
+    account: str
+    debit: int = Field(ge=0)
+    credit: int = Field(ge=0)
+    memo: str
+
+
+class ClosingReportOutput(AxModel):
+    """숫자는 코드가 계산한다. `commentary`만 LLM이 쓸 수 있다(`commentary_source`)."""
+
+    period: Literal["day", "month"]
+    date: str
+    window_from: str
+    window_to: str
+    lines: list[ClosingLine]
+    journal: list[JournalLine]
+    commentary: str
+    commentary_source: Literal["llm", "template"]
+    status: Literal["draft", "confirmed"]
+    confirmed_by: str | None = None
+    confirmed_at: str | None = None
+    unavailable: list[str] = Field(default_factory=list)
+
+
+# ------------------------------------------------ audit_report (orchestrator·data → finance, 읽기)
+class AuditReportInput(AxModel):
+    days: int = Field(default=7, ge=1, le=90)
+
+
+class AuditFinding(AxModel):
+    code: Literal[
+        "split_under_limit",
+        "repeat_refund",
+        "duplicate_coupon",
+        "refund_rate_jump",
+        "amount_recheck_failed",
+        "gate_hold_trend",
+    ]
+    severity: Literal["high", "medium", "low"]
+    title: str
+    detail: str
+    refs: list[str] = Field(default_factory=list)
+
+
+class AuditStats(AxModel):
+    refund_count: int
+    refund_amount: int
+    refund_rate: float | None = None
+    refund_rate_prev: float | None = None
+    coupon_count: int
+    coupon_amount: int
+    gate_held: int | None = None
+    gate_rejected: int | None = None
+
+
+class AuditReportOutput(AxModel):
+    window_from: str
+    window_to: str
+    stats: AuditStats
+    findings: list[AuditFinding]
+    unavailable: list[str] = Field(default_factory=list)
