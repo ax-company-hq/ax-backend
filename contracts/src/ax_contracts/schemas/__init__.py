@@ -50,7 +50,17 @@ from ax_contracts.schemas.event import (
     SupportInquiryReceivedData,
 )
 from ax_contracts.schemas.execute import ExecuteDecision, ExecuteRequest, HoldReason
-from ax_contracts.schemas.finance import VerifyAmountInput, VerifyAmountOutput, VerifyReason
+from ax_contracts.schemas.finance import (
+    ReviewHoldDecision,
+    ReviewHoldInput,
+    ReviewHoldOutput,
+    ReviewThresholdChangeDecision,
+    ReviewThresholdChangeInput,
+    ReviewThresholdChangeOutput,
+    VerifyAmountInput,
+    VerifyAmountOutput,
+    VerifyReason,
+)
 from ax_contracts.schemas.hr import (
     AnswerHandoverQuestionInput,
     AnswerHandoverQuestionOutput,
@@ -265,6 +275,12 @@ __all__ = [
     "VerifyAmountInput",
     "VerifyAmountOutput",
     "VerifyReason",
+    "ReviewHoldDecision",
+    "ReviewHoldInput",
+    "ReviewHoldOutput",
+    "ReviewThresholdChangeDecision",
+    "ReviewThresholdChangeInput",
+    "ReviewThresholdChangeOutput",
     "AnomalyDetectionInput",
     "AnomalyDetectionOutput",
     "BusinessMetric",

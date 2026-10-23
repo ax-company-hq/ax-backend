@@ -20,15 +20,31 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from ax_contracts.schemas import ExecuteDecision, ExecuteRequest, HoldReason
-from ax_safety.rules import ActionSpec, Registry, ThresholdTable, higher
-from ax_safety.store import ExecutionRecord, Review, Store
+from ax_contracts.schemas import (
+    ExecuteDecision,
+    ExecuteRequest,
+    HoldReason,
+    ReviewHoldInput,
+    ReviewThresholdChangeInput,
+)
+from ax_safety.overrides import OverrideFile, SavedOverrides
+from ax_safety.rules import (
+    ActionSpec,
+    Registry,
+    ThresholdTable,
+    auto_review_on,
+    higher,
+    threshold_changes_on,
+    without_self_review,
+)
+from ax_safety.store import ExecutionRecord, Review, Store, ThresholdChange
 
 logger = logging.getLogger("ax.safety.gate")
 
@@ -52,8 +68,94 @@ class VerifyTask:
     input: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class ReviewOutcome:
+    """AI 1차 판단 결과. `escalate`면 사람이 결정한다."""
+
+    result: Literal["approve", "reject", "escalate"]
+    reason_code: str = ""
+    explanation: str = ""
+
+
+@dataclass(frozen=True)
+class ReviewTask:
+    reviewer: str
+    skill: str
+    context_id: str
+    tenant_id: str
+    review_id: str
+    timeout_seconds: float
+    input: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ThresholdReviewTask:
+    """재무 AI에게 기준 바꾸기를 묻는 내용. `untrusted`는 요청한 사람이 쓴 이유(믿지 않는 글)."""
+
+    reviewer: str
+    skill: str
+    change_id: str
+    context_id: str
+    tenant_id: str
+    timeout_seconds: float
+    input: dict[str, Any]
+    untrusted: dict[str, Any] = field(default_factory=dict)
+
+
 Verifier = Callable[[VerifyTask], Awaitable[VerifyOutcome]]
+Reviewer = Callable[[ReviewTask], Awaitable[ReviewOutcome]]
+ThresholdReviewer = Callable[[ThresholdReviewTask], Awaitable[ReviewOutcome]]
+
+# ---- 기준 바꾸기 (안전 장치는 코드로 강제, 재무 AI는 참고 의견, 적용은 사람만)
+# 기준 문서(agent-common 7장·SAF-02: 기준표는 사람만 바꾼다)를 바꾸는 docs PR이 머지되기 전까지
+# 재무 AI의 답은 `ai_review`로만 남기고 상태는 `pending`이다.
+# 적용은 `decide_threshold_change`(사람 토큰)에서만 한다.
+THRESHOLD_REVIEWER = "finance"
+THRESHOLD_REVIEW_SKILL = "review_threshold_change"
+GUARDRAIL = "guardrail"  # 안전 장치 범위 밖이라 거절한 기준 바꾸기의 decided_by
+TIMEOUT_KEY = "review_timeout_seconds"
+STEP_MIN_RATIO = 0.5  # TOML 원래 값의 0.5배 ~ 2배 안에서만 바꿀 수 있다
+STEP_MAX_RATIO = 2.0
+TIMEOUT_BOUNDS = (3600, 259200)  # 사람 결정 마감: 1시간 ~ 3일
+REASON_MAX = 300
+PATH_METRICS = (
+    "paths_within",
+    "paths_avoid",
+)  # 경로 목록 규칙은 숫자 기준이 아니라 API로 못 바꾼다
+TENANT = "shop-demo"
+
+AI_REVIEWER = "finance-ai"  # 재무 AI가 결정한 보류 건의 decided_by
+RULE_REVIEWER = "auto-rule"  # 안전 장치 규칙이 바로 거절한 보류 건의 decided_by
 Publisher = Callable[[str, ExecuteRequest | Review, dict[str, Any]], Awaitable[None]]
+
+
+AUTO_REJECT_NOTE = {
+    "amount_mismatch": (
+        "적어 낸 금액과 계산이 달라 자동으로 거절했습니다. "
+        "요청한 AI가 금액을 고쳐 다시 요청해야 합니다."
+    ),
+    "unregistered_action": (
+        "등록되지 않은 일이라 자동으로 거절했습니다. "
+        "필요한 일이면 재무 담당자에게 등록을 요청하세요."
+    ),
+    "schema_invalid": (
+        "요청 내용이 잘못되어 자동으로 거절했습니다. 요청한 AI가 고쳐 다시 요청해야 합니다."
+    ),
+}
+
+
+OVERRIDES_CONTEXT = "ctx_req_threshold_overrides"  # 기준 복원 감사 로그의 context_id
+
+# 재무 AI의 기준 바꾸기 의견. 참고 의견일 뿐이고 상태는 pending으로 남는다
+AI_OPINION_NOTE = {
+    "approve": "재무 AI 의견: 승인 ({why}). 참고 의견이라 적용은 재무 담당자가 결정합니다.",
+    "reject": "재무 AI 의견: 거절 ({why}). 참고 의견이라 최종 결정은 재무 담당자가 합니다.",
+    "escalate": "재무 AI가 판단을 넘겼습니다 ({why}). 재무 담당자의 결정을 기다립니다.",
+}
+
+SELF_REVIEW_NOTE = (
+    "자기 검증 금지: {action}의 요청자와 검토자({who})가 같아 AI에게 묻지 않고 사람에게 넘깁니다."
+)
 
 
 class AmountError(ValueError):
@@ -103,17 +205,33 @@ class Gate:
         verifier: Verifier,
         publisher: Publisher,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        reviewer: Reviewer | None = None,
+        threshold_reviewer: ThresholdReviewer | None = None,
+        overrides: OverrideFile | None = None,
     ) -> None:
         unknown = {r.action for r in thresholds.rules} - {s.action for s in registry.actions}
         if unknown:
             raise ValueError(f"기준표 규칙의 액션이 레지스트리에 없다: {sorted(unknown)}")
         self.registry = registry
-        self.thresholds = thresholds
+        self.thresholds = without_self_review(registry, thresholds)
+        self.baseline = thresholds  # TOML 원래 값. 기준 바꾸기의 허용 범위는 이 값으로 정한다
+        self._threshold_reviewer = threshold_reviewer
+        self._threshold_lock = asyncio.Lock()
+        self._overrides = overrides
         self.store = store
         self._verifier = verifier
+        self._reviewer = reviewer
         self._publish = publisher
         self._now = now
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
+        if overrides is not None:
+            if threshold_changes_on():
+                self._restore_overrides()
+            elif overrides.path.exists():  # 꺼져 있으면 저장된 값을 읽지 않고 TOML 값을 쓴다
+                self._overrides_audit(
+                    "threshold_overrides_ignored",
+                    {"reason": "feature_off", "path": str(overrides.path)},
+                )
 
     # ------------------------------------------------------------------ 진입점
     async def execute(self, request: ExecuteRequest) -> ExecuteDecision:
@@ -151,7 +269,11 @@ class Gate:
 
         customer = self._param_str(spec.customer_field, request.params)
         report: dict[str, Any] = {"calculation": formula, "computed_amount": amount}
-        if amount is not None:
+        if amount is not None:  # 이번 금액을 더한 누적. AI 1차 판단과 근거 리포트에 쓴다
+            report["totals"] = {
+                metric: self._amount_metric(metric, spec, request, amount, unit, customer)
+                for metric in ("daily_total", "context_total", "customer_total")
+            }
             mismatched = claimed_mismatches(spec, request.params, amount)
             if mismatched:
                 report["claimed"] = mismatched
@@ -403,9 +525,74 @@ class Gate:
             review_id=review_id,
         )
         result = await self._finish(request, decision, customer, full_report, "safety.action_held")
-        if result.status == "held":
-            self.store.add_review(review)
-        return result
+        if result.status != "held":
+            return result
+        self.store.add_review(review)
+        return await self._auto_review(request, review, result)
+
+    async def _auto_review(
+        self, request: ExecuteRequest, review: Review, held: ExecuteDecision
+    ) -> ExecuteDecision:
+        """심각하지 않은 C 건을 사람보다 먼저 판단한다. 판단하지 못하면 사람에게 둔다."""
+        cfg = self.thresholds.auto_review
+        if not (cfg.enabled and auto_review_on()):  # 기준표 + 환경변수 둘 다 켜야 돈다
+            return held
+        reason = review.report.get("hold_reason", "")
+        if reason in cfg.auto_reject_reasons:
+            note = AUTO_REJECT_NOTE.get(reason, "요청이 잘못되어 자동으로 거절했습니다.")
+            self._close_review(review, "rejected", RULE_REVIEWER, note)
+            await self._emit_review(review)
+            return self._current(review, held)
+        if self._reviewer is None or request.action not in cfg.actions:
+            return held
+        if request.requester == cfg.reviewer:  # 자기 검증 금지: 요청자에게 자기 건을 묻지 않는다
+            review.report["ai_review"] = {
+                "result": "skipped",
+                "reason_code": "self_review",
+                "explanation": SELF_REVIEW_NOTE.format(action=request.action, who=cfg.reviewer),
+            }
+            self._audit(request, "ai_review", review.execution_id, dict(review.report["ai_review"]))
+            return held
+
+        task = ReviewTask(
+            reviewer=cfg.reviewer,
+            skill=cfg.skill,
+            context_id=request.context_id,
+            tenant_id=request.tenant_id,
+            review_id=review.review_id,
+            timeout_seconds=cfg.timeout_seconds,
+            input=ReviewHoldInput(
+                review_id=review.review_id,
+                execution_id=review.execution_id,
+                action=request.action,
+                requester=request.requester,
+                params=request.params,
+                computed_amount=held.computed_amount,
+                hold_reason=reason,
+                rules=review.report.get("rules", []),
+                totals=review.report.get("totals", {}),
+            ).model_dump(mode="json"),
+        )
+        try:
+            outcome = await asyncio.wait_for(self._reviewer(task), timeout=cfg.timeout_seconds)
+        except Exception as exc:  # AI가 답하지 않으면 사람에게 둔다
+            outcome = ReviewOutcome("escalate", "reviewer_unavailable", type(exc).__name__)
+        review.report["ai_review"] = {
+            "result": outcome.result,
+            "reason_code": outcome.reason_code,
+            "explanation": outcome.explanation,
+        }
+        self._audit(request, "ai_review", review.execution_id, dict(review.report["ai_review"]))
+        if outcome.result == "escalate":
+            return held
+        status = "approved" if outcome.result == "approve" else "rejected"
+        self._close_review(review, status, AI_REVIEWER, outcome.explanation or None)
+        await self._emit_review(review)
+        return self._current(review, held)
+
+    def _current(self, review: Review, fallback: ExecuteDecision) -> ExecuteDecision:
+        record = self.store.get_execution(review.execution_id)
+        return record.decision if record else fallback
 
     async def _finish(
         self,
@@ -503,6 +690,309 @@ class Gate:
             "decided_by": review.decided_by,
         }
         await self._emit("safety.review_decided", review, data)
+
+    # ------------------------------------------------------------------ 기준 바꾸기
+    # 적용한 기준은 `overrides`(파일)에 저장하고 시작할 때 복원한다(`_restore_overrides`).
+    def baseline_values(self) -> dict[str, int]:
+        """바꿀 수 있는 기준과 TOML 원래 값."""
+        values = {r.key: r.value for r in self.baseline.rules if r.metric not in PATH_METRICS}
+        values[TIMEOUT_KEY] = int(self.baseline.review_timeout_seconds)
+        return values
+
+    def current_value(self, key: str) -> int | None:
+        if key == TIMEOUT_KEY:
+            return int(self.thresholds.review_timeout_seconds)
+        rule = next((r for r in self.thresholds.rules if r.key == key), None)
+        if rule is None or rule.metric in PATH_METRICS:
+            return None
+        return rule.value
+
+    def guardrail_problem(self, key: str, new_value: int, reason: str) -> str | None:
+        """안전 장치(코드) 검사. 문제가 있으면 쉬운 한국어 이유, 없으면 None."""
+        if key.startswith("auto_review"):
+            return "AI 판단 켜기·끄기 같은 설정은 사람만 바꿀 수 있습니다."
+        if any(r.key == key and r.metric in PATH_METRICS for r in self.baseline.rules):
+            return "허용·보호 경로 목록은 숫자 기준이 아니라 바꿀 수 없습니다."
+        baseline = self.baseline_values().get(key)
+        if baseline is None:
+            return "바꿀 수 있는 기준이 아닙니다. 기준 이름을 확인하세요."
+        if not reason.strip():
+            return "바꾸는 이유를 적어 주세요."
+        if len(reason) > REASON_MAX:
+            return f"이유는 {REASON_MAX}자 안으로 적어 주세요."
+        if new_value <= 0:
+            return "새 값은 0보다 큰 정수여야 합니다."
+        low, high = math.ceil(baseline * STEP_MIN_RATIO), int(baseline * STEP_MAX_RATIO)
+        if not low <= new_value <= high:
+            return (
+                f"처음 정한 값 {baseline:,}의 절반({low:,})부터 두 배({high:,})까지만 "
+                f"바꿀 수 있습니다. 요청한 값: {new_value:,}"
+            )
+        if key == TIMEOUT_KEY and not TIMEOUT_BOUNDS[0] <= new_value <= TIMEOUT_BOUNDS[1]:
+            return "사람 결정 마감은 1시간(3600초)부터 3일(259200초)까지만 정할 수 있습니다."
+        if new_value == self.current_value(key):
+            return "지금 값과 같습니다."
+        return None
+
+    def threshold_stats(self, key: str) -> dict[str, Any]:
+        """재무 AI 판단 근거. 숫자는 모두 safety 기록에서 코드로 센다(최근 24시간)."""
+        now = self._now()
+        since = now - timedelta(hours=24)
+        day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        reviews = [
+            r for r in self.store.list_reviews() if r.tenant_id == TENANT and r.created_at >= since
+        ]
+        if key != TIMEOUT_KEY:  # 그 기준 때문에 멈춘 건만
+            reviews = [
+                r for r in reviews if any(h.get("key") == key for h in r.report.get("rules", []))
+            ]
+        approved = [r for r in reviews if r.status == "approved"]
+        rule = next((r for r in self.baseline.rules if r.key == key), None)
+        action = rule.action if rule else None
+        return {
+            "action": action,
+            "holds_24h": len(reviews),
+            "executed_today": (
+                self.store.executed_total(TENANT, action, since=day_start) if action else 0
+            ),
+            "ai_approved_24h": sum(r.decided_by == AI_REVIEWER for r in approved),
+            "human_approved_24h": sum(
+                r.decided_by not in (AI_REVIEWER, RULE_REVIEWER, "system") for r in approved
+            ),
+            "expired_24h": sum(r.status == "expired" for r in reviews),
+        }
+
+    async def request_threshold_change(
+        self,
+        key: str,
+        new_value: int,
+        reason: str,
+        requested_by: str,
+        *,
+        by_agent: bool = False,
+    ) -> ThresholdChange:
+        """기준 바꾸기 요청. 안전 장치(코드) → 재무 AI(참고 의견) → 사람이 적용·거절.
+
+        안전 장치 범위 밖이면 바로 `rejected`. 범위 안이면 재무 AI 답과 상관없이 `pending`이다.
+        에이전트가 요청했고 그 에이전트가 검토자(finance)면 재무 AI에게 묻지도 않는다
+        (자기 검증 금지).
+        """
+        async with self._threshold_lock:
+            change = ThresholdChange(
+                change_id=f"thc_{uuid.uuid4().hex[:12]}",
+                key=key,
+                old_value=self.current_value(key),
+                new_value=new_value,
+                baseline=self.baseline_values().get(key),
+                reason=reason[:REASON_MAX],
+                requested_by=requested_by,
+                created_at=self._now(),
+            )
+            self.store.add_change(change)
+            self._change_audit(change, "threshold_change_requested")
+            problem = self.guardrail_problem(key, new_value, reason)
+            if problem:
+                self._close_change(change, "rejected", GUARDRAIL, problem)
+                return change
+            change.stats = self.threshold_stats(key)
+            if by_agent and requested_by == THRESHOLD_REVIEWER:
+                change.ai_review = {
+                    "result": "skipped",
+                    "reason_code": "self_review",
+                    "explanation": SELF_REVIEW_NOTE.format(
+                        action="기준 바꾸기", who=THRESHOLD_REVIEWER
+                    ),
+                }
+                self._change_audit(change, "threshold_change_ai_review", change.ai_review)
+                change.explanation = "재무 AI가 요청한 기준 바꾸기라 재무 담당자가 결정합니다."
+                return change
+            if self._threshold_reviewer is None:
+                change.explanation = "재무 AI에 묻지 못해 재무 담당자의 결정을 기다립니다."
+                return change
+            outcome = await self._ask_threshold_reviewer(change, reason)
+            change.ai_review = {
+                "result": outcome.result,
+                "reason_code": outcome.reason_code,
+                "explanation": outcome.explanation,
+            }
+            self._change_audit(change, "threshold_change_ai_review", change.ai_review)
+            change.explanation = AI_OPINION_NOTE[outcome.result].format(
+                why=outcome.explanation or "이유 없음"
+            )
+            return change
+
+    async def decide_threshold_change(
+        self, change_id: str, decision: Literal["approved", "rejected"], by: str, note: str | None
+    ) -> ThresholdChange:
+        """사람의 승인·거절. 이미 결정된 건이면 ValueError, 없으면 KeyError."""
+        async with self._threshold_lock:
+            change = self.store.get_change(change_id)
+            if change is None:
+                raise KeyError(change_id)
+            if change.status != "pending":
+                raise ValueError(f"이미 처리된 기준 바꾸기다: {change.status}")
+            if decision == "rejected":
+                self._close_change(change, "rejected", by, note or "재무 담당자가 거절했습니다.")
+                return change
+            # 사람이 승인해도 안전 장치 범위는 넘을 수 없다 (그사이 다른 변경이 들어왔을 수 있다)
+            problem = self.guardrail_problem(change.key, change.new_value, change.reason)
+            if problem:
+                self._close_change(change, "rejected", GUARDRAIL, problem)
+                return change
+            self._apply_change(change, by, note or "재무 담당자가 승인했습니다.")
+            return change
+
+    async def _ask_threshold_reviewer(self, change: ThresholdChange, reason: str) -> ReviewOutcome:
+        assert self._threshold_reviewer is not None
+        timeout = self.thresholds.auto_review.timeout_seconds
+        task = ThresholdReviewTask(
+            reviewer=THRESHOLD_REVIEWER,
+            skill=THRESHOLD_REVIEW_SKILL,
+            change_id=change.change_id,
+            context_id=self._change_context(change),
+            tenant_id=TENANT,
+            timeout_seconds=timeout,
+            input=ReviewThresholdChangeInput(
+                change_id=change.change_id,
+                key=change.key,
+                current_value=change.old_value,
+                new_value=change.new_value,
+                baseline=change.baseline,
+                stats=change.stats,
+            ).model_dump(mode="json"),
+            untrusted={"reason_untrusted_text": reason},
+        )
+        try:
+            return await asyncio.wait_for(self._threshold_reviewer(task), timeout=timeout)
+        except Exception:  # 답이 없거나 늦으면 사람에게
+            return ReviewOutcome("escalate", "reviewer_unavailable", "")
+
+    def _apply_change(self, change: ThresholdChange, by: str, explanation: str) -> None:
+        """기준표를 바꾸고 version을 올린다. 이후 모든 판정이 새 값을 쓴다.
+
+        파일에 먼저 저장한다. 저장하지 못하면(OSError) 적용하지 않고 `pending`으로 둔다.
+        """
+        old_value = self.current_value(change.key)
+        table = self._with_value(self.thresholds, change.key, change.new_value)
+        table = table.model_copy(update={"version": self.thresholds.version + 1})
+        self._save_overrides(table, change.change_id)
+        self.thresholds = table
+        change.old_value = old_value
+        change.version_after = self.thresholds.version
+        self._close_change(change, "applied", by, explanation)
+
+    @staticmethod
+    def _with_value(table: ThresholdTable, key: str, value: int) -> ThresholdTable:
+        if key == TIMEOUT_KEY:
+            return table.model_copy(update={TIMEOUT_KEY: float(value)})
+        rules = [r.model_copy(update={"value": value}) if r.key == key else r for r in table.rules]
+        return table.model_copy(update={"rules": rules})
+
+    def _changed_values(self, table: ThresholdTable) -> dict[str, int]:
+        """원래 값(TOML)과 다른 숫자 기준만."""
+        current = {r.key: r.value for r in table.rules if r.metric not in PATH_METRICS}
+        current[TIMEOUT_KEY] = int(table.review_timeout_seconds)
+        base = self.baseline_values()
+        return {k: v for k, v in current.items() if k in base and base[k] != v}
+
+    def _save_overrides(self, table: ThresholdTable, change_id: str | None) -> None:
+        if self._overrides is None:
+            return
+        self._overrides.save(
+            SavedOverrides(
+                version=table.version,
+                baseline=self.baseline_values(),
+                values=self._changed_values(table),
+                change_id=change_id,
+                saved_at=self._now(),
+            )
+        )
+
+    def _overrides_audit(self, step: str, data: dict[str, Any]) -> None:
+        self.store.append_audit(self._now(), OVERRIDES_CONTEXT, TENANT, step, None, data)
+
+    def _restore_overrides(self) -> None:
+        """시작할 때 저장된 기준을 복원한다. 원래 값이 바뀌었거나 깨진 파일이면 버린다.
+
+        안전 장치 범위 밖인 값은 그 기준만 빼고 복원한다. 모두 감사 로그에 남긴다.
+        """
+        assert self._overrides is not None
+        try:
+            saved = self._overrides.load()
+        except (OSError, ValueError) as exc:
+            logger.warning("저장된 기준을 읽지 못해 TOML 값을 쓴다: %s", exc)
+            self._overrides_audit(
+                "threshold_overrides_discarded",
+                {"reason": "unreadable", "error": type(exc).__name__},
+            )
+            return
+        if saved is None:
+            return
+        if saved.baseline != self.baseline_values():
+            logger.warning("기준표 원래 값이 바뀌어 저장된 기준을 버리고 TOML 값을 쓴다")
+            self._overrides_audit(
+                "threshold_overrides_discarded",
+                {"reason": "baseline_changed", "values": saved.values, "version": saved.version},
+            )
+            return
+        skipped: dict[str, str] = {}
+        for key, value in saved.values.items():
+            problem = self.guardrail_problem(key, value, "restore")
+            if problem:
+                skipped[key] = problem
+                continue
+            self.thresholds = self._with_value(self.thresholds, key, value)
+        version = max(saved.version, self.baseline.version)
+        self.thresholds = self.thresholds.model_copy(update={"version": version})
+        restored = self._changed_values(self.thresholds)
+        logger.info("저장된 기준 복원: version %s, %s", version, restored)
+        self._overrides_audit(
+            "threshold_overrides_restored",
+            {
+                "version": version,
+                "values": restored,
+                "skipped": skipped,
+                "change_id": saved.change_id,
+            },
+        )
+
+    def _close_change(
+        self,
+        change: ThresholdChange,
+        status: Literal["applied", "rejected"],
+        by: str,
+        explanation: str,
+    ) -> None:
+        change.status = status
+        change.decided_by = by
+        change.decided_at = self._now()
+        change.explanation = explanation
+        self._change_audit(change, f"threshold_change_{status}")
+
+    @staticmethod
+    def _change_context(change: ThresholdChange) -> str:
+        return f"ctx_req_{change.change_id}"
+
+    def _change_audit(
+        self, change: ThresholdChange, step: str, extra: dict[str, Any] | None = None
+    ) -> None:
+        self.store.append_audit(
+            self._now(),
+            self._change_context(change),
+            TENANT,
+            step,
+            None,
+            {
+                "change_id": change.change_id,
+                "key": change.key,
+                "old_value": change.old_value,
+                "new_value": change.new_value,
+                "requested_by": change.requested_by,
+                "decided_by": change.decided_by,
+                "version_after": change.version_after,
+                **(extra or {}),
+            },
+        )
 
     # ------------------------------------------------------------------ 보조
     async def _emit(

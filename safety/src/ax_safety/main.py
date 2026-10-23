@@ -8,7 +8,13 @@
 | `GET /api/safety/reviews/{review_id}` | 보류 건과 근거 리포트 | 없음(조회) |
 | `POST /api/safety/reviews/{review_id}/decision` | 승인·거절 | **사람만** |
 | `GET /api/safety/audit-logs?context_id=` | 감사 로그 | 없음(조회) |
-| `GET /api/safety/thresholds`, `GET /api/safety/registry` | 기준표·레지스트리 | 없음(조회) |
+| `GET /api/safety/thresholds`, `GET /api/safety/registry` | 기준표(+`baseline`)·레지스트리 | 없음 |
+| `POST /api/safety/threshold-changes` | 기준 바꾸기 요청 (안전 장치 → AI 의견) | 사람·finance |
+| `GET /api/safety/threshold-changes` | 기준 바꾸기 기록 (최근 것부터) | 없음(조회) |
+| `POST /api/safety/threshold-changes/{change_id}/decision` | 적용·거절 | **사람만** |
+
+기준 바꾸기(위 POST 두 개, 저장 값 복원)는 `SAFETY_THRESHOLD_CHANGES=1`일 때만 쓴다(기본 꺼짐).
+꺼져 있으면 POST는 403 `FEATURE_OFF`이고 GET 기록은 빈 목록이다.
 
 `ExecuteRequest.requester`는 믿지 않는다. 토큰에서 꺼낸 이름과 다르면 403이다.
 """
@@ -25,16 +31,22 @@ from typing import Any, Literal
 from fastapi import FastAPI, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 
 from ax_agent_template.config import set_agent_name
 from ax_agent_template.logging import log_event
 from ax_contracts.schemas import ExecuteRequest
 from ax_safety.auth import agent_from_token, bearer, human_from_token
-from ax_safety.gate import Gate, Publisher, Verifier
-from ax_safety.rules import load_registry, load_thresholds
+from ax_safety.gate import Gate, Publisher, Reviewer, ThresholdReviewer, Verifier
+from ax_safety.overrides import OverrideFile
+from ax_safety.rules import load_registry, load_thresholds, threshold_changes_on
 from ax_safety.store import Store
-from ax_safety.verify import call_verifier, publish_safety_event
+from ax_safety.verify import (
+    call_reviewer,
+    call_threshold_reviewer,
+    call_verifier,
+    publish_safety_event,
+)
 
 logger = logging.getLogger("ax.safety")
 
@@ -56,6 +68,22 @@ class ReviewDecisionBody(BaseModel):
     note: str | None = None
 
 
+class ThresholdChangeBody(BaseModel):
+    """`reason`은 사람이 쓴 글이라 믿지 않는다. 길이·빈 값은 안전 장치가 쉬운 말로 거절한다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str = Field(min_length=1, max_length=64)
+    new_value: StrictInt
+    reason: str = Field(default="", max_length=2000)
+
+
+# 기준 바꾸기를 요청할 수 있는 에이전트 (사람 토큰은 항상 허용)
+THRESHOLD_CHANGE_AGENTS = {"finance"}
+
+FEATURE_OFF_MESSAGE = "기준 바꾸기는 기준 문서 변경(docs PR) 머지 후 켭니다"
+
+
 def _ok(data: Any) -> dict[str, Any]:
     return {"data": data, "meta": {}}
 
@@ -69,10 +97,21 @@ def create_app(
     *,
     verifier: Verifier = call_verifier,
     publisher: Publisher = publish_safety_event,
+    reviewer: Reviewer | None = call_reviewer,
+    threshold_reviewer: ThresholdReviewer | None = call_threshold_reviewer,
     expire_interval: float | None = EXPIRE_INTERVAL_SECONDS,
 ) -> FastAPI:
     set_agent_name("safety")
-    gate = gate or Gate(load_registry(), load_thresholds(), Store(), verifier, publisher)
+    gate = gate or Gate(
+        load_registry(),
+        load_thresholds(),
+        Store(),
+        verifier,
+        publisher,
+        reviewer=reviewer,
+        threshold_reviewer=threshold_reviewer,
+        overrides=OverrideFile.from_env(),  # 바뀐 기준 저장·복원
+    )
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -177,7 +216,66 @@ def create_app(
 
     @app.get("/api/safety/thresholds")
     def thresholds() -> dict:
-        return _ok(gate.thresholds.model_dump(mode="json"))
+        """지금 쓰는 기준표와 `baseline`(TOML 원래 값, 바꿀 수 있는 기준만)."""
+        return _ok({**gate.thresholds.model_dump(mode="json"), "baseline": gate.baseline_values()})
+
+    @app.post("/api/safety/threshold-changes", response_model=None)
+    async def request_threshold_change(
+        body: ThresholdChangeBody, authorization: str | None = Header(default=None)
+    ) -> dict | JSONResponse:
+        if not threshold_changes_on():
+            return _error(403, "FEATURE_OFF", FEATURE_OFF_MESSAGE)
+        token = bearer(authorization)
+        by_agent = False
+        try:
+            requested_by = human_from_token(token)
+        except PermissionError:
+            try:
+                requested_by = agent_from_token(token)
+            except PermissionError as exc:
+                return _error(401, "UNAUTHORIZED", str(exc))
+            if requested_by not in THRESHOLD_CHANGE_AGENTS:
+                return _error(403, "FORBIDDEN", "기준 바꾸기는 사람이나 재무 AI만 요청할 수 있다")
+            by_agent = True  # 에이전트 요청은 항상 사람이 적용한다
+        change = await gate.request_threshold_change(
+            body.key, body.new_value, body.reason, requested_by, by_agent=by_agent
+        )
+        log_event(
+            f"ctx_req_{change.change_id}",
+            "shop-demo",
+            "threshold_change",
+            change.model_dump(mode="json", exclude={"reason"}),
+        )
+        return _ok(change.model_dump(mode="json"))
+
+    @app.get("/api/safety/threshold-changes")
+    def list_threshold_changes() -> dict:
+        if not threshold_changes_on():  # 꺼져 있으면 조회는 되지만 비어 있다
+            return _ok([])
+        return _ok([c.model_dump(mode="json") for c in gate.store.list_changes()])
+
+    @app.post("/api/safety/threshold-changes/{change_id}/decision", response_model=None)
+    async def decide_threshold_change(
+        change_id: str,
+        body: ReviewDecisionBody,
+        authorization: str | None = Header(default=None),
+    ) -> dict | JSONResponse:
+        if not threshold_changes_on():
+            return _error(403, "FEATURE_OFF", FEATURE_OFF_MESSAGE)
+        try:
+            person = human_from_token(bearer(authorization))
+        except PermissionError as exc:
+            return _error(403, "HUMAN_ONLY", str(exc))
+        try:
+            change = await gate.decide_threshold_change(change_id, body.decision, person, body.note)
+        except KeyError:
+            return _error(404, "NOT_FOUND", "기준 바꾸기 요청이 없다")
+        except ValueError as exc:
+            return _error(409, "ALREADY_DECIDED", str(exc))
+        except OSError:
+            logger.exception("바뀐 기준을 저장하지 못해 적용하지 않았다: %s", change_id)
+            return _error(503, "SAVE_FAILED", "바뀐 기준을 저장하지 못해 적용하지 않았다")
+        return _ok(change.model_dump(mode="json"))
 
     @app.get("/api/safety/registry")
     def registry() -> dict:

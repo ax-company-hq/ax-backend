@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ax_contracts.schemas import ExecuteDecision, ExecuteRequest
 
 ReviewStatus = Literal["pending", "approved", "rejected", "expired"]
+ChangeStatus = Literal["pending", "applied", "rejected"]
 
 
 class ExecutionRecord(BaseModel):
@@ -47,6 +48,32 @@ class Review(BaseModel):
     report: dict[str, Any] = Field(default_factory=dict)
 
 
+class ThresholdChange(BaseModel):
+    """기준 바꾸기 요청 한 건. 안전 장치 → 재무 AI → (필요하면) 사람 순서로 결정한다.
+
+    `decided_by`: `guardrail`(안전 장치 범위 밖), `finance-ai`, 사람 이름.
+    `reason`은 요청한 사람이 쓴 글이라 믿지 않는다(재무 AI에는 `untrusted`로 넘긴다).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    change_id: str
+    key: str
+    old_value: int | None = None  # 바꿀 수 없는 기준이면 None
+    new_value: int
+    baseline: int | None = None
+    reason: str
+    requested_by: str
+    status: ChangeStatus = "pending"
+    decided_by: str | None = None
+    explanation: str = ""
+    created_at: datetime
+    decided_at: datetime | None = None
+    version_after: int | None = None
+    ai_review: dict[str, Any] = Field(default_factory=dict)
+    stats: dict[str, Any] = Field(default_factory=dict)
+
+
 class AuditEntry(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -65,6 +92,7 @@ class Store:
         self._by_key: dict[tuple[str, str], str] = {}
         self._reviews: dict[str, Review] = {}
         self._audit: list[AuditEntry] = []
+        self._changes: dict[str, ThresholdChange] = {}
 
     # ---- 실행 기록·멱등성
     def by_key(self, tenant_id: str, idempotency_key: str) -> ExecutionRecord | None:
@@ -126,6 +154,17 @@ class Store:
         if status is not None:
             reviews = [r for r in reviews if r.status == status]
         return sorted(reviews, key=lambda r: r.created_at)
+
+    # ---- 기준 바꾸기 요청 (TODO: persist. 지금은 메모리라 재시작하면 기준도 TOML 값으로 돌아간다)
+    def add_change(self, change: ThresholdChange) -> None:
+        self._changes[change.change_id] = change
+
+    def get_change(self, change_id: str) -> ThresholdChange | None:
+        return self._changes.get(change_id)
+
+    def list_changes(self) -> list[ThresholdChange]:
+        """최근 것부터."""
+        return list(reversed(sorted(self._changes.values(), key=lambda c: c.created_at)))
 
     # ---- 감사 로그 (추가만)
     def append_audit(

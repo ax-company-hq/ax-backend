@@ -1,11 +1,17 @@
 """액션 등급 레지스트리와 기준 금액 등급표 (SAF-02).
 
 설정 파일(`registry.toml`, `thresholds.toml`)은 사람만 바꾼다. 여기는 읽고 검증만 한다.
+실행 중 숫자 기준 바꾸기는 `gate.Gate`가 한다(사람이 적용, `overrides.py`로 저장·복원).
 `SAFETY_REGISTRY_PATH`·`SAFETY_THRESHOLDS_PATH`로 다른 파일을 쓸 수 있다(테스트용).
+`SAFETY_REVIEW_TIMEOUT_SECONDS`가 있으면 기준표의 `review_timeout_seconds`(데모 10분)를 덮어쓴다
+(운영 24시간 = 86400). 값이 정수가 아니거나 범위 밖이면 시작할 때 실패한다.
+AI 1차 판단(`[auto_review]`)은 기준표에서 켜져 있어도 `SAFETY_AUTO_REVIEW=1`일 때만 돈다(기본 꺼짐).
+실행 중 기준 바꾸기(API·저장 값 복원)는 `SAFETY_THRESHOLD_CHANGES=1`일 때만 쓴다(기본 꺼짐).
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import tomllib
 from importlib import resources
@@ -13,11 +19,26 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+logger = logging.getLogger("ax.safety.rules")
+
 Grade = Literal["A", "B", "C"]
 GRADE_ORDER: dict[str, int] = {"A": 0, "B": 1, "C": 2}
 
 # 검증자가 이 값이면 에이전트가 아니라 안전 레이어의 코드 규칙(기준표)이 B를 검증한다
 RULES_VERIFIER = "safety"
+
+# AI 1차 판단 마스터 스위치. "1"일 때만 `[auto_review]`가 돈다(기본 꺼짐).
+# 기준 문서(SAF-05: C 건은 담당자가 결정)를 바꾸는 docs PR이 머지되기 전에는 켜지 않는다
+AUTO_REVIEW_ENV = "SAFETY_AUTO_REVIEW"
+
+# 실행 중 기준 바꾸기 마스터 스위치. "1"일 때만 기준 바꾸기 API와 저장 값 복원이 돈다(기본 꺼짐).
+# 기준 문서(SAF-02: 기준표는 사람이 PR로 바꾼다)를 바꾸는 docs PR이 머지되기 전에는 켜지 않는다
+THRESHOLD_CHANGES_ENV = "SAFETY_THRESHOLD_CHANGES"
+
+# 사람 확인 기한 환경변수 덮어쓰기. 1분~7일만 받는다(오타로 0초·몇 년이 되지 않게)
+REVIEW_TIMEOUT_ENV = "SAFETY_REVIEW_TIMEOUT_SECONDS"
+REVIEW_TIMEOUT_MIN = 60
+REVIEW_TIMEOUT_MAX = 7 * 24 * 3600
 
 
 class _Strict(BaseModel):
@@ -129,11 +150,30 @@ class Rule(_Strict):
         return [p for p in paths if any(p.startswith(prefix) for prefix in prefixes)]
 
 
+class AutoReview(_Strict):
+    """사람 확인(C)으로 넘어온 건을 사람보다 먼저 판단하는 설정.
+
+    - `auto_reject_reasons`: 이 이유로 멈춘 건은 안전 장치 규칙이 바로 거절한다(요청이 잘못된 경우)
+    - `actions`: 이 액션은 `reviewer`의 `skill`(재무 AI)에게 먼저 묻는다. 승인·거절·사람에게 중 하나
+    - 재무 AI가 답하지 않거나 "사람에게"라고 하면 지금처럼 사람이 결정한다
+    - `enabled`가 true여도 환경변수 `SAFETY_AUTO_REVIEW=1`이 없으면 돌지 않는다(`auto_review_on`)
+    - 요청자가 `reviewer`인 액션은 AI에게 묻지 않는다(자기 검증 금지, `without_self_review`)
+    """
+
+    enabled: bool = False
+    reviewer: str = "finance"
+    skill: str = "review_hold"
+    actions: list[str] = Field(default_factory=list)
+    auto_reject_reasons: list[str] = Field(default_factory=list)
+    timeout_seconds: float = Field(default=10, gt=0)
+
+
 class ThresholdTable(_Strict):
     version: int = Field(ge=1)
     verify_timeout_seconds: float = Field(gt=0)
     review_timeout_seconds: float = Field(gt=0)
     rules: list[Rule] = Field(default_factory=list)
+    auto_review: AutoReview = Field(default_factory=AutoReview)
 
     @model_validator(mode="after")
     def _unique_keys(self) -> ThresholdTable:
@@ -175,8 +215,59 @@ def load_registry() -> Registry:
     return Registry.model_validate(_read_toml("SAFETY_REGISTRY_PATH", "registry.toml"))
 
 
+def _review_timeout_override() -> int | None:
+    """`SAFETY_REVIEW_TIMEOUT_SECONDS` 값(초). 없으면 None, 잘못되면 ValueError로 시작을 멈춘다."""
+    raw = os.getenv(REVIEW_TIMEOUT_ENV)
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        seconds = int(raw.strip())
+    except ValueError:
+        raise ValueError(f"{REVIEW_TIMEOUT_ENV}는 정수(초)여야 한다: {raw!r}") from None
+    if not REVIEW_TIMEOUT_MIN <= seconds <= REVIEW_TIMEOUT_MAX:
+        allowed = f"{REVIEW_TIMEOUT_MIN}~{REVIEW_TIMEOUT_MAX}초"
+        raise ValueError(f"{REVIEW_TIMEOUT_ENV}는 {allowed}여야 한다: {seconds}")
+    return seconds
+
+
 def load_thresholds() -> ThresholdTable:
-    return ThresholdTable.model_validate(_read_toml("SAFETY_THRESHOLDS_PATH", "thresholds.toml"))
+    """기준표를 읽는다. 사람 확인 기한은 환경변수가 있으면 그 값을 쓴다(운영 24시간)."""
+    data = _read_toml("SAFETY_THRESHOLDS_PATH", "thresholds.toml")
+    override = _review_timeout_override()
+    if override is not None:
+        data["review_timeout_seconds"] = override
+    return ThresholdTable.model_validate(data)
+
+
+def auto_review_on() -> bool:
+    """마스터 스위치 `SAFETY_AUTO_REVIEW`가 "1"인가. 부를 때마다 읽는다(기본 꺼짐)."""
+    return os.getenv(AUTO_REVIEW_ENV, "").strip() == "1"
+
+
+def threshold_changes_on() -> bool:
+    """마스터 스위치 `SAFETY_THRESHOLD_CHANGES`가 "1"인가. 부를 때마다 읽는다(기본 꺼짐)."""
+    return os.getenv(THRESHOLD_CHANGES_ENV, "").strip() == "1"
+
+
+def without_self_review(registry: Registry, table: ThresholdTable) -> ThresholdTable:
+    """`[auto_review].actions` 중 검토자(`reviewer`)가 요청할 수 있는 액션을 뺀다.
+
+    요청자와 검토자가 같으면 자기 C 건을 스스로 승인하게 된다(자기 검증 금지).
+    기준표는 사람만 고치므로 시작을 막지 않고, 경고를 남기고 그 액션만 사람에게 둔다.
+    """
+    cfg = table.auto_review
+    specs = {s.action: s for s in registry.actions}
+    own = [a for a in cfg.actions if a in specs and cfg.reviewer in specs[a].allowed_requesters]
+    if not own:
+        return table
+    for action in own:
+        logger.warning(
+            "자기 검증 금지: %s의 요청자와 검토자(%s)가 같아 AI 1차 판단에서 뺀다",
+            action,
+            cfg.reviewer,
+        )
+    actions = [a for a in cfg.actions if a not in own]
+    return table.model_copy(update={"auto_review": cfg.model_copy(update={"actions": actions})})
 
 
 def higher(a: str, b: str) -> str:

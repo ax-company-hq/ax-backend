@@ -13,6 +13,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from pydantic import ValidationError
+
 from ax_agent_template import call_agent, publish
 from ax_contracts.schemas import (
     EVENT_DATA_MODELS,
@@ -21,9 +23,17 @@ from ax_contracts.schemas import (
     EventType,
     ExecuteRequest,
     RequestMeta,
+    ReviewHoldOutput,
+    ReviewThresholdChangeOutput,
     TaskStatus,
 )
-from ax_safety.gate import VerifyOutcome, VerifyTask
+from ax_safety.gate import (
+    ReviewOutcome,
+    ReviewTask,
+    ThresholdReviewTask,
+    VerifyOutcome,
+    VerifyTask,
+)
 from ax_safety.store import Review
 
 
@@ -48,6 +58,80 @@ async def call_verifier(task: VerifyTask) -> VerifyOutcome:
     detail["reason_code"] = output.get("reason_code")
     approved = output.get("decision") == "approved" or output.get("approved") is True
     return VerifyOutcome("approved" if approved else "rejected", detail)
+
+
+async def _ask_reviewer(
+    *,
+    reviewer: str,
+    skill: str,
+    context_id: str,
+    tenant_id: str,
+    target_id: str,
+    timeout_seconds: float,
+    input: dict[str, Any],
+    output_model: type[ReviewHoldOutput] | type[ReviewThresholdChangeOutput],
+    untrusted: dict[str, Any] | None = None,
+) -> ReviewOutcome:
+    """재무 AI 판단 skill을 A2A로 부른다. 완료가 아니거나 계약 형식이 아닌 답이면 사람에게.
+
+    답은 skill별 계약 모델(`review_hold` → `ReviewHoldOutput`,
+    `review_threshold_change` → `ReviewThresholdChangeOutput`)로 검사한다.
+    멱등성 키는 `{context_id}:{skill}:{대상}`.
+    """
+    request = AgentRequest(
+        meta=RequestMeta(
+            context_id=context_id,
+            tenant_id=tenant_id,
+            token="",  # call_agent가 safety 토큰으로 바꾼다
+            path=[],
+            deadline=datetime.now(UTC) + timedelta(seconds=timeout_seconds),
+            idempotency_key=f"{context_id}:{skill}:{target_id}",
+        ),
+        skill=skill,
+        input=input,
+        untrusted=untrusted or {},
+    )
+    result = await call_agent(reviewer, request)
+    if result.status != TaskStatus.COMPLETED:
+        return ReviewOutcome("escalate", f"reviewer_{result.status.value}")
+    try:
+        out = output_model.model_validate(result.output)
+    except ValidationError:
+        return ReviewOutcome("escalate", "reviewer_invalid_output")
+    return ReviewOutcome(out.decision, out.reason_code, out.explanation)
+
+
+async def call_reviewer(task: ReviewTask) -> ReviewOutcome:
+    """재무 AI의 `review_hold`에 C 건 1차 판단을 묻는다."""
+    return await _ask_reviewer(
+        reviewer=task.reviewer,
+        skill=task.skill,
+        context_id=task.context_id,
+        tenant_id=task.tenant_id,
+        target_id=task.review_id,
+        timeout_seconds=task.timeout_seconds,
+        input=task.input,
+        output_model=ReviewHoldOutput,
+    )
+
+
+async def call_threshold_reviewer(task: ThresholdReviewTask) -> ReviewOutcome:
+    """재무 AI의 `review_threshold_change`에 기준 바꾸기 의견을 묻는다(참고 의견, 적용은 사람).
+
+    입력은 gate가 계약 `ReviewThresholdChangeInput`으로 만든다. 요청한 사람이 쓴 이유는
+    `untrusted`로만 넘긴다.
+    """
+    return await _ask_reviewer(
+        reviewer=task.reviewer,
+        skill=task.skill,
+        context_id=task.context_id,
+        tenant_id=task.tenant_id,
+        target_id=task.change_id,
+        timeout_seconds=task.timeout_seconds,
+        input=task.input,
+        output_model=ReviewThresholdChangeOutput,
+        untrusted=task.untrusted,
+    )
 
 
 async def publish_safety_event(

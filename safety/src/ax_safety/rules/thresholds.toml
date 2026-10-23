@@ -1,6 +1,8 @@
 # 기준 금액 등급표 (SAF-02). 원본은 재무 기준표 v1, 공통 구성안 13장 결정 5번.
 #
-# 모든 값은 시작값이다. 바꾸면 version을 올린다. 사람만 바꾼다(PR). 에이전트는 조회만 한다.
+# 모든 값은 시작값(원래 값)이다. 이 파일은 사람만 바꾼다(PR). 바꾸면 version을 올린다.
+# 숫자 기준은 실행 중에 POST /api/safety/threshold-changes로 바꿀 수 있다: 안전 장치(원래 값의
+# 0.5~2배, 마감은 1시간~3일) 안에서 재무 AI가 결정하고, 넘기면 사람이 결정한다. 메모리에만 반영.
 # 규칙에 걸리면 C, 아니면 레지스트리 기본 등급을 쓴다.
 #
 # metric:
@@ -19,6 +21,17 @@ verify_timeout_seconds = 30
 
 # C 보류 건을 사람이 결정하지 않으면 자동 거절하는 시간(초). 데모 10분
 review_timeout_seconds = 600
+
+# 심각하지 않은 건은 사람 대신 AI가 결정한다 (태윤, 2026-10-22). 끄면 모든 C 건을 사람이 결정
+[auto_review]
+enabled = true
+reviewer = "finance"
+skill = "review_hold"
+# 재무 AI가 먼저 판단하는 액션 (재량 한도·판단 기준은 finance의 ai_review_policy.toml)
+actions = ["issue_coupon", "refund_request", "seller_review"]
+# 요청 자체가 잘못된 건은 안전 장치가 바로 거절 (요청한 AI가 고쳐서 다시 요청)
+auto_reject_reasons = ["amount_mismatch", "unregistered_action", "schema_invalid"]
+timeout_seconds = 10
 
 [[rules]]
 key = "coupon_total"
