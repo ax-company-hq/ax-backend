@@ -31,10 +31,10 @@ from ax_agent_template.config import set_agent_name
 from ax_agent_template.logging import log_event
 from ax_contracts.schemas import ExecuteRequest
 from ax_safety.auth import agent_from_token, bearer, human_from_token
-from ax_safety.gate import Gate, Publisher, Verifier
+from ax_safety.gate import Gate, Publisher, Reviewer, Verifier
 from ax_safety.rules import load_registry, load_thresholds
 from ax_safety.store import Store
-from ax_safety.verify import call_verifier, publish_safety_event
+from ax_safety.verify import call_reviewer, call_verifier, publish_safety_event
 
 logger = logging.getLogger("ax.safety")
 
@@ -69,10 +69,13 @@ def create_app(
     *,
     verifier: Verifier = call_verifier,
     publisher: Publisher = publish_safety_event,
+    reviewer: Reviewer | None = call_reviewer,
     expire_interval: float | None = EXPIRE_INTERVAL_SECONDS,
 ) -> FastAPI:
     set_agent_name("safety")
-    gate = gate or Gate(load_registry(), load_thresholds(), Store(), verifier, publisher)
+    gate = gate or Gate(
+        load_registry(), load_thresholds(), Store(), verifier, publisher, reviewer=reviewer
+    )
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:

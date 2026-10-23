@@ -13,6 +13,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from pydantic import ValidationError
+
 from ax_agent_template import call_agent, publish
 from ax_contracts.schemas import (
     EVENT_DATA_MODELS,
@@ -21,9 +23,10 @@ from ax_contracts.schemas import (
     EventType,
     ExecuteRequest,
     RequestMeta,
+    ReviewHoldOutput,
     TaskStatus,
 )
-from ax_safety.gate import VerifyOutcome, VerifyTask
+from ax_safety.gate import ReviewOutcome, ReviewTask, VerifyOutcome, VerifyTask
 from ax_safety.store import Review
 
 
@@ -48,6 +51,30 @@ async def call_verifier(task: VerifyTask) -> VerifyOutcome:
     detail["reason_code"] = output.get("reason_code")
     approved = output.get("decision") == "approved" or output.get("approved") is True
     return VerifyOutcome("approved" if approved else "rejected", detail)
+
+
+async def call_reviewer(task: ReviewTask) -> ReviewOutcome:
+    """재무 AI의 `review_hold`에 C 건 1차 판단을 묻는다. 완료가 아니거나 모르는 답이면 사람에게."""
+    request = AgentRequest(
+        meta=RequestMeta(
+            context_id=task.context_id,
+            tenant_id=task.tenant_id,
+            token="",  # call_agent가 safety 토큰으로 바꾼다
+            path=[],
+            deadline=datetime.now(UTC) + timedelta(seconds=task.timeout_seconds),
+            idempotency_key=f"{task.context_id}:{task.skill}:{task.review_id}",
+        ),
+        skill=task.skill,
+        input=task.input,
+    )
+    result = await call_agent(task.reviewer, request)
+    if result.status != TaskStatus.COMPLETED:
+        return ReviewOutcome("escalate", f"reviewer_{result.status.value}")
+    try:
+        out = ReviewHoldOutput.model_validate(result.output)  # 계약 형식이 아니면 사람에게
+    except ValidationError:
+        return ReviewOutcome("escalate", "reviewer_invalid_output")
+    return ReviewOutcome(out.decision, out.reason_code, out.explanation)
 
 
 async def publish_safety_event(

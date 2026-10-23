@@ -23,6 +23,8 @@ def _mock_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_TEMPLATE_MOCK", "1")
     monkeypatch.delenv("SAFETY_HUMAN_TOKENS", raising=False)
     monkeypatch.delenv("SAFETY_MOCK", raising=False)  # CI는 SAFETY_MOCK=1이라 테스트마다 정한다
+    monkeypatch.delenv("SAFETY_REVIEW_TIMEOUT_SECONDS", raising=False)  # 기본은 기준표 값(10분)
+    monkeypatch.delenv("SAFETY_AUTO_REVIEW", raising=False)  # AI 1차 판단은 기본 꺼짐
     events.reset_mock_bus()
 
 
@@ -79,7 +81,12 @@ def sent() -> Events:
 
 @pytest.fixture
 def gate(clock: Clock, verifier: FakeVerifier, sent: Events) -> Gate:
-    return Gate(load_registry(), load_thresholds(), Store(), verifier, sent, now=clock)
+    # 기본 테스트는 사람 확인 흐름을 본다. AI 1차 판단은 test_auto_review.py에서 켠다
+    table = load_thresholds()
+    table = table.model_copy(
+        update={"auto_review": table.auto_review.model_copy(update={"enabled": False})}
+    )
+    return Gate(load_registry(), table, Store(), verifier, sent, now=clock)
 
 
 @pytest.fixture
