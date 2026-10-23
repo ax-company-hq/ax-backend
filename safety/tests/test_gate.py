@@ -333,6 +333,62 @@ async def test_generate_pr_is_verified_by_code_rules(gate: Gate, verifier: Any, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["write_spec", "split_tasks", "review_pr", "send_message"])
+async def test_planning_record_actions_are_a(gate: Gate, act, action: str) -> None:
+    decision = await gate.execute(act(action, "planning", f"plan-{action}"))
+    assert (decision.grade, decision.status) == ("A", "executed")
+
+
+@pytest.mark.asyncio
+async def test_confirm_spec_rules(gate: Gate, act) -> None:
+    clean = dict(open_questions=0, warnings=0, basis_count=2, irreversible_count=0)
+    ok = await gate.execute(act("confirm_spec", "planning", "spec-ok", **clean))
+    assert (ok.grade, ok.status) == ("A", "executed")
+
+    for key, bad in {
+        "spec_open_question": {"open_questions": 1},
+        "spec_rejected_warning": {"warnings": 1},
+        "spec_no_basis": {"basis_count": 0},
+        "irreversible": {"irreversible_count": 1},
+    }.items():
+        decision = await gate.execute(
+            act("confirm_spec", "planning", f"spec-{key}", **{**clean, **bad})
+        )
+        assert decision.status == "held"
+        review = gate.store.get_review(decision.review_id or "")
+        assert [hit["key"] for hit in review.report["rules"]] == [key]  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_merge_pr_rules(gate: Gate, verifier: Any, act) -> None:
+    clean = dict(
+        changed_lines=100,
+        changed_files=3,
+        changed_paths=["docs/a.md"],
+        review_mismatch_count=1,
+        linked_incident_count=0,
+        irreversible_count=0,
+    )
+    ok = await gate.execute(act("merge_pr", "planning", "merge-ok", **clean))
+    assert (ok.grade, ok.status, ok.verifier) == ("B", "executed", "safety")
+    assert verifier.tasks == []
+
+    for key, bad in {
+        "pr_changed_lines": {"changed_lines": 301},
+        "pr_allowed_paths": {"changed_paths": [".github/x.yml"]},
+        "pr_review_mismatch": {"review_mismatch_count": 2},
+        "pr_linked_incident": {"linked_incident_count": 1},
+        "irreversible": {"irreversible_count": 1},
+    }.items():
+        decision = await gate.execute(
+            act("merge_pr", "planning", f"merge-{key}", **{**clean, **bad})
+        )
+        assert decision.status == "held"
+        review = gate.store.get_review(decision.review_id or "")
+        assert [hit["key"] for hit in review.report["rules"]] == [key]  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
 async def test_missing_rule_fields_fail_closed(gate: Gate, act) -> None:
     """금액이 아닌 규칙의 필드가 없으면 통과시키지 않는다."""
     decision = await gate.execute(act("generate_pr", "planning", "pr-none", changed_lines=10))
