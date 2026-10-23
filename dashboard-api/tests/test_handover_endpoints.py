@@ -3,6 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from ax_contracts.schemas import AgentRequest, AgentResult, TaskStatus
 from ax_contracts.schemas.hr import (
     AnswerHandoverQuestionOutput,
     DecideCandidateCardOutput,
@@ -10,7 +11,7 @@ from ax_contracts.schemas.hr import (
     HandoverView,
 )
 from ax_contracts.schemas.record import Card
-from ax_dashboard_api import mock_handover
+from ax_dashboard_api import hr_client, mock_handover
 from ax_dashboard_api.main import app
 
 BASE = "/api/dashboard"
@@ -95,10 +96,18 @@ def test_same_answer_twice_is_applied_once(client: TestClient) -> None:
     assert len(client.get(BASE + "/handovers/hov_0001").json()["data"]["open_questions"]) == 1
 
 
-def test_a_different_answer_to_an_answered_question_is_a_conflict(client: TestClient) -> None:
+def test_answering_an_answered_question_with_a_new_key_is_409(client: TestClient) -> None:
     answer(client, "hq_0001", text="첫 답")
     response = answer(client, "hq_0001", text="다른 답", key="k-2")
     assert response.status_code == 409 and response.json()["error"]["code"] == "CONFLICT"
+
+
+def test_reusing_a_key_for_another_question_conflicts(client: TestClient) -> None:
+    """목은 hr보다 엄격하게 같은 키를 다른 질문에 쓰는 실수를 막는다."""
+    answer(client, "hq_0001", key="same")
+    response = answer(client, "hq_0002", key="same")
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
 
 
 def test_unknown_question_is_404(client: TestClient) -> None:
@@ -152,3 +161,24 @@ def test_same_decision_twice_succeeds_and_the_opposite_conflicts(client: TestCli
 def test_unknown_card_is_404_and_a_bad_decision_is_422(client: TestClient) -> None:
     assert decide(client, "card_9999").status_code == 404
     assert decide(client, "card_d2c8a53d7ee0", "maybe").status_code == 422
+
+
+def test_not_connected_outside_mock_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """목 모드가 아니면 hr을 부른다. hr이 응답하지 못하면 502로 알린다 (더는 503이 아니다)."""
+    monkeypatch.delenv("DASHBOARD_MOCK", raising=False)
+    monkeypatch.delenv("AGENT_TEMPLATE_MOCK", raising=False)
+    monkeypatch.setenv("DASHBOARD_API_TOKEN", "test-token")
+
+    async def unreachable(target: str, request: AgentRequest) -> AgentResult:
+        return AgentResult(
+            meta=request.meta, status=TaskStatus.FAILED, outcome="UPSTREAM_UNAVAILABLE"
+        )
+
+    monkeypatch.setattr(hr_client, "SEND", unreachable)
+    client = TestClient(app)
+    for path in ("/handovers", "/handover-questions", "/candidate-cards"):
+        response = client.get(BASE + path)
+        assert response.status_code == 502
+        assert response.json()["error"]["code"] == "UPSTREAM_ERROR"
+    assert answer(client, "hq_0001").status_code == 502
+    assert decide(client, "card_d2c8a53d7ee0").status_code == 502

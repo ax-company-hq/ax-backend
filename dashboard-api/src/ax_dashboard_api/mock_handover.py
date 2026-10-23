@@ -131,6 +131,7 @@ class HandoverBoard:
         self.cards = cards if cards is not None else seed_cards()
         self._answers: dict[str, str] = {}  # question_id -> answer
         self._owners: dict[str, str] = {}  # question_id -> handover_id
+        self._keys: dict[str, str] = {}  # idempotency_key -> question_id
         self._decisions: dict[str, Literal["approve", "reject"]] = {}
 
     # ---- 인수인계
@@ -160,7 +161,12 @@ class HandoverBoard:
             if assignee_id is None or q.assignee_id == assignee_id
         ]
 
-    def answer(self, question_id: str, answer: str) -> AnswerHandoverQuestionOutput:
+    def answer(
+        self, question_id: str, answer: str, idempotency_key: str
+    ) -> AnswerHandoverQuestionOutput:
+        # 목은 hr보다 엄격하다: 같은 키를 다른 질문에 쓰면 클라이언트 실수라 막는다
+        if self._keys.setdefault(idempotency_key, question_id) != question_id:
+            raise ApiError(409, "IDEMPOTENCY_CONFLICT", "같은 키가 다른 질문에 쓰였다")
         previous = self._answers.get(question_id)
         if previous is not None:  # 같은 답은 한 번만 반영하고 현재 상태를 돌려준다
             if previous != answer:

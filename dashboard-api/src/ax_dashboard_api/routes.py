@@ -375,7 +375,7 @@ async def answer_handover_question(question_id: str, body: HandoverAnswerRequest
     if not body.idempotency_key.strip():
         raise ApiError(422, "INVALID_REQUEST", "idempotency_key: 필수다")
     if is_mock():
-        return ok(mock_handover.BOARD.answer(question_id, answer))
+        return ok(mock_handover.BOARD.answer(question_id, answer, body.idempotency_key))
     # 답변은 질문이 속한 사건의 context_id로 보낸다. 이미 답해서 목록에서 빠진 질문(같은 답의
     # 재전송)은 사건을 알 수 없어 새 사건으로 보낸다. hr은 질문 ID로 대기 상태를 찾고 같은 답은
     # 한 번만 반영한다.
