@@ -61,7 +61,9 @@ def test_find_related_prs_and_link_incident() -> None:
 
 
 def test_create_ticket() -> None:
-    ask = CreateTicketInput.model_validate({"title": "배송 안내 문구 변경", "evidence": "반복 문의 42건"})
+    ask = CreateTicketInput.model_validate(
+        {"title": "배송 안내 문구 변경", "evidence": "반복 문의 42건"}
+    )
     assert (ask.source_ref, ask.evidence_ids) == (None, [])
     created = CreateTicketOutput.model_validate(
         {"request_id": "REQ-1", "context_id": "ctx_req_1", "outcome": "created"}
