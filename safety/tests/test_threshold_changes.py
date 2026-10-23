@@ -45,6 +45,15 @@ APPROVE = ReviewOutcome("approve", "raise_with_holds", "최근 24시간 보류 3
 ESCALATE = ReviewOutcome("escalate", "insufficient_evidence", "근거 부족")
 
 
+@pytest.fixture
+def ops_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """운영 설정: 사람 결정 마감 24시간(`SAFETY_REVIEW_TIMEOUT_SECONDS=86400`).
+
+    기준표 기본값은 데모 10분(600초)이라 0.5~2배가 모두 1시간 아래다. 마감 변경은 운영 값으로 본다.
+    """
+    monkeypatch.setenv("SAFETY_REVIEW_TIMEOUT_SECONDS", "86400")
+
+
 def make_gate(clock: Any, verifier: Any, sent: Any, reviewer: Any) -> Gate:
     table = load_thresholds()
     table = table.model_copy(
@@ -103,6 +112,7 @@ def test_guardrails_reject_without_asking_ai(
     assert gate.current_value("coupon_total") == 300_000
 
 
+@pytest.mark.usefixtures("ops_deadline")
 def test_timeout_bounds_are_hard_limits(clock, verifier, sent) -> None:
     """원래 값 86400의 0.5~2배 안이라도 1시간~3일 밖이면 거절. 경계 안은 AI에게 간다."""
     gate = make_gate(clock, verifier, sent, FakeThresholdReviewer(APPROVE))
@@ -160,6 +170,7 @@ async def test_ai_approval_applies_and_later_executions_use_new_value(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("ops_deadline")
 async def test_review_timeout_change_is_used_for_new_holds(clock, verifier, sent, coupon) -> None:
     gate = make_gate(clock, verifier, sent, FakeThresholdReviewer(APPROVE))
     change = await gate.request_threshold_change("review_timeout_seconds", 100_000, "x", "t")
@@ -237,6 +248,7 @@ def test_human_rejection(clock, verifier, sent) -> None:
 
 
 # ---------------------------------------------------------------- 기록·근거
+@pytest.mark.usefixtures("ops_deadline")
 def test_versions_history_and_thresholds_api(clock, verifier, sent) -> None:
     gate = make_gate(clock, verifier, sent, FakeThresholdReviewer(APPROVE))
     client = make_client(gate)
