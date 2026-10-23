@@ -15,8 +15,10 @@ from typing import Any
 
 from ax_agent_template import call_agent, publish
 from ax_contracts.schemas import (
+    EVENT_DATA_MODELS,
     AgentRequest,
     EventEnvelope,
+    EventType,
     ExecuteRequest,
     RequestMeta,
     TaskStatus,
@@ -85,6 +87,13 @@ async def publish_safety_event(
         context_id=source.context_id,
         source="safety",
         idempotency_key=f"{event_type}:{key_id}",
-        data={k: (v.value if hasattr(v, "value") else v) for k, v in data.items()},
+        data=_event_data(event_type, data),
     )
     await publish(envelope)
+
+
+def _event_data(event_type: str, data: dict[str, Any]) -> dict[str, Any]:
+    """contracts의 safety 이벤트 data 모델(#92)로 검증한다. 형식이 틀리면 발행하지 않는다."""
+    plain = {k: (v.value if hasattr(v, "value") else v) for k, v in data.items()}
+    model = EVENT_DATA_MODELS.get(EventType(event_type))
+    return model.model_validate(plain).model_dump(mode="json") if model else plain

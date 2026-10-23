@@ -24,6 +24,7 @@ from ax_contracts.schemas import (
     SellerRegisteredData,
     ShipmentDelayedData,
     ShopDegradedData,
+    SupportInquiryReceivedData,
 )
 
 ENVELOPE_JSON = json.dumps(
@@ -145,6 +146,22 @@ def test_coupon_purpose_and_campaign_id() -> None:
         )
     with pytest.raises(ValidationError, match="campaign_id"):
         CouponIssuedData(coupon_id="cpn_1", purpose_code="campaign", count=1, total_value=1000)
+
+
+def test_support_inquiry_received_data() -> None:
+    assert EVENT_DATA_MODELS[EventType.SUPPORT_INQUIRY_RECEIVED] is SupportInquiryReceivedData
+    first = SupportInquiryReceivedData(inquiry_id=7, message_count=1)
+    assert first.order_id is None
+    assert first.category is None
+    assert first.urgency is None
+    full = SupportInquiryReceivedData(
+        inquiry_id=7, order_id="ord_1", category="delivery", urgency="high", message_count=2
+    )
+    assert full.urgency == "high"
+    with pytest.raises(ValidationError):
+        SupportInquiryReceivedData(inquiry_id=7, urgency="urgent", message_count=1)
+    with pytest.raises(ValidationError):
+        SupportInquiryReceivedData(inquiry_id=7, message_count=0)
 
 
 def test_infra_anomaly_event_has_data_model() -> None:

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
-Point = tuple[datetime, float]
+Point = tuple[datetime, float | None]  # None = 표본 없음 (확인할 수 없음)
 Agg = Literal["sum", "mean"]
 Severity = Literal["low", "mid", "high"]
 
@@ -21,6 +21,7 @@ MIN_SAMPLES = 3  # 기준선에 필요한 최소 표본 수
 
 DEFAULT_SIGMA = 3.0
 DEFAULT_RATIO_THRESHOLD = 3.0
+DEFAULT_MAX_NONE_RATIO = 0.3  # 분석 구간의 None 비율이 이 값 이상이면 "데이터 부족"
 
 # severity 임계값
 HIGH_RATIO = 4.0
@@ -57,6 +58,15 @@ class BucketResult:
     judged: bool  # 기준선이 없으면 False (판정 불가, 이상 아님)
 
 
+@dataclass(frozen=True)
+class DetectionOutcome:
+    """구간 판정 결과. status가 insufficient_data면 results는 비어 있다."""
+
+    status: Literal["ok", "insufficient_data"]
+    results: list[BucketResult]
+    evidence: dict[str, float | int | str]
+
+
 def _to_utc(ts: datetime) -> datetime:
     if ts.tzinfo is None:
         raise ValueError("naive datetime is not allowed (UTC aware required)")
@@ -74,6 +84,8 @@ def bucket_5m(points: list[Point], agg: Agg = "sum") -> list[Point]:
         raise ValueError(f"unknown agg: {agg}")
     groups: dict[datetime, list[float]] = {}
     for ts, value in points:
+        if value is None:
+            continue
         groups.setdefault(_floor_5m(ts), []).append(float(value))
     out: list[Point] = []
     for key in sorted(groups):
@@ -92,6 +104,8 @@ def baseline_for(bucket_ts: datetime, history: list[Point]) -> Baseline | None:
     values: list[float] = []
     for ts, value in history:
         t = _to_utc(ts)
+        if value is None:
+            continue
         if start <= t < target and (t.hour, t.minute) == (target.hour, target.minute):
             values.append(float(value))
     if len(values) < MIN_SAMPLES:
@@ -168,3 +182,34 @@ def detect(
             )
         )
     return results
+
+
+def detect_checked(
+    series: list[Point],
+    window_from: datetime,
+    window_to: datetime,
+    history: list[Point],
+    agg: Agg = "sum",
+    max_none_ratio: float = DEFAULT_MAX_NONE_RATIO,
+) -> DetectionOutcome:
+    """None 비율을 먼저 확인한 뒤 detect를 수행한다.
+
+    분석 구간 [window_from, window_to) 원시 점 중 None 비율이 max_none_ratio 이상이면
+    이상 판정 대신 "데이터 부족"을 돌려준다. None 점은 기준선 계산에서 제외된다.
+    """
+    start = _to_utc(window_from)
+    end = _to_utc(window_to)
+    in_window = [v for ts, v in series if start <= _to_utc(ts) < end]
+    total = len(in_window)
+    none_count = sum(1 for v in in_window if v is None)
+    none_ratio = none_count / total if total else 0.0
+    evidence: dict[str, float | int | str] = {
+        "none_count": none_count,
+        "total_points": total,
+        "none_ratio": none_ratio,
+        "max_none_ratio": max_none_ratio,
+    }
+    if total and none_ratio >= max_none_ratio:
+        evidence["reason"] = "none_ratio_at_or_above_threshold"
+        return DetectionOutcome("insufficient_data", [], evidence)
+    return DetectionOutcome("ok", detect(series, window_from, window_to, history, agg), evidence)

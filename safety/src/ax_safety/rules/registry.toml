@@ -87,6 +87,64 @@ action = "record_case"
 owner = "hr"
 base_grade = "A"
 
+# 인수인계·온보딩·담당 변경 (#180). 기록·진행은 A, 확정은 B, 퇴직 확정은 항상 사람 승인(C)
+[[actions]]
+action = "start_handover"
+owner = "hr"
+base_grade = "A"
+
+[[actions]]
+action = "answer_handover_question"
+owner = "hr"
+base_grade = "A"
+
+[[actions]]
+action = "request_assignment_change"
+owner = "hr"
+base_grade = "A"
+
+[[actions]]
+action = "start_onboarding"
+owner = "hr"
+base_grade = "A"
+
+[[actions]]
+action = "update_onboarding_step"
+owner = "hr"
+base_grade = "A"
+
+# 확신 낮은 후보 카드 승인·폐기 (#177). 사람이 대시보드에서 고르고 hr skill이 execute()를 부른다
+[[actions]]
+action = "decide_candidate_card"
+owner = "hr"
+base_grade = "A"
+
+# 인수인계 확정: planning이 verify_handover로 검증. 완성도가 기준 미만이면 C (thresholds.toml)
+[[actions]]
+action = "confirm_handover"
+owner = "hr"
+base_grade = "B"
+verifier = "planning"
+verify_skill = "verify_handover"
+
+# 완성도 미달 상태로 확정하려면 항상 사람 승인
+[[actions]]
+action = "confirm_handover_incomplete"
+owner = "hr"
+base_grade = "C"
+
+# 담당 변경 확정: 검증자 = 안전 레이어 코드 규칙(변경 뒤 담당 공백·중복 건수, thresholds.toml)
+[[actions]]
+action = "confirm_reassignment"
+owner = "hr"
+base_grade = "B"
+verifier = "safety"
+
+[[actions]]
+action = "confirm_offboarding"
+owner = "hr"
+base_grade = "C"
+
 # ---- 인프라 DejaFix (예진). 서버 재부팅·파일 삭제는 등록하지 않는다(미등록 = C)
 [[actions]]
 action = "rollback_deployment"
@@ -139,6 +197,46 @@ base_grade = "A"
 # ---- 기획개발 (예진). 검증자 = 안전 레이어 코드 규칙(변경 크기·허용 경로, thresholds.toml)
 [[actions]]
 action = "generate_pr"
+owner = "planning"
+base_grade = "B"
+verifier = "safety"
+
+# 변경 요청 접수는 A (#173). 요청 부서는 A2A로 부르고, execute()는 planning이 부른다
+[[actions]]
+action = "create_ticket"
+owner = "planning"
+base_grade = "A"
+
+# 기록·회신·초안은 A (#166). 돈·배포에 닿지 않는다
+[[actions]]
+action = "write_spec"
+owner = "planning"
+base_grade = "A"
+
+[[actions]]
+action = "split_tasks"
+owner = "planning"
+base_grade = "A"
+
+[[actions]]
+action = "review_pr"
+owner = "planning"
+base_grade = "A"
+
+[[actions]]
+action = "send_message"
+owner = "planning"
+base_grade = "A"
+
+# 기획서 확정은 A. 열린 질문·기각 경고·근거 없음·되돌릴 수 없는 영역이면 C (thresholds.toml)
+[[actions]]
+action = "confirm_spec"
+owner = "planning"
+base_grade = "A"
+
+# PR 머지는 B, 검증자 = 코드 규칙(generate_pr와 같은 크기·경로 기준 + 검수 불일치·장애 연결·되돌릴 수 없는 영역)
+[[actions]]
+action = "merge_pr"
 owner = "planning"
 base_grade = "B"
 verifier = "safety"

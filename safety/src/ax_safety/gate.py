@@ -342,6 +342,19 @@ class Gate:
                 elif outside := rule.paths_outside(paths):
                     hits.append({"key": rule.key, "outside": outside, "allowed": rule.allowed})
                 continue
+            if rule.metric == "paths_avoid":
+                paths = request.params.get(rule.field or "")
+                if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+                    hits.append({"key": rule.key, "invalid": rule.field})
+                elif protected_hit := rule.paths_protected(paths):
+                    hits.append(
+                        {
+                            "key": rule.key,
+                            "protected_hit": protected_hit,
+                            "protected": rule.protected,
+                        }
+                    )
+                continue
             if rule.metric == "param":
                 value = request.params.get(rule.field or "")
                 if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -400,6 +413,9 @@ class Gate:
     ) -> ExecuteDecision:
         now = self._now()
         review_id = f"rev_{uuid.uuid4().hex[:12]}"
+        summary = request.params.get("summary")
+        if isinstance(summary, str) and summary.strip():  # 사람이 읽을 설명. 요청 쪽 데이터다
+            report = {"summary": summary.strip()[:200], **report}
         full_report = {
             "action": request.action,
             "requester": request.requester,

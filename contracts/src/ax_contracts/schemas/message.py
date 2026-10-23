@@ -49,6 +49,7 @@ class ErrorCode(StrEnum):
     INVALID_OUTPUT = "INVALID_OUTPUT"
     MISSING_CONTEXT = "MISSING_CONTEXT"
     SEQUENCE_GAP = "SEQUENCE_GAP"
+    INVALID_INPUT = "INVALID_INPUT"  # 입력이 계약 형식과 다르다(형식 위반은 rejected)
 
 
 class RequestMeta(AxModel):

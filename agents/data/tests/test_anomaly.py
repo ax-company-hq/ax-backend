@@ -2,7 +2,13 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from data_agent.metrics.anomaly import baseline_for, bucket_5m, detect, judge
+from data_agent.metrics.anomaly import (
+    baseline_for,
+    bucket_5m,
+    detect,
+    detect_checked,
+    judge,
+)
 
 T0 = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)  # 판정 대상 날짜의 12:00
 
@@ -78,6 +84,43 @@ def test_judge_std_zero_and_mean_zero():
     assert j0.ratio is None and j0.z is None and not j0.is_anomaly
     jz = judge(10.0, 0.0, 2.0)  # mean 0: ratio 없음, z 5 -> 이상 mid
     assert jz.ratio is None and jz.is_anomaly and jz.severity == "mid"
+
+
+def test_none_points_excluded_from_baseline():
+    history = _history() + [(T0 - timedelta(days=1), None), (T0 - timedelta(days=2), None)]
+    base = baseline_for(T0, history)
+    assert base is not None and base.sample_count == 7
+    assert bucket_5m([(T0, None), (T0, 5.0)]) == [(T0, 5.0)]
+
+
+def test_detect_checked_with_some_none_is_ok():
+    series = [(T0 + timedelta(minutes=5 * k), 100.0) for k in range(4)]
+    series.append((T0 + timedelta(minutes=20), None))  # 1/5 = 20% < 30%
+    out = detect_checked(series, T0, T0 + timedelta(minutes=25), _history())
+    assert out.status == "ok" and len(out.results) == 4
+    assert out.evidence["none_count"] == 1 and out.evidence["total_points"] == 5
+
+
+def test_detect_checked_too_many_none_is_insufficient():
+    series = [(T0, 100.0), (T0 + timedelta(minutes=5), None), (T0 + timedelta(minutes=10), None)]
+    out = detect_checked(series, T0, T0 + timedelta(minutes=15), _history())
+    assert out.status == "insufficient_data" and out.results == []
+    assert out.evidence["none_count"] == 2
+    # 기준 비율은 설정 가능: 경계값(>=)도 부족으로 본다
+    edge = [(T0, 100.0), (T0 + timedelta(minutes=5), None)]
+    assert (
+        detect_checked(edge, T0, T0 + timedelta(minutes=10), _history(), max_none_ratio=0.5).status
+        == "insufficient_data"
+    )
+
+
+def test_detect_checked_without_none_matches_detect():
+    history = _history()
+    series = [(T0 + timedelta(minutes=5 * k), 100.0 + k) for k in range(5)]
+    end = T0 + timedelta(minutes=25)
+    out = detect_checked(series, T0, end, history)
+    assert out.status == "ok" and out.results == detect(series, T0, end, history)
+    assert out.evidence["none_count"] == 0
 
 
 def test_judge_severity_levels():

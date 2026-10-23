@@ -1,4 +1,5 @@
-"""부서별 등록 액션 테스트: 회사 기억 카드, 고객지원 클레임, generate_pr 코드 규칙, 판매자 승인."""
+"""부서별 등록 액션 테스트: 회사 기억 카드, 고객지원 클레임, 판매자 승인,
+기획(generate_pr·merge_pr·confirm_spec) 코드 규칙과 보호 경로."""
 
 from __future__ import annotations
 
@@ -79,6 +80,66 @@ async def test_generate_pr_is_verified_by_code_rules(gate: Gate, verifier: Any, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action", ["create_ticket", "write_spec", "split_tasks", "review_pr", "send_message"]
+)
+async def test_planning_record_actions_are_a(gate: Gate, act, action: str) -> None:
+    decision = await gate.execute(act(action, "planning", f"plan-{action}"))
+    assert (decision.grade, decision.status) == ("A", "executed")
+
+
+@pytest.mark.asyncio
+async def test_confirm_spec_rules(gate: Gate, act) -> None:
+    clean = dict(open_questions=0, warnings=0, basis_count=2, irreversible_count=0)
+    ok = await gate.execute(act("confirm_spec", "planning", "spec-ok", **clean))
+    assert (ok.grade, ok.status) == ("A", "executed")
+
+    for key, bad in {
+        "spec_open_question": {"open_questions": 1},
+        "spec_rejected_warning": {"warnings": 1},
+        "spec_no_basis": {"basis_count": 0},
+        "irreversible": {"irreversible_count": 1},
+    }.items():
+        decision = await gate.execute(
+            act("confirm_spec", "planning", f"spec-{key}", **{**clean, **bad})
+        )
+        assert decision.status == "held"
+        review = gate.store.get_review(decision.review_id or "")
+        assert [hit["key"] for hit in review.report["rules"]] == [key]  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_merge_pr_rules(gate: Gate, verifier: Any, act) -> None:
+    clean = dict(
+        changed_lines=100,
+        changed_files=3,
+        changed_paths=["docs/a.md"],
+        review_mismatch_count=1,
+        linked_incident_count=0,
+        irreversible_count=0,
+    )
+    ok = await gate.execute(act("merge_pr", "planning", "merge-ok", **clean))
+    assert (ok.grade, ok.status, ok.verifier) == ("B", "executed", "safety")
+    assert verifier.tasks == []
+
+    for key, bad in {
+        "merge_changed_lines": {"changed_lines": 301},
+        "merge_changed_files": {"changed_files": 21},
+        "merge_allowed_paths": {"changed_paths": ["scripts/x.sh"]},
+        "merge_protected_paths": {"changed_paths": ["shop-api/src/ax_shop_api/service.py"]},
+        "pr_review_mismatch": {"review_mismatch_count": 2},
+        "pr_linked_incident": {"linked_incident_count": 1},
+        "merge_irreversible": {"irreversible_count": 1},
+    }.items():
+        decision = await gate.execute(
+            act("merge_pr", "planning", f"merge-{key}", **{**clean, **bad})
+        )
+        assert decision.status == "held"
+        review = gate.store.get_review(decision.review_id or "")
+        assert [hit["key"] for hit in review.report["rules"]] == [key]  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
 async def test_missing_rule_fields_fail_closed(gate: Gate, act) -> None:
     """금액이 아닌 규칙의 필드가 없으면 통과시키지 않는다."""
     decision = await gate.execute(act("generate_pr", "planning", "pr-none", changed_lines=10))
@@ -87,7 +148,74 @@ async def test_missing_rule_fields_fail_closed(gate: Gate, act) -> None:
     assert {hit["key"] for hit in review.report["rules"]} == {  # type: ignore[union-attr]
         "pr_changed_files",
         "pr_allowed_paths",
+        "pr_protected_paths",
     }
+
+
+_PR_CLEAN = dict(changed_lines=10, changed_files=1)
+_MERGE_CLEAN = dict(
+    changed_lines=10,
+    changed_files=1,
+    review_mismatch_count=0,
+    linked_incident_count=0,
+    irreversible_count=0,
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("action", "key", "clean"),
+    [
+        ("generate_pr", "pr_protected_paths", _PR_CLEAN),
+        ("merge_pr", "merge_protected_paths", _MERGE_CLEAN),
+    ],
+)
+async def test_protected_path_is_always_c(
+    gate: Gate, verifier: Any, act, action: str, key: str, clean: dict[str, int]
+) -> None:
+    """허용 경로·크기 안이고 irreversible_count가 0이어도 보호 경로에 닿으면 C."""
+    protected = "shop-api/src/ax_shop_api/service.py"
+    decision = await gate.execute(
+        act(action, "planning", f"{key}-hit", changed_paths=["docs/a.md", protected], **clean)
+    )
+    assert (decision.grade, decision.status) == ("C", "held")
+    assert verifier.tasks == []
+    review = gate.store.get_review(decision.review_id or "")
+    assert review is not None
+    [hit] = review.report["rules"]
+    assert (hit["key"], hit["protected_hit"]) == (key, [protected])
+    assert "shop-web/src/pages/Checkout.tsx" in hit["protected"]
+
+    unrelated = await gate.execute(
+        act(
+            action,
+            "planning",
+            f"{key}-ok",
+            changed_paths=["shop-api/src/ax_shop_api/lookups.py", "docs/a.md"],
+            **clean,
+        )
+    )
+    assert (unrelated.grade, unrelated.status) == ("B", "executed")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("action", "key", "clean"),
+    [
+        ("generate_pr", "pr_protected_paths", _PR_CLEAN),
+        ("merge_pr", "merge_protected_paths", _MERGE_CLEAN),
+    ],
+)
+async def test_protected_paths_fail_closed(
+    gate: Gate, act, action: str, key: str, clean: dict[str, int]
+) -> None:
+    """changed_paths가 없거나 문자열 목록이 아니면 보호 경로 규칙도 걸린 것으로 본다."""
+    for suffix, extra in {"none": {}, "str": {"changed_paths": "docs/a.md"}}.items():
+        decision = await gate.execute(act(action, "planning", f"{key}-{suffix}", **clean, **extra))
+        assert decision.status == "held"
+        review = gate.store.get_review(decision.review_id or "")
+        hits = {hit["key"]: hit for hit in review.report["rules"]}  # type: ignore[union-attr]
+        assert hits[key] == {"key": key, "invalid": "changed_paths"}
 
 
 @pytest.mark.asyncio

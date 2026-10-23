@@ -10,3 +10,27 @@ services:
         required: false
       - path: ./.env
         required: false
+    environment:
+      # 컨테이너 안에서는 서비스 이름으로 접속한다 (.env의 로컬용 DSN을 덮어쓴다).
+      SUPPORT_PG_DSN: postgresql://support:${SUPPORT_DB_PASSWORD:-change-me}@support-db:5432/support
+    depends_on:
+      support-db:
+        condition: service_healthy
+
+  support-db:
+    image: postgres:16
+    # 호스트 포트는 열지 않는다 (5432 충돌 방지). 같은 compose 네트워크에서만 접속한다.
+    environment:
+      POSTGRES_USER: support
+      POSTGRES_DB: support
+      POSTGRES_PASSWORD: ${SUPPORT_DB_PASSWORD:-change-me}
+    volumes:
+      - support-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U support -d support"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  support-db-data:

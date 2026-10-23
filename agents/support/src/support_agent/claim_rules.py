@@ -33,7 +33,7 @@ class ReasonHit:
 
 @dataclass(frozen=True)
 class Line:
-    order_item_id: int
+    order_item_id: str
     title: str
     qty: int
     requested_qty: int
@@ -75,7 +75,7 @@ def decide(
     claim_type: str,
     reason: str,
     *,
-    items: dict[int, int] | None,
+    items: dict[str, int] | None,
     evidence_count: int,
     unsealed: bool,
     prior_claims: int,

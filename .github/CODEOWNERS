@@ -1,7 +1,12 @@
 *                       @JangJaehyeonn @haakim7
-# 계약은 자동화 1단계(에이전트 리뷰)가 켜질 때까지 사람이 본다 — 1단계 이후 이 줄 삭제
-/contracts/             @haakim7 @2taeyoon
+# 자동화·규칙 파일: 재현·준하·태윤 중 한 명 승인
+/.github/               @JangJaehyeonn @haakim7 @2taeyoon
+/.claude/               @JangJaehyeonn @haakim7 @2taeyoon
+/scripts/               @JangJaehyeonn @haakim7 @2taeyoon
+/CLAUDE.md              @JangJaehyeonn @haakim7 @2taeyoon
 # 에이전트 리뷰로 머지하는 곳 (소유자 없음)
+# contracts: 영향받는 부서 에이전트 리뷰 + contracts-compat(하위 호환 검사, 깨지는 변경은 막음)
+/contracts/
 /agent-template/
 /orchestrator/
 /safety/
@@ -18,3 +23,6 @@
 /infra/
 /docs/notes/*/
 /uv.lock
+# 부서 폴더 안의 사람 전용 파일 (team.yml human_files): 위의 소유자 없는 줄보다 뒤에 둔다
+/agents/finance/src/finance_agent/ai_review_policy.toml   @2taeyoon @JangJaehyeonn @haakim7
+/safety/src/ax_safety/rules/thresholds.toml               @2taeyoon @JangJaehyeonn @haakim7

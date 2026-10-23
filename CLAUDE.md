@@ -11,7 +11,7 @@ e커머스 가상회사의 부서별 AI 에이전트를 A2A로 연결한 AX 플�
 
 | 폴더 | 부서 id | 내용 | 담당 | 리뷰 부서 (자동) |
 | --- | --- | --- | --- | --- |
-| `contracts/` | contracts | 팀 계약 원본: schemas, data-access, openapi | 준하, 태윤 | agent-template + safety (작성자가 둘 중 하나면 그 자리는 data) |
+| `contracts/` | contracts | 팀 계약 원본: schemas, data-access, openapi | 준하, 태윤, 재현 | 바뀐 계약 파일을 쓰는 부서 (`team.yml` `contracts_affected`, 공통 파일은 agent-template + safety). 깨지는 변경은 `contracts-compat`이 막음 |
 | `agent-template/` | agent-template | 공통 템플릿, execute 구현 | 준하 | finance + planning |
 | `orchestrator/` | orchestrator | 통합 에이전트 | 준하 | dejafix |
 | `safety/` | safety | 안전 레이어 | 태윤 | agent-template |
@@ -27,7 +27,8 @@ e커머스 가상회사의 부서별 AI 에이전트를 A2A로 연결한 AX 플�
 | `agents/data/` | data | 데이터분석 에이전트 | 재현 | finance |
 | `infra/` | infra | 전체 compose, 장애 주입 | 준하 | finance + planning |
 | `docs/notes/<부서>/` | 그 부서 | 부서별 작업 메모 | 그 부서 담당 | 그 부서와 같음 |
-| 그 외 전부 (`.github/`, `.claude/`, `scripts/`, `CLAUDE.md`, `docs/`, 루트 파일) | — | 자동화·문서·규칙 (human_paths) | 사람 | **사람 code owner 승인** (재현, 준하) |
+| 그 외 전부 (`.github/`, `.claude/`, `scripts/`, `CLAUDE.md`, `docs/`, 루트 파일) | — | 자동화·문서·규칙 (human_paths) | 사람 | **사람 code owner 승인** (`.github/`·`.claude/`·`scripts/`·`CLAUDE.md`는 재현, 준하, 태윤 / 그 밖은 재현, 준하) |
+| 부서 폴더 안의 기준표 (`safety/.../thresholds.toml`, `agents/finance/.../ai_review_policy.toml`) | — | 기준 금액 등급표·AI 재량 한도 (`team.yml` `human_files`, human_paths로 취급) | 사람 | **사람 code owner 승인** (태윤, 재현, 준하). 에이전트는 못 바꿈 |
 | 루트 `uv.lock` | — | 의존성 잠금 | 자동 생성 | 같은 PR에서 그 부서 `pyproject.toml`이 바뀐 경우만 허용 |
 
 리뷰 부서 담당이 PR 작성자와 같은 사람이면 자동으로 다른 부서로 바뀐다. 상세는 `docs/automation-spec.md` "리뷰어 배정".
@@ -44,8 +45,9 @@ e커머스 가상회사의 부서별 AI 에이전트를 A2A로 연결한 AX 플�
 6. **API 응답 형식을 바꾸면** `contracts/openapi/`가 CI로 다시 생성되는지 확인하고, 프론트 담당(재헌, 병환)에게 알린다.
 7. **비밀값은 `.env`에만 둔다.** 커밋 금지. 부서 환경변수 예시는 `<폴더>/.env.example`에 둔다. 루트 `.env.example`은 공통 변수만 두며 사람 승인 경로다. LLM 키는 각자 따로 쓴다.
 8. **`uv.lock`은 직접 고치지 않는다.** 자기 폴더 `pyproject.toml`에 의존성을 추가하면 lock 갱신은 CI의 build 잡이 한다. 충돌은 sweeper의 lock-refresh가 처리한다.
-9. **테스트를 지우거나 약하게 만들지 않는다.** test-guard가 tests 삭제·테스트 수 감소·assert 50% 이상 감소를 막는다.
+9. **테스트를 지우거나 약하게 만들지 않는다.** test-guard가 부서별로 테스트 삭제(바뀐 파일에 있던 테스트 이름이 사라짐)와 의미 있는 assert 수 감소(`assert True` 같은 상수 assert는 세지 않음)를 막는다. 파일을 나누거나 옮기는 것은 테스트 이름이 남아 있으면 통과한다.
 10. **자동화 파일은 사람만 바꾼다.** `.github/`, `.claude/`, `scripts/`, `CLAUDE.md`, `docs/`(notes 제외)는 code owner 승인이 필요하다. 부서 폴더 안에 `CLAUDE.md`, `.claude/`, `.mcp.json`을 만들지 않는다.
+11. **기준 문서와 다른 동작은 docs PR이 먼저다.** `docs/requirements.md`, `docs/agent-common.md`(기준 문서)와 다르게 동작해야 하면, 먼저 기준 문서를 고치는 docs PR을 팀이 합의해 머지한 뒤 코드 PR을 올린다. 코드 PR 본문에 그 docs PR 번호를 적는다. docs PR 없이 기준 문서와 다른 코드 PR은 리뷰에서 막는다.
 
 ## 표기·형식
 
@@ -79,12 +81,15 @@ e커머스 가상회사의 부서별 AI 에이전트를 A2A로 연결한 AX 플�
 - PR이 dev에 머지되는 조건 (전부 초록이면 자동 머지):
   - `ci`, `contracts-compat`, `automation-tests` (GitHub Actions)
   - `folder-guard`, `test-guard`, `dev-health`, `agent-review` (ax-bot 커밋 상태)
-  - human_paths를 바꿨으면 code owner(재현·준하) 승인
-- `agent-review`는 다른 부서 에이전트가 한다. 사람 승인 수(Required approvals)는 0이다. 사람이 승인 버튼을 누를 필요가 없다.
-- contracts는 에이전트 2명 리뷰 + 하위 호환 검사(`contracts-compat`)로 머지한다.
+  - human_paths를 바꿨으면 code owner 승인 (`.github/`·`.claude/`·`scripts/`·`CLAUDE.md`·기준표 toml은 재현·준하·태윤 중 한 명, 그 밖의 human_paths는 재현·준하 중 한 명)
+- `agent-review`는 다른 부서 에이전트가 한다. 단 공유 폴더(`contracts/`, `agent-template/`)·안전 레이어(`safety/`)·통합 에이전트(`orchestrator/`)를 건드렸거나 부서 2개 이상에 걸친 PR에만 돈다. 부서 폴더 하나 안에서만 바뀐 PR은 `agent-review`가 "not required"로 통과하고 CI·관문만으로 자동 머지된다. 사람 승인 수(Required approvals)는 0이다. 사람이 승인 버튼을 누를 필요가 없다.
+- contracts는 사람 승인 없이, 바뀐 계약 파일을 쓰는 부서의 에이전트 리뷰 + 하위 호환 검사(`contracts-compat`)로 머지한다. 하위 호환이 깨지는 변경은 `contracts-compat`이 막으니, 필드 추가 → 이전 → 삭제처럼 호환되는 단계로 나눈다.
 - 사람 PR은 자기가 맡은 부서 여러 개를 함께 바꿀 수 있고, 해당 리뷰 부서 전부가 승인해야 한다. 에이전트 PR은 부서 하나만.
 - 급한 수정: code owner(재현·준하)가 `hotfix` 라벨을 붙이면 관문을 통과한다. 새 커밋이 올라오면 라벨이 떨어진다.
-- 리뷰 3라운드를 넘거나 CI 수정 2회를 넘으면 제3 부서가 판정한다 (arbiter).
+- 에이전트 PR이 ci나 관문에서 실패하면 실패 요약을 이슈에 힌트로 남기고 PR을 닫아 한 번 다시 작성한다. 같은 이슈가 두 번 실패하면 `needs-human`, 작성이 턴 한도에 걸리면 `needs-split`(작업을 나눠 다시 올린다)으로 멈춘다.
+- 부서마다 열린 에이전트 PR 2개·진행 중 이슈 3개까지만 동시에 작성한다. 넘으면 `wip-wait`로 기다렸다가 자리가 나면 자동으로 시작한다.
+- 48시간 넘게 변화가 없는 에이전트 PR·이슈는 매일 정리 작업이 닫고 목록을 report 이슈에 남긴다.
+- 핵심 파일(`.github/`, `.claude/`, CODEOWNERS, 기준표 toml)은 사람 PR로만 바뀐다 (에이전트 PR은 folder-guard가 막음). 머지되면 report 이슈에 기록하고 재현을 멘션하며, 매일 정리 report에 "지난 24시간 핵심 파일 변경" 목록이 남는다.
 
 ## 로컬 개발 (각자 PC의 Claude Code)
 

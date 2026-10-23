@@ -9,7 +9,8 @@
 # - daily_total: 같은 tenant·같은 액션의 오늘(UTC) 실행 누적 + 이번 금액
 # - context_total: 같은 context_id·같은 액션의 실행 누적 + 이번 금액
 # - customer_total: 같은 context_id·같은 고객의 실행 누적 + 이번 금액
-# op: ">=" 또는 ">". when은 params가 이 값일 때만 규칙을 적용한다.
+# - param·paths_within·paths_avoid: 금액이 아닌 규칙(아래 각 규칙 주석 참고)
+# op: ">=", ">", "<=", "<". when은 params가 이 값일 때만 규칙을 적용한다.
 
 version = 1
 
@@ -104,4 +105,163 @@ key = "pr_allowed_paths"
 action = "generate_pr"
 metric = "paths_within"
 field = "changed_paths"
-allowed = ["shop-api/", "docs/"]
+allowed = ["shop-api/", "shop-web/", "docs/"]
+
+# 보호 경로 (#169, 안전 담당). 결제·인증·데이터에 닿는 변경은 허용 경로·크기 안이어도
+# planning이 보낸 irreversible_count와 상관없이 항상 C. 값은 제안값.
+# 경로는 ax-backend·ax-frontend 저장소 루트 기준. 같은 경로이거나 그 접두사로 시작하면 걸린다.
+# 필드가 없거나 문자열 목록이 아니면 걸린 것으로 본다(fail-closed).
+[[rules]]
+key = "pr_protected_paths"
+action = "generate_pr"
+metric = "paths_avoid"
+field = "changed_paths"
+protected = [
+  # shop-web (ax-frontend): 결제 화면, 로그인·인증, API 클라이언트, 환경값
+  "shop-web/src/pages/Checkout.tsx",
+  "shop-web/src/lib/auth.tsx",
+  "shop-web/src/lib/api.ts",
+  "shop-web/src/lib/env.ts",
+  # shop-api: DB 스키마, 주문·결제 로직, 쿠폰 지급 로직, 시드 데이터
+  "shop-api/src/ax_shop_api/db.py",
+  "shop-api/src/ax_shop_api/service.py",
+  "shop-api/src/ax_shop_api/promotions.py",
+  "shop-api/src/ax_shop_api/seed.py",
+  # 관문 규칙·CI·계약. 허용 경로 밖이지만 허용 목록이 넓어져도 막히도록 같이 둔다
+  ".github/",
+  "safety/",
+  "contracts/",
+]
+
+# ---- 기획개발 자동화 (#166). 값은 제안값. params 키는 planning이 맞춰 보낸다.
+# 필드가 없거나 정수가 아니면 걸린 것으로 본다(fail-closed).
+[[rules]]
+key = "spec_open_question"
+action = "confirm_spec"
+metric = "param"
+field = "open_questions"
+op = ">"
+value = 0
+
+[[rules]]
+key = "spec_rejected_warning"
+action = "confirm_spec"
+metric = "param"
+field = "warnings"
+op = ">"
+value = 0
+
+[[rules]]
+key = "spec_no_basis"
+action = "confirm_spec"
+metric = "param"
+field = "basis_count"
+op = "<"
+value = 1
+
+# 되돌릴 수 없는 영역(결제 데이터 삭제, 개인정보, 실제 송금 연동 등)에 닿는 항목 수. 0이 아니면 항상 C
+[[rules]]
+key = "irreversible"
+action = "confirm_spec"
+metric = "param"
+field = "irreversible_count"
+op = ">"
+value = 0
+
+# ---- 인사 (#180). 값은 제안값. 필드가 없거나 정수가 아니면 걸린 것으로 본다(fail-closed).
+# 인수인계 완성도(0~100 정수 %). 기준 미만이면 confirm_handover도 C
+[[rules]]
+key = "handover_completeness"
+action = "confirm_handover"
+metric = "param"
+field = "completeness_percent"
+op = "<"
+value = 80
+
+# 담당 변경 뒤 담당 공백·중복 건수. 0이 아니면 C
+[[rules]]
+key = "reassignment_gap"
+action = "confirm_reassignment"
+metric = "param"
+field = "unassigned_count"
+op = ">"
+value = 0
+
+[[rules]]
+key = "reassignment_duplicate"
+action = "confirm_reassignment"
+metric = "param"
+field = "duplicate_count"
+op = ">"
+value = 0
+
+# merge_pr: generate_pr와 같은 크기·경로 기준. 규칙 키는 파일 안에서 겹치지 않게 merge_ 접두사
+[[rules]]
+key = "merge_changed_lines"
+action = "merge_pr"
+metric = "param"
+field = "changed_lines"
+op = ">"
+value = 300
+
+[[rules]]
+key = "merge_changed_files"
+action = "merge_pr"
+metric = "param"
+field = "changed_files"
+op = ">"
+value = 20
+
+[[rules]]
+key = "merge_allowed_paths"
+action = "merge_pr"
+metric = "paths_within"
+field = "changed_paths"
+allowed = ["shop-api/", "shop-web/", "docs/"]
+
+# 보호 경로: pr_protected_paths와 같은 목록. 값은 제안값
+[[rules]]
+key = "merge_protected_paths"
+action = "merge_pr"
+metric = "paths_avoid"
+field = "changed_paths"
+protected = [
+  # shop-web (ax-frontend): 결제 화면, 로그인·인증, API 클라이언트, 환경값
+  "shop-web/src/pages/Checkout.tsx",
+  "shop-web/src/lib/auth.tsx",
+  "shop-web/src/lib/api.ts",
+  "shop-web/src/lib/env.ts",
+  # shop-api: DB 스키마, 주문·결제 로직, 쿠폰 지급 로직, 시드 데이터
+  "shop-api/src/ax_shop_api/db.py",
+  "shop-api/src/ax_shop_api/service.py",
+  "shop-api/src/ax_shop_api/promotions.py",
+  "shop-api/src/ax_shop_api/seed.py",
+  # 관문 규칙·CI·계약. 허용 경로 밖이지만 허용 목록이 넓어져도 막히도록 같이 둔다
+  ".github/",
+  "safety/",
+  "contracts/",
+]
+
+[[rules]]
+key = "pr_review_mismatch"
+action = "merge_pr"
+metric = "param"
+field = "review_mismatch_count"
+op = ">="
+value = 2
+
+[[rules]]
+key = "pr_linked_incident"
+action = "merge_pr"
+metric = "param"
+field = "linked_incident_count"
+op = ">"
+value = 0
+
+[[rules]]
+key = "merge_irreversible"
+action = "merge_pr"
+metric = "param"
+field = "irreversible_count"
+op = ">"
+value = 0
