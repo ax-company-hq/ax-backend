@@ -1,0 +1,77 @@
+{
+  "data": {
+    "collected_at": "2026-10-22T09:05:00Z",
+    "entries": [
+      {
+        "area": "catalog",
+        "member_id": "emp_05",
+        "role": "owner",
+        "shift_end": "2026-10-22T18:00:00Z",
+        "shift_start": "2026-10-22T09:00:00Z"
+      },
+      {
+        "area": "infra-ops",
+        "member_id": "emp_08",
+        "role": "owner",
+        "shift_end": "2026-10-22T21:00:00Z",
+        "shift_start": "2026-10-22T09:00:00Z"
+      },
+      {
+        "area": "infra-ops",
+        "member_id": "emp_09",
+        "role": "backup",
+        "shift_end": "2026-10-23T09:00:00Z",
+        "shift_start": "2026-10-22T21:00:00Z"
+      },
+      {
+        "area": "payment",
+        "member_id": "emp_01",
+        "role": "owner",
+        "shift_end": "2026-10-22T18:00:00Z",
+        "shift_start": "2026-10-22T09:00:00Z"
+      },
+      {
+        "area": "payment",
+        "member_id": "emp_02",
+        "role": "backup",
+        "shift_end": "2026-10-23T09:00:00Z",
+        "shift_start": "2026-10-22T18:00:00Z"
+      },
+      {
+        "area": "search",
+        "member_id": "emp_03",
+        "role": "owner",
+        "shift_end": "2026-10-22T18:00:00Z",
+        "shift_start": "2026-10-22T09:00:00Z"
+      },
+      {
+        "area": "search",
+        "member_id": "emp_04",
+        "role": "backup",
+        "shift_end": "2026-10-23T09:00:00Z",
+        "shift_start": "2026-10-22T18:00:00Z"
+      },
+      {
+        "area": "support-desk",
+        "member_id": "emp_06",
+        "role": "owner",
+        "shift_end": "2026-10-22T18:00:00Z",
+        "shift_start": "2026-10-22T09:00:00Z"
+      },
+      {
+        "area": "support-desk",
+        "member_id": "emp_07",
+        "role": "backup",
+        "shift_end": "2026-10-23T09:00:00Z",
+        "shift_start": "2026-10-22T18:00:00Z"
+      }
+    ],
+    "gap_areas": [
+      "catalog",
+      "inventory"
+    ]
+  },
+  "meta": {
+    "tenant_id": "shop-demo"
+  }
+}

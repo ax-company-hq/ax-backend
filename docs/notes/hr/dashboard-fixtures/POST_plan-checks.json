@@ -1,0 +1,30 @@
+{
+  "data": {
+    "computed": {
+      "basis": "기각 카드 card_9304adb5e780의 결정 시각 2026-10-22T09:00:00+00:00",
+      "days_since_rejected": 0
+    },
+    "findings": [
+      {
+        "card_ids": [
+          "card_9304adb5e780"
+        ],
+        "code": "REJECTED_BEFORE",
+        "level": "warn",
+        "message": "이미 기각된 안과 비슷하다: [기각한 안] 결제 서버 캐시 도입안을 기각했다 (0일 전 기각, 이유: 결제 정합성 위험)"
+      }
+    ],
+    "no_related_cards": false,
+    "similar_cards": [
+      {
+        "card_id": "card_9304adb5e780",
+        "status": "active",
+        "summary": "[기각한 안] 결제 서버 캐시 도입안을 기각했다"
+      }
+    ],
+    "verdict": "warn"
+  },
+  "meta": {
+    "tenant_id": "shop-demo"
+  }
+}

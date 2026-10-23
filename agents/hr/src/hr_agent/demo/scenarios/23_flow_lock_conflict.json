@@ -1,0 +1,65 @@
+{
+  "title": "같은 영역에 겹치는 변경은 잠금으로 막는다",
+  "description": "payment 영역 발령이 진행 중일 때 같은 영역의 다른 변경은 LOCKED로 거절된다. 먼저 것을 확정해 잠금이 풀리면 다음 변경을 받는다.",
+  "steps": [
+    {
+      "skill": "request_assignment_change",
+      "requester": "orchestrator",
+      "context_id": "ctx_asg_0001",
+      "label": "첫 변경",
+      "input": {
+        "change_kind": "transfer",
+        "member_id": "emp_01",
+        "area": "payment"
+      },
+      "expect": {
+        "status": "completed",
+        "outcome": "requested"
+      }
+    },
+    {
+      "skill": "request_assignment_change",
+      "requester": "orchestrator",
+      "context_id": "ctx_asg_0002",
+      "label": "겹치는 변경은 잠금",
+      "input": {
+        "change_kind": "shift",
+        "member_id": "emp_02",
+        "area": "payment"
+      },
+      "expect": {
+        "status": "completed",
+        "outcome": "LOCKED"
+      }
+    },
+    {
+      "skill": "confirm_reassignment",
+      "requester": "orchestrator",
+      "context_id": "ctx_asg_0001",
+      "label": "첫 변경 확정(잠금 해제)",
+      "input": {
+        "change_id": "${step1.output.change_id}",
+        "successor_id": "emp_02"
+      },
+      "expect": {
+        "status": "completed",
+        "outcome": "confirmed"
+      }
+    },
+    {
+      "skill": "request_assignment_change",
+      "requester": "orchestrator",
+      "context_id": "ctx_asg_0002",
+      "label": "이제 받아들인다",
+      "input": {
+        "change_kind": "shift",
+        "member_id": "emp_02",
+        "area": "payment"
+      },
+      "expect": {
+        "status": "completed",
+        "outcome": "requested"
+      }
+    }
+  ]
+}

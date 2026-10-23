@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "UPSTREAM_TIMEOUT",
+    "message": "hr이 제때 응답하지 않았다"
+  }
+}

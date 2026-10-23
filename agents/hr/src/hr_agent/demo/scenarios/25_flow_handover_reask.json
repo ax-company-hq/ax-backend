@@ -1,0 +1,43 @@
+{
+  "title": "답 없는 인계자 질문은 기한 뒤 다시 묻는다",
+  "description": "인수인계 질문에 답이 없으면 60분 뒤 같은 요청을 다시 보낼 때 '다시 묻습니다 2번째'로 바뀌어 돌아온다.",
+  "steps": [
+    {
+      "skill": "start_handover",
+      "requester": "orchestrator",
+      "context_id": "ctx_hnd_0001",
+      "label": "인수인계 시작",
+      "input": {
+        "owner_id": "emp_03",
+        "successor_id": "emp_04"
+      },
+      "expect": {
+        "status": "input-required",
+        "output": {
+          "gap_count": 3
+        }
+      }
+    },
+    {
+      "action": "advance",
+      "label": "61분 경과",
+      "minutes": 61
+    },
+    {
+      "skill": "start_handover",
+      "requester": "orchestrator",
+      "context_id": "ctx_hnd_0001",
+      "label": "같은 요청 다시",
+      "input": {
+        "owner_id": "emp_03",
+        "successor_id": "emp_04"
+      },
+      "expect": {
+        "status": "input-required",
+        "output_has": [
+          "questions.0.question"
+        ]
+      }
+    }
+  ]
+}

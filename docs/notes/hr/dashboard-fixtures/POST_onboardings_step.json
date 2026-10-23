@@ -1,0 +1,46 @@
+{
+  "data": {
+    "onboarding_id": "onb_8425cb0dbab5",
+    "progress": 40,
+    "steps": [
+      {
+        "card_id": null,
+        "done": true,
+        "order": 1,
+        "step_id": "stp_onb_8425cb0dbab5_1",
+        "title": "payment 영역의 담당·교대와 진행 중인 일을 훑어본다"
+      },
+      {
+        "card_id": "card_9304adb5e780",
+        "done": true,
+        "order": 2,
+        "step_id": "stp_onb_8425cb0dbab5_2",
+        "title": "결정 읽기: [기각한 안] 결제 서버 캐시 도입안을 기각했다"
+      },
+      {
+        "card_id": "card_ef926aecb3c2",
+        "done": false,
+        "order": 3,
+        "step_id": "stp_onb_8425cb0dbab5_3",
+        "title": "결정 읽기: [기획 확정] 결제 재시도를 최대 2회로 확정했다"
+      },
+      {
+        "card_id": null,
+        "done": false,
+        "order": 4,
+        "step_id": "stp_onb_8425cb0dbab5_4",
+        "title": "담당·예비 담당 연락처를 명부에서 확인한다"
+      },
+      {
+        "card_id": null,
+        "done": false,
+        "order": 5,
+        "step_id": "stp_onb_8425cb0dbab5_5",
+        "title": "영역 접근 권한을 확인한다"
+      }
+    ]
+  },
+  "meta": {
+    "tenant_id": "shop-demo"
+  }
+}

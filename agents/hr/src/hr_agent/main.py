@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
+
+from fastapi import FastAPI
 
 from ax_agent_template.server import create_agent_app
 from ax_contracts.schemas import AgentCard
+from hr_agent.config import HrSettings
 from hr_agent.handlers import HANDLERS
 
 
@@ -29,3 +35,21 @@ def load_card() -> AgentCard:
 
 
 app = create_agent_app(load_card(), HANDLERS)
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """`HR_TIMER=1`이면 교대 시각 점검(곧 끝나는 교대의 인수인계 자동 시작)을 주기로 돌린다."""
+    task = None
+    if HrSettings.from_env().timer_enabled:
+        from hr_agent.roster.timer import run_forever
+
+        task = asyncio.create_task(run_forever())
+    try:
+        yield
+    finally:
+        if task is not None:
+            task.cancel()
+
+
+app.router.lifespan_context = _lifespan

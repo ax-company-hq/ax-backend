@@ -82,6 +82,7 @@ class Request(DomainModel):
     # 요청 부서 쪽 참조 ID (예: 고객지원 문의 inq_12). 저장만 하고 판정(중복·간단 요청)에 안 쓴다
     source_ref: str | None = None
     evidence_ids: list[str] = Field(default_factory=list)  # 요청 부서가 보낸 근거 ID
+    flow: bool = False  # 들어온 뒤 사람 클릭 없이 다음 단계로 이어 간다 (일반 요청·개선 초안)
 
 
 class ParaWarn(DomainModel):
