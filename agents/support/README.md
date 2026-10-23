@@ -23,6 +23,8 @@
 | `reject_draft` | A | dashboard-api | 거절한 초안 기록 |
 | `set_inquiry_status` | A | dashboard-api, orchestrator | 상태 변경 |
 | `request_compensation` | A | dashboard-api, orchestrator | 보상 단가 판정 + 마케팅 `issue_coupon(compensation)` 직렬 요청 (DEP-CS-02) |
+| `request_change` | A | dashboard-api, orchestrator | 변경 요청을 기획개발 `create_ticket`으로 보내고 `ctx_req_`를 문의와 연결 |
+| `list_change_requests` | read | dashboard-api, orchestrator | 문의·변경 요청 연결 목록 |
 | `list_claims`, `get_claim`, `claim_stats`, `claim_queue` | read | dashboard-api, orchestrator | 클레임 목록·상세(판정 근거·감사 기록)·건수·보상 큐 |
 | `inquiry_overview` | read | dashboard-api, orchestrator, data | KPI(초안 채택률·수정 정도·가드 적중·분류별 건수)와 답변 대기 문의 (긴급도·대기 시간 순) |
 | `detect_inquiry_surge` | read | dashboard-api, orchestrator, data | 분류별 문의 급증 감지 (DEP-CS-05): 최근 창 건수를 평소 창 평균과 견줌 |
@@ -51,7 +53,9 @@
 - 상태: `requested`(결과 대기) → `completed` 또는 `declined`. 같은 결과를 다시 받으면 재전송으로 보고 그대로 두며, 이미 끝난 요청에 다른 결과가 오면 충돌이다. 이미 끝난 요청에 새 문의가 묶이면 그 결과(와 공지)를 이어받는다. 상태 이름은 계약에 맞춰 `CHANGE_STATUSES` 한 곳에서 바꾼다.
 - 처리가 끝난(`completed`) 요청에는 고객 공지가 필요했을 때 마케팅 `notice_id`를 한 번 붙일 수 있다 (연결된 모든 문의에). 공지 조회 후 답변은 이미 `notice_id` 입력으로 동작한다.
 - DB가 있으면 `change_requests` 테이블에 저장되어 재시작해도 이어진다.
-- **아직 없는 것**: 기획개발 `create_ticket`을 부르는 skill과 결과를 받는 skill. 계약(#172)이 머지되고 기획개발이 skill을 등록한 뒤에 붙인다 (등급 A, 요청 가능: support·marketing·hr·data·orchestrator).
+- skill `request_change`(A)가 기획개발 `create_ticket`을 직통으로 부른다 (`change_handlers.py`). 입력은 `inquiry_id`, `title`(바꿀 내용 한 줄), `evidence`(건수·ID 같은 사실 요약), `evidence_ids`이고, 제목·근거에 전화번호 등 개인정보가 있으면 보내기 전에 거부한다. 고객 원문은 보내지 않는다(`untrusted`도 비움). 기획개발이 자기 `execute()`로 요청을 만들어 `REQ-n`과 `ctx_req_`를 돌려주면(`created` 또는 `linked_duplicate`) 그 사건을 문의와 연결해 저장한다. 같은 멱등 키의 재시도는 기획개발에 다시 보내지 않는다. 기획개발이 실패·시간 초과면 `planning_unavailable`로 실패하고 아무것도 연결하지 않으며, 보류 같은 정책 거절은 `planning_<outcome>`으로 그대로 알린다.
+- `list_change_requests`(읽기)는 연결 목록을 문의·사건·상태로 걸러 돌려준다.
+- **아직 없는 것**: 결과 통지를 받는 skill. 통지 형식이 계약에 없고 기획개발도 "요청 부서 수신 skill이 생기기 전까지는 활동 기록만" 남긴다. 형식이 정해지면 저장소의 `record_result`·`attach_notice`에 연결한다.
 
 ## 영속 저장소 (PostgreSQL)
 `SUPPORT_PG_DSN`을 설정하면 문의·클레임·멱등 결과·보상 번호가 DB에 저장되어 재시작해도 이어진다. 비우면(CI·목 모드) 예전처럼 메모리만 쓴다. compose는 `support-db`(postgres:16, 호스트 포트 없음)를 함께 띄우고 DSN을 서비스 이름으로 덮어쓴다 (비밀번호 `SUPPORT_DB_PASSWORD`).

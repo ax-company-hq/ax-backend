@@ -218,6 +218,26 @@
       "allowed_requesters": ["dashboard-api", "orchestrator", "data"],
       "verifier": null,
       "priority": "recommended"
+    },
+    {
+      "id": "request_change",
+      "description": "문의에서 나온 변경 요청을 기획개발 create_ticket(직통, 기획개발이 execute)로 보내고, 돌려받은 ctx_req_ 사건 번호를 문의와 연결해 저장한다. 같은 요청이 있으면 linked_duplicate로 묶여 한 사건에 문의가 여러 개 붙을 수 있다. 제목·근거는 요약만 받고 개인정보가 있으면 거부한다. 고객 원문은 보내지 않는다.",
+      "input_schema": "agents/support/src/support_agent/change_schemas.py#RequestChangeInput",
+      "output_schema": "agents/support/src/support_agent/change_schemas.py#RequestChangeOutput",
+      "grade": "A",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "list_change_requests",
+      "description": "문의와 기획개발 변경 요청의 연결 목록 (문의·사건·상태로 거름).",
+      "input_schema": "agents/support/src/support_agent/change_schemas.py#ListChangeRequestsInput",
+      "output_schema": "agents/support/src/support_agent/change_schemas.py#ListChangeRequestsOutput",
+      "grade": "read",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "optional"
     }
   ]
 }
