@@ -5,13 +5,18 @@
 
 ## 내 에이전트를 총괄 목업에 붙여 보는 법
 1. 내 에이전트를 로컬에서 띄운다(예: 재무 `8105`).
-2. 총괄을 혼합 모드로 띄운다. 내 부서만 실제, 나머지는 가짜다.
+2. 총괄을 띄운다. 빈 포트를 찾아 목 모드로 뜨고 브라우저가 열린다(8000번을 다른 서비스가 써도 안전).
 ```
-ORCHESTRATOR_MOCK=1 ORCHESTRATOR_REAL_DEPTS=finance   uv run uvicorn ax_orchestrator.main:app --app-dir orchestrator/src --port 8000
+uv run python -m ax_orchestrator
 ```
+   내 부서만 실제로 붙이려면(나머지는 가짜) 부서를 지정한다.
+```
+ORCHESTRATOR_REAL_DEPTS=finance uv run python -m ax_orchestrator
+```
+   - 터미널에 나온 `http://localhost:<포트>/demo`를 연다. 포트를 직접 정하려면 `--port 8002`, 브라우저를 안 열려면 `--no-browser`.
    - 주소는 `AX_<부서>_URL`(없으면 기본 포트 표), 여러 부서는 쉼표로(`hr,finance`).
    - 내 에이전트도 목 모드(`AGENT_TEMPLATE_MOCK=1`)면 토큰 검증이 맞는다.
-3. `http://localhost:8000/demo`에서 장애를 주입한다. 부서 카드에 `실제`/`목` 표시가 나오고, 내 skill 호출이 사건 흐름에 보인다.
+3. `/demo`에서 장애를 주입한다. 부서 카드에 `실제`/`목` 표시가 나오고, 내 skill 호출이 사건 흐름에 보인다.
 4. `GET /api/registry`로 내 카드가 제대로 읽혔는지 확인한다(`unavailable`에 내 부서가 있으면 카드 수집 실패).
 
 ## 이벤트를 총괄에 보내 보는 법 (발행하는 부서용)
@@ -25,7 +30,7 @@ ORCHESTRATOR_MOCK=1 ORCHESTRATOR_REAL_DEPTS=finance   uv run uvicorn ax_orchestr
 | 그 밖의 이벤트 | 무시 |
 
 ```
-curl -X POST localhost:8000/api/events -H 'Content-Type: application/json' -d '{
+curl -X POST localhost:<포트>/api/events -H 'Content-Type: application/json' -d '{
   "event_id": "evt_demo01", "type": "shop.degraded", "occurred_at": "2026-10-16T01:00:00Z",
   "source": "shop-api", "idempotency_key": "evt_demo01",
   "data": {"component": "payment", "metric_code": "error_rate_5xx", "value": 0.42}}'
