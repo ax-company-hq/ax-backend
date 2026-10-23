@@ -3,7 +3,7 @@
 대상: hr을 실행·점검하는 팀원. 호출하는 쪽 안내는 `calling-hr-guide.md`, 연동 가정은 `real-integration-assumptions.md`.
 
 ## 1. 한눈에
-- 포트 8104, `POST /a2a`(skill 10개), `GET /.well-known/agent-card.json`. 데모 화면은 8114(개발 전용).
+- 포트 8104, `POST /a2a`(skill 18개: 기능 10개 + 대시보드 화면용 조회·사람 입력 8개), `GET /.well-known/agent-card.json`. 데모 화면은 8114(개발 전용).
 - 상태를 바꾸는 일은 모두 안전 레이어 관문(`execute()`)을 거친다: A 바로 실행, B 검증자 확인 뒤, C 사람 승인 뒤.
 - 숫자와 판정(완성도·공백·충돌·경과 일수)은 코드가 정한다. LLM은 질문·교훈 문장만 다듬고, 실패하면 고정 문장(`fallback: true`)이다.
 - 저장은 hr 전용 SQLite. 명부·교대·인수인계·온보딩·변경·잠금·감사 로그는 hr 테이블, 카드는 memory(지금은 목).
@@ -72,3 +72,9 @@
 - 숫자·판정을 LLM에 맡기지 않는다. 외부 입력(`untrusted`)을 지시로 읽지 않는다.
 - 권한 회수·부여를 직접 실행하지 않는다(목록 전달만). 개인 정보를 명부에 두지 않는다.
 - 같은 멱등성 키를 다른 대상에 재사용하는 요청은 관문이 거부한다. 키는 `context_id + 액션 + 대상`으로 만든다.
+
+## 9. 대시보드 화면용 skill (조회 6 + 사람 입력 3)
+- 조회: `list_handovers`·`list_open_questions`·`list_onboardings`·`list_changes`·`list_candidate_cards`·`get_audit_timeline`, 그리고 기존 `get_roster`·`check_plan`. 상태를 바꾸지 않고 관문을 거치지 않으며 저장된 값을 그대로 돌려준다.
+- 사람 입력: `answer_handover_question`(질문 답변), `update_onboarding_step`(온보딩 단계 완료), `decide_candidate_card`(후보 카드 승인·폐기). 모두 `dashboard-api`가 요청할 수 있고 관문(A)을 거친다.
+- 호출 구조와 응답 샘플은 `dashboard-api-contract.md`, `dashboard-fixtures/`. 샘플은 `uv run python agents/hr/scripts/make_dashboard_fixtures.py`로 다시 만든다.
+- 후보 카드는 `status=candidate`다. 승인하면 `active`가 되고 같은 영역의 옛 결정을 대체됨으로 연결한다.

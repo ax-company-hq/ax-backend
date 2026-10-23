@@ -70,7 +70,7 @@ hr에게 "이 일이 있었다"고 알리는 가장 흔한 방법은 `record_cas
 | 증상 | 원인 | 고치기 |
 |---|---|---|
 | `rejected` / `FORBIDDEN_SKILL` | 요청자가 Agent Card의 `allowed_requesters`에 없음 | 토큰의 에이전트 이름 확인. `record_case`는 orchestrator·planning·support·marketing·finance·data·infra만 가능. 인수인계·발령·퇴직 같은 사람 변화 skill은 orchestrator만 부른다 |
-| `failed` / `INVALID_INPUT` | 입력이 `RecordCase` 형식과 다름, `idempotency_key` 없음 | 필드 이름과 `kind` 값(`spec_confirmed` 등 10종) 확인 |
+| `rejected` / `INVALID_INPUT` | 입력이 `RecordCase` 형식과 다름, `idempotency_key` 없음 | 필드 이름과 `kind` 값(`spec_confirmed` 등 10종) 확인 |
 | 카드가 계속 `candidate` | 이유·대안·근거 중 둘 이상이 비어 있음 | 사실만큼은 채워서 보낸다 |
 | 같은 결정이 카드 두 장 | `idempotency_key`가 매번 달라짐 | 대상(PR 번호 등)으로 키를 고정 |
 | 기각한 안을 보냈는데 계획 비교에 안 걸림 | `kind`가 `decision_rejected`가 아니거나 `area:` 누락 | 둘 다 확인 |

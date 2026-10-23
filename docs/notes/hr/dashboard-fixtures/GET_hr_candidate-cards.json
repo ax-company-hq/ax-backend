@@ -1,0 +1,44 @@
+{
+  "data": [
+    {
+      "author": "support",
+      "body": "결정: 야간 알림 기준을 낮추기로 했다\n이유: 확인할 수 없음\n검토한 대안: 없음\n근거: 확인할 수 없음",
+      "card_id": "card_d2c8a53d7ee0",
+      "confidence": "low",
+      "context_id": "ctx_dec_0003",
+      "created_at": "2026-10-22T09:00:00Z",
+      "extra": {
+        "alternatives_rejected": [],
+        "area": "search",
+        "candidate": true,
+        "decided_at": "2026-10-22T09:00:00+00:00",
+        "decision": "야간 알림 기준을 낮추기로 했다",
+        "evidence": {
+          "refs": [],
+          "source_text_ref": null
+        },
+        "extracted": false,
+        "outcome": "adopted",
+        "outcome_inferred": false,
+        "owner": "support",
+        "reason": null,
+        "record_kind": "decision"
+      },
+      "kind": "decision",
+      "source_refs": [],
+      "status": "candidate",
+      "superseded_by": null,
+      "tags": [
+        "decision",
+        "area:search",
+        "candidate"
+      ],
+      "tenant_id": "shop-demo",
+      "title": "[결정] 야간 알림 기준을 낮추기로 했다"
+    }
+  ],
+  "meta": {
+    "tenant_id": "shop-demo",
+    "total": 1
+  }
+}

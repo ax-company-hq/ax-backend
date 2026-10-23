@@ -21,15 +21,18 @@ Agent Card: `agent-card.json` (`/.well-known/agent-card.json`으로 공개). 입
 | skill | 등급 | 하는 일 | 요청 가능 |
 |---|---|---|---|
 | `record_case` | A | 기록을 결정 카드로 정리해 저장 (결정 없으면 기록만, 확신 낮으면 후보) | orchestrator·planning·support·marketing·finance·data·infra |
-| `get_roster` | 조회 | 영역별 담당·교대, 담당 없음·교대 공백 영역 | orchestrator·planning·support·marketing·finance·data·infra |
+| `get_roster` | 조회 | 영역별 담당·교대, 담당 없음·교대 공백 영역 | orchestrator·dashboard-api·planning·support·marketing·finance·data·infra |
 | `start_handover` | A | 인수인계 초안, 빈 자리 질문, 완성도(코드 계산) | orchestrator |
-| `answer_handover_question` | A | 인계자 답변 반영, 같은 답은 한 번만 | orchestrator |
+| `answer_handover_question` | A | 인계자 답변 반영, 같은 답은 한 번만 | orchestrator·dashboard-api |
 | `confirm_handover` | B(planning 검증) / 완성도 미달 C | 인수인계 확정 | orchestrator |
 | `start_onboarding` | A | 읽을 결정 카드 순서·확인 목록·진행률 | orchestrator |
 | `request_assignment_change` | A | 교대·발령·퇴직·입사 요청: 확인 목록·후임 후보·권한 목록(전달만) | orchestrator |
 | `confirm_reassignment` | B(코드 규칙) | 담당 공백·중복이 없을 때만 재배치 적용, 적용 뒤 재검증·되돌리기 | orchestrator |
 | `confirm_offboarding` | C | 퇴직 확정은 보류 큐에서 사람이 승인해야 적용 | orchestrator |
-| `check_plan` | 조회 | 새 계획을 과거 결정과 비교 (기각됨·충돌·일치·기록에 없음) | orchestrator·planning |
+| `check_plan` | 조회 | 새 계획을 과거 결정과 비교 (기각됨·충돌·일치·기록에 없음) | orchestrator·dashboard-api·planning |
+| `update_onboarding_step` | A | 온보딩 단계 완료 표시, 진행률은 코드가 다시 계산 | orchestrator·dashboard-api |
+| `decide_candidate_card` | A | 확신 낮은 후보 카드를 사람이 승인(확정)·폐기 | orchestrator·dashboard-api |
+| `list_handovers`·`list_open_questions`·`list_onboardings`·`list_changes`·`list_candidate_cards`·`get_audit_timeline` | 조회 | 대시보드 인사 화면용 현황(인수인계·인계자 질문·온보딩·변경·후보 카드·감사 기록) | orchestrator·dashboard-api |
 
 ## 4. 의존
 `ax-contracts`, `ax-agent-template`. 다른 부서 폴더를 import하지 않는다.
