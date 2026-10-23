@@ -48,6 +48,10 @@ class InquiryStore:
         ]
         return sorted(items, key=lambda c: (c.updated_at, c.id), reverse=True)
 
+    def all(self) -> list[Conversation]:
+        """집계용 전체 문의 (읽기 전용으로 쓴다)."""
+        return list(self._conversations.values())
+
     def get(self, inquiry_id: int) -> Conversation | None:
         return self._conversations.get(inquiry_id)
 

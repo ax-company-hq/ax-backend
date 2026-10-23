@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from difflib import SequenceMatcher
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
@@ -22,7 +23,7 @@ from ax_agent_template.client import call_agent
 from ax_agent_template.execute import execute
 from ax_agent_template.server import error_result
 from ax_contracts.schemas import AgentRequest, AgentResult, Evidence, TaskStatus
-from support_agent import compensation, drafting, guard, notices
+from support_agent import compensation, drafting, events, guard, notices
 from support_agent.schemas import (
     AddCustomerMessageInput,
     CheckReplyInput,
@@ -195,6 +196,7 @@ async def create_inquiry(request: AgentRequest) -> AgentResult:
             first_message=message,
             analysis=analysis,
         )
+        await events.emit_inquiry_received(request, conversation)
         return conversation.model_dump(mode="json"), fallback
 
     return await _write(
@@ -217,9 +219,9 @@ async def add_customer_message(request: AgentRequest) -> AgentResult:
 
     async def apply() -> tuple[dict[str, Any], bool]:
         analysis, fallback = await drafting.analyze(message, conversation.subject, extra)
-        return STORE.add_customer_message(parsed.inquiry_id, message, analysis).model_dump(
-            mode="json"
-        ), fallback
+        updated = STORE.add_customer_message(parsed.inquiry_id, message, analysis)
+        await events.emit_inquiry_received(request, updated)
+        return updated.model_dump(mode="json"), fallback
 
     return await _write(
         request,
@@ -251,12 +253,17 @@ async def send_reply(request: AgentRequest) -> AgentResult:
     async def apply() -> tuple[dict[str, Any], bool]:
         conversation = STORE.add_agent_message(parsed.inquiry_id, text)
         if parsed.draft_style:
-            edited = parsed.draft_text is not None and parsed.draft_text.strip() != text
+            draft = (parsed.draft_text or "").strip()
+            edited = parsed.draft_text is not None and draft != text
             STORE.draft_events.append(
                 {
                     "inquiry_id": parsed.inquiry_id,
                     "style": parsed.draft_style,
                     "result": "edited" if edited else "accepted",
+                    # 초안과 보낸 답변이 다른 정도 (0 같음 ~ 1 완전히 다름). 수정한 경우만 쓴다
+                    "edit_ratio": round(1 - SequenceMatcher(None, draft, text).ratio(), 3)
+                    if edited
+                    else None,
                 }
             )
         return conversation.model_dump(mode="json"), False
