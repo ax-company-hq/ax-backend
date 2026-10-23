@@ -56,21 +56,30 @@ class IncidentManager:
 
     async def handle(self, env: EventEnvelope) -> Incident | None:
         """이벤트 하나를 처리한다. 새로 연 사건 또는 합쳐진 사건을 돌려준다."""
+        _, inc = await self.process(env)
+        return inc
+
+    async def process(self, env: EventEnvelope) -> tuple[str, Incident | None]:
+        """처리 결과를 `(outcome, 사건)`으로 돌려준다.
+
+        outcome: `duplicate`(같은 event_id) · `ignored`(총괄 소관 아님) ·
+        `noted`(기록만, 열린 사건이 있으면 거기에) · `merged`(열린 사건에 합침) · `opened`(새 사건).
+        """
         if env.event_id in self._seen:
-            return None
+            return "duplicate", None
         self._seen.add(env.event_id)
         verdict = self.judge(env)
         component = str(env.data.get("component") or "api")
         existing = self.open_for(component)
         if verdict == "ignore":
-            return None
+            return "ignored", None
         if verdict == "note":
             if existing is not None:
                 existing.log(f"이벤트 수신: {env.type.value} ({env.source})")
-            return existing
+            return "noted", existing
         if existing is not None:
             existing.log(f"같은 사건에 합침: {env.type.value} ({env.source}, {env.event_id})")
-            return existing
+            return "merged", existing
         inc = Incident(
             context_id=Incident.new_context_id(),
             kind="scenario_a",
@@ -81,7 +90,7 @@ class IncidentManager:
         inc.log(f"이벤트 수신: {env.type.value} ({env.source}, {iso(env.occurred_at)})")
         self.incidents[inc.context_id] = inc
         self._tasks[inc.context_id] = asyncio.create_task(self.engine.run(inc, self.plan_factory()))
-        return inc
+        return "opened", inc
 
     @staticmethod
     def _title(env: EventEnvelope, component: str) -> str:

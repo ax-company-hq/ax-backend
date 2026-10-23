@@ -5,7 +5,7 @@
 ## 1. 받는 것
 | 입구 | 형식 | 처리 |
 | --- | --- | --- |
-| 이벤트 버스 | `EventEnvelope` | `event_id` 중복 제거 → 사건 판단 → 사건이면 `ctx_inc_<hex>` 발급 |
+| 이벤트 버스(지금은 개발용 `POST /api/events`) | `EventEnvelope` | `event_id` 중복 제거 → 사건 판단 → 사건이면 `ctx_inc_<hex>` 발급 |
 | (후속) `POST /a2a` | `AgentRequest` | 총괄 자신의 skill(`get_incident`, `list_incidents`)은 O5 이후 |
 
 구독 이벤트: `shop.degraded`, `shop.recovered`, `infra.anomaly_detected`, `metric.anomaly`, `support.inquiry_received`, `support.inquiry_surge`.

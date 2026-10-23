@@ -104,3 +104,48 @@ def test_demo_wrong_owner_option_is_transferred_not_failed(monkeypatch) -> None:
         step = next(s for s in data["steps"] if s["step_id"] == "publish_notice")
         assert (step["status"], step["transferred_to"]) == ("completed", "support")
         assert data["status"] == "resolved"
+
+
+def _event_json(event_id: str, type_: str, **data) -> dict:
+    return {
+        "event_id": event_id,
+        "type": type_,
+        "occurred_at": "2026-10-16T01:00:00Z",
+        "source": "shop-api",
+        "idempotency_key": event_id,
+        "data": {"component": "payment", **data},
+    }
+
+
+def test_event_intake_reports_outcome(monkeypatch) -> None:
+    monkeypatch.setattr(state, "mock", True)
+    monkeypatch.setattr(state, "latency", 0.2)
+    monkeypatch.setattr(state, "manager", None)
+    with TestClient(app) as client:
+        opened = client.post("/api/events", json=_event_json("evt_a", "shop.degraded")).json()
+        assert opened["data"]["outcome"] == "opened"
+        ctx = opened["data"]["context_id"]
+        assert ctx.startswith("ctx_inc_")
+        same = client.post("/api/events", json=_event_json("evt_a", "shop.degraded")).json()
+        assert same["data"] == {"outcome": "duplicate", "context_id": None}
+        merged = client.post(
+            "/api/events", json=_event_json("evt_b", "infra.anomaly_detected")
+        ).json()
+        assert merged["data"] == {"outcome": "merged", "context_id": ctx}
+        noted = client.post(
+            "/api/events", json=_event_json("evt_c", "support.inquiry_received")
+        ).json()
+        assert noted["data"] == {"outcome": "noted", "context_id": ctx}
+        ignored = client.post("/api/events", json=_event_json("evt_d", "order.created")).json()
+        assert ignored["data"]["outcome"] == "ignored"
+        low = client.post(
+            "/api/events", json=_event_json("evt_e", "metric.anomaly", severity="low")
+        ).json()
+        assert low["data"]["outcome"] == "noted"
+        bad = client.post("/api/events", json={"event_id": "x"})
+        assert bad.status_code == 422
+        for _ in range(300):
+            data = client.get(f"/api/incidents/{ctx}").json()["data"]
+            if data["status"] != "open":
+                break
+            time.sleep(0.05)

@@ -153,6 +153,21 @@ async def inject(req: DemoRequest | None = None) -> dict:
     return {"data": {"context_id": inc.context_id}, "meta": {"mock": True}}
 
 
+@app.post("/api/events")
+async def receive_event(env: EventEnvelope) -> dict:
+    """다른 부서가 이벤트를 보내 볼 수 있는 개발용 입구(목·혼합 모드).
+
+    실제 전달은 Redis Streams(agent-template TODO)로 바뀌며, 그때도 판단은 같은 `manager.process`다.
+    """
+    _require_mock()
+    manager = state.manager or await state.build()
+    outcome, inc = await manager.process(env)
+    return {
+        "data": {"outcome": outcome, "context_id": inc.context_id if inc else None},
+        "meta": {"mock": True},
+    }
+
+
 @app.post("/api/incidents/{context_id}/holds/{step_id}")
 async def decide(context_id: str, step_id: str, body: Decision) -> dict:
     """대시보드 승인 대기열의 사람 결정을 전달한다. 총괄이 승인하는 것이 아니다."""

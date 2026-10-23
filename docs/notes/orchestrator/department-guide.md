@@ -14,6 +14,24 @@ ORCHESTRATOR_MOCK=1 ORCHESTRATOR_REAL_DEPTS=finance   uv run uvicorn ax_orchestr
 3. `http://localhost:8000/demo`에서 장애를 주입한다. 부서 카드에 `실제`/`목` 표시가 나오고, 내 skill 호출이 사건 흐름에 보인다.
 4. `GET /api/registry`로 내 카드가 제대로 읽혔는지 확인한다(`unavailable`에 내 부서가 있으면 카드 수집 실패).
 
+## 이벤트를 총괄에 보내 보는 법 (발행하는 부서용)
+총괄이 구독하는 이벤트와 판정은 아래와 같다. 실제 전달은 Redis Streams(agent-template TODO)로 바뀌지만 판정 규칙은 같다. 지금은 개발용 입구 `POST /api/events`에 `EventEnvelope` JSON을 보내 확인한다.
+
+| 이벤트 | 총괄의 판정 |
+|---|---|
+| `shop.degraded`, `infra.anomaly_detected` | 사건 열기. 같은 `component`의 열린 사건이 있으면 합침 |
+| `metric.anomaly` | `data.severity`가 high·critical이면 사건, 아니면 기록만 |
+| `shop.recovered`, `support.inquiry_received`, `support.inquiry_surge` | 사건 아님. 열린 사건이 있으면 근거로 기록 |
+| 그 밖의 이벤트 | 무시 |
+
+```
+curl -X POST localhost:8000/api/events -H 'Content-Type: application/json' -d '{
+  "event_id": "evt_demo01", "type": "shop.degraded", "occurred_at": "2026-10-16T01:00:00Z",
+  "source": "shop-api", "idempotency_key": "evt_demo01",
+  "data": {"component": "payment", "metric_code": "error_rate_5xx", "value": 0.42}}'
+```
+응답 `data.outcome`: `opened`(새 사건) · `merged`(열린 사건에 합침) · `noted`(기록만) · `ignored`(소관 아님) · `duplicate`(같은 `event_id`). 사건은 `GET /api/incidents`, `/api/incidents/{context_id}`와 `/demo`에서 본다.
+
 ## 총괄의 공통 규칙
 - 모든 요청 `meta.path`는 `["orchestrator"]`로 시작, `idempotency_key = <context_id>:<skill>:<단계 id>`, `deadline`은 호출 시각 + 30초.
 - 실패(`failed`)는 2번, 마감 초과(`canceled`)는 1번 재시도한다. `rejected`(`FORBIDDEN_SKILL`·`HOP_LIMIT`·소관 아님)는 같은 skill을 가진 다른 부서로 이관한다.
