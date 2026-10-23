@@ -296,6 +296,19 @@ class Gate:
                 elif outside := rule.paths_outside(paths):
                     hits.append({"key": rule.key, "outside": outside, "allowed": rule.allowed})
                 continue
+            if rule.metric == "paths_avoid":
+                paths = request.params.get(rule.field or "")
+                if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+                    hits.append({"key": rule.key, "invalid": rule.field})
+                elif protected_hit := rule.paths_protected(paths):
+                    hits.append(
+                        {
+                            "key": rule.key,
+                            "protected_hit": protected_hit,
+                            "protected": rule.protected,
+                        }
+                    )
+                continue
             if rule.metric == "param":
                 value = request.params.get(rule.field or "")
                 if isinstance(value, bool) or not isinstance(value, int) or value < 0:

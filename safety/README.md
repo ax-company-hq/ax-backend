@@ -55,5 +55,6 @@ ax-contracts, ax-agent-template (`call_agent`, `publish`, 토큰 검증), 검증
 - LLM을 쓰지 않는다 (서비스, 코드 규칙만)
 - 기준표·레지스트리를 API로 바꾸지 않는다 (사람이 PR로만)
 - 부서별 보류 목록을 따로 두지 않는다 (C 보류 큐는 여기 하나)
-- 금액이 아닌 규칙(`param`·`paths_within`): `pr_changed_lines`·`pr_changed_files`·`pr_allowed_paths`(planning `generate_pr`, 검증자 = 안전 레이어 코드 규칙), `merge_changed_lines`·`merge_changed_files`·`merge_allowed_paths`·`pr_review_mismatch`·`pr_linked_incident`·`merge_irreversible`(planning `merge_pr`), `seller_risk`(판매자 심사). 값은 제안값. 규칙 키는 파일 안에서 겹치면 로드를 거부한다
+- 금액이 아닌 규칙(`param`·`paths_within`·`paths_avoid`): `pr_changed_lines`·`pr_changed_files`·`pr_allowed_paths`·`pr_protected_paths`(planning `generate_pr`, 검증자 = 안전 레이어 코드 규칙), `merge_changed_lines`·`merge_changed_files`·`merge_allowed_paths`·`merge_protected_paths`·`pr_review_mismatch`·`pr_linked_incident`·`merge_irreversible`(planning `merge_pr`), `seller_risk`(판매자 심사). 값은 제안값. 규칙 키는 파일 안에서 겹치면 로드를 거부한다
+- 보호 경로(`paths_avoid`, #169): `changed_paths` 중 하나라도 `protected` 목록의 경로와 같거나 그 아래면 걸려서 항상 C다. 결제 화면·로그인·API 클라이언트·환경값(shop-web), DB·주문/결제·쿠폰·시드(shop-api), `.github/`·`safety/`·`contracts/`. planning이 보낸 `irreversible_count`와 상관없이 안전 담당이 정한다. 필드가 없거나 문자열 목록이 아니면 걸린 것으로 본다(fail-closed)
 - v0은 저장소가 메모리라 재시작하면 기록이 비워진다 (TODO: postgres)
