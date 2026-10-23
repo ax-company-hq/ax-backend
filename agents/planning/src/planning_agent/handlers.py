@@ -4,8 +4,8 @@
   만든 뒤 `output`에 넣는다. 형식을 새로 정의하지 않는다.
 - `request.untrusted`는 읽지 않는다 (지시로 해석하지 않는다).
 - 원인 판정 문장을 만들지 않는다 (원인 판정은 infra 몫). 근거는 `evidence`에 붙인다.
-- 상태를 바꾸는 `link_incident`·`create_ticket`은 서비스 안에서 `execute()`를 거친다. 관문이 거부하면 실행하지
-  않고 `failed`(outcome `gate_rejected`)로 돌려준다.
+- 상태를 바꾸는 `link_incident`·`create_ticket`은 서비스 안에서 `execute()`를 거친다. 관문이
+  거부하면 실행하지 않고 `failed`(outcome `gate_rejected`)로 돌려준다.
 - 사람 버튼(기획서 확정·PR 머지·승급 승인)은 A2A로 받지 않는다. REST(`api.py`)로만 받는다.
 - hr 연동(`list_in_progress`·`verify_handover`, 계약 #103)은 읽기다. 담당자·영역 대응과 비교는
   `domain/handover.py`의 코드 규칙으로만 한다. 인계 내용의 좋고 나쁨은 판단하지 않는다.

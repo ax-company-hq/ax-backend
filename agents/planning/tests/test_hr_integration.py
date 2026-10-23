@@ -452,7 +452,7 @@ def _review(params: dict, action: str = "confirm_handover") -> dict:
 
 
 def _safety_verdict(result: dict) -> str:
-    """safety `call_verifier` 규칙: completed이고 decision == approved 또는 approved == true만 승인."""
+    """safety `call_verifier` 규칙: completed + (decision approved 또는 approved true)만 승인."""
     if result["status"] != "completed":
         return "unavailable"
     out = result["output"]

@@ -93,7 +93,7 @@ execute params (safety #171 `thresholds.toml` 규칙 키, 모두 도메인 상�
 | `confirm_spec` | `open_questions`·`warnings`·`basis_count`·`irreversible_count` (+ `auto`, 경고가 있으면 `warn_ignored`) | 남은 질문 수, 인사 경고가 붙은 문단 수, 근거 수, 바꿀 경로가 되돌릴 수 없는 영역에 닿는 요구사항 문단 수 |
 | `merge_pr` | `changed_lines`·`changed_files`·`changed_paths`·`review_mismatch_count`·`linked_incident_count`·`irreversible_count` (+ `auto`) | PR 크기·경로, 검수 불일치 횟수, 이 PR 문단 또는 같은 파일을 바꾼 PR 문단 중 장애 표시 수, 되돌릴 수 없는 영역 경로 수 |
 
-되돌릴 수 없는 영역(제안 목록, 확정은 safety·사람): `shop-api/payment/migrations/`(결제 데이터 삭제·변경), `shop-api/accounts/pii/`(개인정보 필드), `shop-api/settlement/payout/`(실제 송금·정산 연동). 허용 경로는 safety와 같은 `shop-api/`·`shop-web/`·`docs/`(#200). 머지 위험 경로 `shop-web/checkout/`·`shop-web/payment/`·`shop-web/account/`는 `merge_pr`의 `irreversible_count`에만 더해 항상 사람 확인(C)으로 보낸다(기획서 확정에는 안 셈). 문단에 `paths`가 있으면 그 경로로, 없으면 역추적 규칙으로 정한다.
+되돌릴 수 없는 영역(제안 목록, 확정은 safety·사람): `shop-api/payment/migrations/`(결제 데이터 삭제·변경), `shop-api/accounts/pii/`(개인정보 필드), `shop-api/settlement/payout/`(실제 송금·정산 연동). 허용 경로는 safety와 같은 `shop-api/`·`shop-web/`·`docs/`(#200). 머지 위험 경로 `shop-web/checkout/`·`shop-web/payment/`·`shop-web/account/`와 safety 보호 경로(#203 `merge_protected_paths`와 같은 값)는 `merge_pr`의 `irreversible_count`에만 더해 항상 사람 확인(C)으로 보낸다(기획서 확정에는 안 셈). 문단에 `paths`가 있으면 그 경로로, 없으면 역추적 규칙으로 정한다.
 
 경고 무시 확정 (FR-SPEC-006): 인사 경고(`warn`)가 남은 문단을 둔 채 `confirmSpec`을 하면 "warn 무시 진행"을 세 곳에 남긴다. `execute(confirm_spec)` params `warn_ignored`, `record_case`(kind `spec_confirmed`) params의 `record_case.summary`·`source_refs`와 `warn_ignored`, 활동 로그(point `audit.warn_ignored`, hr로 가는 `record_case` 활동).
 
