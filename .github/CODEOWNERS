@@ -1,6 +1,11 @@
 *                       @JangJaehyeonn @haakim7
-# 계약은 자동화 1단계(에이전트 리뷰)가 켜질 때까지 사람이 본다 — 1단계 이후 이 줄 삭제
-/contracts/             @haakim7 @2taeyoon
+# 자동화·규칙 파일: 재현·준하·태윤 중 한 명 승인
+/.github/               @JangJaehyeonn @haakim7 @2taeyoon
+/.claude/               @JangJaehyeonn @haakim7 @2taeyoon
+/scripts/               @JangJaehyeonn @haakim7 @2taeyoon
+/CLAUDE.md              @JangJaehyeonn @haakim7 @2taeyoon
+# 계약: 에이전트 리뷰 + 준하·태윤·재현 중 한 명 승인
+/contracts/             @haakim7 @2taeyoon @JangJaehyeonn
 # 에이전트 리뷰로 머지하는 곳 (소유자 없음)
 /agent-template/
 /orchestrator/

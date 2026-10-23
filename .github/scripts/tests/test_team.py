@@ -263,20 +263,36 @@ def test_guard_added_test_ok() -> None:
 
 def test_guard_deleted_file() -> None:
     v = guard([ch("agents/data/tests/test_x.py", "D")], BASE_TEST, "")
-    assert any("삭제" in x for x in v) and any("감소" in x for x in v)
+    assert "테스트 삭제 agents/data/tests/test_x.py::TestC.test_c" in v
+    assert any("assert 감소 3 → 0" in x for x in v)  # assert True는 세지 않음
 
 
 def test_guard_fewer_tests() -> None:
     head = BASE_TEST.replace("def test_b():\n    assert True\n", "")
-    assert any("test_ 함수 수 감소" in x for x in guard(
-        [ch("agents/data/tests/test_x.py")], BASE_TEST, head))
+    assert guard([ch("agents/data/tests/test_x.py")], BASE_TEST, head) == [
+        "테스트 삭제 agents/data/tests/test_x.py::test_b"]
 
 
 def test_guard_assert_halved() -> None:
     head = BASE_TEST.replace("    assert 2 == 2\n", "    pass\n").replace(
         "    assert True\n", "    pass\n")
     v = guard([ch("agents/data/tests/test_x.py")], BASE_TEST, head)
-    assert any("50%" in x for x in v)
+    assert v == ["테스트 함수 안 assert 감소 3 → 2 (부서 합계)"]
+
+
+def test_guard_rejects_swapping_tests_for_trivial_ones() -> None:
+    # 리뷰 지적: 테스트를 지우고 같은 수의 빈 테스트로 갈아치우면 합계가 같아도 실패해야 한다
+    head = "def test_n1():\n    assert True\n\ndef test_n2():\n    assert 1\n\n" \
+           "def test_n3():\n    assert 1\n"
+    v = guard([ch("agents/data/tests/test_x.py", "D"), ch("agents/data/tests/test_y.py", "A")],
+              BASE_TEST, head)
+    assert any("테스트 삭제" in x for x in v) and any("assert 감소" in x for x in v)
+
+
+def test_guard_trivial_asserts_do_not_count() -> None:
+    head = BASE_TEST.replace("    assert 2 == 2\n", "    assert True\n")
+    assert guard([ch("agents/data/tests/test_x.py")], BASE_TEST, head) == [
+        "테스트 함수 안 assert 감소 3 → 2 (부서 합계)"]
 
 
 def test_guard_ignores_non_test_files() -> None:
@@ -328,7 +344,34 @@ def test_cli_rename_counts_both_paths(repo: Path, capsys) -> None:
     run(repo, "mv", "agents/data/tests/test_x.py", "agents/data/test_moved.py")
     run(repo, "commit", "-q", "-m", "move")
     rc = team_mod.main(["test-guard", "dev", "HEAD"])
-    assert rc == 1 and "삭제" in capsys.readouterr().out
+    # tests/ 밖으로 옮기면 테스트 파일이 아니게 됨 → data 합계 감소
+    assert rc == 1 and "data: 테스트 삭제 agents/data/tests/test_x.py::test_a" in (
+        capsys.readouterr().out)
+
+
+def test_cli_split_test_file_ok(repo: Path, capsys) -> None:
+    # 한 파일을 두 파일로 나눔 (test_gate.py 분할 같은 경우): 부서 합계가 같으면 통과
+    (repo / "agents/data/tests/test_x.py").write_text(
+        "def test_a():\n    assert 1 == 1\n    assert 2 == 2\n")
+    (repo / "agents/data/tests/test_y.py").write_text(
+        "def test_b():\n    assert True\n\n\nclass TestC:\n    def test_c(self):\n"
+        "        self.assertEqual(1, 1)\n")
+    run(repo, "add", "-A")
+    run(repo, "commit", "-q", "-m", "split")
+    assert team_mod.main(["test-guard", "dev", "HEAD"]) == 0
+
+
+def test_cli_review_required(repo: Path, capsys) -> None:
+    (repo / "agents/data/new.py").write_text("x = 1\n")
+    run(repo, "add", "-A")
+    run(repo, "commit", "-q", "-m", "one dept")
+    assert team_mod.main(["review-required", "dev", "HEAD"]) == 1
+    assert capsys.readouterr().out.strip() == "false"
+    (repo / "contracts").mkdir()
+    (repo / "contracts/x.py").write_text("x = 1\n")
+    run(repo, "add", "-A")
+    run(repo, "commit", "-q", "-m", "contracts")
+    assert team_mod.main(["review-required", "dev", "HEAD"]) == 0
 
 
 def test_cli_symlink_detected(repo: Path, capsys) -> None:
@@ -524,9 +567,13 @@ def test_cap_status_ok_and_quota(team: Team, monkeypatch) -> None:
                         lambda day: [cap_run("claude:data:task #1", "success", i)
                                      for i in range(20)])
     monkeypatch.delenv("AX_CAP_CACHE", raising=False)
-    st = team_mod.cap_status(team, ["JangJaehyeonn", "2taeyoon"], "2026-10-22")
+    st = team_mod.cap_status(team, ["JangJaehyeonn", "2taeyoon"], "write", "2026-10-22")
     assert st["JangJaehyeonn"]["ok"] is False and st["JangJaehyeonn"]["used"] == 20
+    assert st["JangJaehyeonn"]["cap"] == 15 and "작성 20/15" in st["JangJaehyeonn"]["reason"]
     assert st["2taeyoon"]["ok"] is True and st["2taeyoon"]["used"] == 0
+    # 작성을 다 써도 리뷰 상한은 따로
+    st = team_mod.cap_status(team, ["JangJaehyeonn"], "review", "2026-10-22")
+    assert st["JangJaehyeonn"]["ok"] is True and st["JangJaehyeonn"]["used"] == 0
 
 
 def test_cap_status_fail_closed(team: Team, monkeypatch) -> None:
@@ -534,8 +581,32 @@ def test_cap_status_fail_closed(team: Team, monkeypatch) -> None:
         raise team_mod.subprocess.CalledProcessError(1, "gh")
 
     monkeypatch.setattr(team_mod, "todays_claude_runs", boom)
-    st = team_mod.cap_status(team, ["JangJaehyeonn"], "2026-10-22")
+    st = team_mod.cap_status(team, ["JangJaehyeonn"], "review", "2026-10-22")
     assert st["JangJaehyeonn"]["ok"] is False and st["JangJaehyeonn"]["used"] is None
+
+
+def test_cap_status_rejects_unknown_kind(team: Team) -> None:
+    with pytest.raises(team_mod.TeamError):
+        team_mod.cap_status(team, ["JangJaehyeonn"], "daily", "2026-10-22")
+
+
+@pytest.mark.parametrize(
+    ("title", "kind"),
+    [("claude:data:task #1", "write"), ("claude-request to:data by bxbae", "write"),
+     ("claude-review data/x by bxbae", "review"), ("claude-request dispatch #3 by x", None),
+     ("feat: x", None)],
+)
+def test_run_kind(title: str, kind: str | None) -> None:
+    assert team_mod.run_kind(title) == kind
+
+
+def test_usage_by_owner_split_by_kind(team: Team) -> None:
+    runs = [cap_run("claude:data:task #1", "success", 1),
+            cap_run("claude-review data/1-x-r0 by ax-company-hq-bot[bot]", "success", 2),
+            cap_run("claude-review finance/x by 2taeyoon", "success", 3)]
+    assert team_mod.usage_by_owner(team, runs, kind="write") == {"JangJaehyeonn": 1}
+    assert team_mod.usage_by_owner(team, runs, kind="review") == {
+        "2taeyoon": 1, "JangJaehyeonn": 1}
 
 
 @pytest.mark.parametrize(
@@ -543,9 +614,10 @@ def test_cap_status_fail_closed(team: Team, monkeypatch) -> None:
     [
         ([], ["retry-1"], ["in-progress"]),
         (["in-progress", "task"], ["retry-1"], ["in-progress"]),
-        (["retry-1"], ["retry-2"], ["in-progress", "retry-1"]),
-        (["retry-2", "in-progress"], ["retry-3"], ["in-progress", "retry-2"]),
-        (["retry-3"], ["blocked"], ["in-progress", "retry-3"]),
+        # 같은 이슈 두 번째 실패 → needs-human (옛 retry-2·3이 있어도 같음)
+        (["retry-1"], ["needs-human"], ["in-progress", "retry-1"]),
+        (["retry-2", "in-progress"], ["needs-human"], ["in-progress", "retry-2"]),
+        (["retry-3"], ["needs-human"], ["in-progress", "retry-3"]),
     ],
 )
 def test_next_retry_labels(labels, add, remove) -> None:
@@ -643,3 +715,89 @@ def test_event_pull_request_bad_file(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
     monkeypatch.setenv("GITHUB_EVENT_PATH", str(tmp_path / "missing.json"))
     assert team_mod.event_pull_request(1) is None
+
+
+# ── 리뷰 범위 · 다시 실행 ─────────────────────────────────
+@pytest.mark.parametrize(
+    ("paths", "required"),
+    [
+        (["agents/data/a.py"], False),  # 부서 하나
+        (["agents/data/a.py", "docs/notes/data/x.md", "uv.lock", "README.md"], False),
+        (["agents/data/a.py", "memory/b.py"], True),  # 부서 2개 (사람 PR)
+        (["contracts/x.py"], True),
+        (["agent-template/x.py"], True),
+        (["safety/src/x.py"], True),  # 안전 레이어는 단독 PR도 리뷰
+        (["orchestrator/x.py"], True),
+        (["agents/finance/x.py"], False),
+        (["docs/notes/agent-template/x.md"], True),  # notes도 그 부서
+        (["README.md"], False),  # human_paths만 (guards가 따로 처리)
+    ],
+)
+def test_review_required(team: Team, paths: list[str], required: bool) -> None:
+    assert team.review_required(team.classify(paths)) is required
+
+
+def test_config_validates_review_depts_and_caps(team: Team) -> None:
+    bad = {**team.data, "review_required_depts": ["nowhere"]}
+    with pytest.raises(team_mod.TeamError):
+        Team(bad)
+    members = {k: dict(v) for k, v in team.data["members"].items()}
+    members["bxbae"].pop("review_cap")
+    with pytest.raises(team_mod.TeamError):
+        Team({**team.data, "members": members})
+
+
+@pytest.mark.parametrize(
+    ("labels", "target"),
+    [(["request", "to:data"], ("data", "request")),
+     (["task", "dept:finance"], ("finance", "task")),
+     (["to:nowhere"], None), (["request"], None),
+     (["dept:hr", "to:memory"], ("memory", "request"))],
+)
+def test_write_target(team: Team, labels, target) -> None:
+    assert team_mod.write_target(team, labels) == target
+
+
+def test_dispatch_write_runs_claude_write(team: Team, monkeypatch) -> None:
+    calls = []
+
+    def fake(path, *extra):
+        calls.append((path, extra))
+        return {"labels": [{"name": "to:support"}, {"name": "retry-1"}]} if path.endswith("/9") \
+            else None
+
+    monkeypatch.setattr(team_mod, "gh_api", fake)
+    assert "support:request" in team_mod.dispatch_write("o/r", team, 9)
+    # 실행 전에 wip-wait로 대기 표시 (concurrency 대기열에서 취소돼도 다시 잡히게)
+    assert calls[1] == ("repos/o/r/issues/9/labels", ("-X", "POST", "-f", "labels[]=wip-wait"))
+    path, extra = calls[2]
+    assert path == "repos/o/r/actions/workflows/_claude-write.yml/dispatches"
+    assert "inputs[dept]=support" in extra and "inputs[mode]=request" in extra
+    assert "inputs[issue]=9" in extra and "ref=dev" in extra
+
+
+def test_dispatch_write_never_raises(team: Team, monkeypatch) -> None:
+    def boom(path, *extra):
+        raise team_mod.subprocess.CalledProcessError(1, "gh")
+
+    monkeypatch.setattr(team_mod, "gh_api", boom)
+    assert "다시 실행하지 못함" in team_mod.dispatch_write("o/r", team, 9)
+
+
+def test_dispatch_write_explicit_dept_mode_skips_label_lookup(team: Team, monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(team_mod, "gh_api", lambda path, *e: calls.append((path, e)))
+    assert "data:task" in team_mod.dispatch_write("o/r", team, 9, "data", "task")
+    assert [c[0] for c in calls] == ["repos/o/r/issues/9/labels",
+                                     "repos/o/r/actions/workflows/_claude-write.yml/dispatches"]
+    assert "inputs[dept]=data" in calls[1][1] and "inputs[mode]=task" in calls[1][1]
+
+
+def test_guard_same_name_in_two_files_must_both_survive() -> None:
+    # 준하 리뷰: 흔한 이름(test_smoke)이 두 파일에 있으면 한쪽을 지워도 통과하던 구멍
+    a = "def test_smoke():\n    assert x()\n"
+    files = {"agents/data/tests/test_a.py": (a, ""), "agents/data/tests/test_b.py": (a, a)}
+    v = team_mod.find_test_weakening(
+        [ch("agents/data/tests/test_a.py", "D"), ch("agents/data/tests/test_b.py")],
+        lambda p: files[p][0], lambda p: files[p][1])
+    assert any("테스트 삭제" in x and "test_smoke" in x for x in v)
