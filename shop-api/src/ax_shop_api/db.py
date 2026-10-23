@@ -56,6 +56,17 @@ CREATE TABLE IF NOT EXISTS banners (
   valid_from TEXT, valid_to TEXT, tenant_id TEXT NOT NULL, context_id TEXT,
   created_at TEXT NOT NULL, ended_at TEXT
 );
+CREATE TABLE IF NOT EXISTS refunds (
+  refund_id TEXT PRIMARY KEY, payment_id TEXT NOT NULL REFERENCES payments(payment_id),
+  order_id TEXT NOT NULL REFERENCES orders(order_id), amount INTEGER NOT NULL CHECK (amount > 0),
+  idempotency_key TEXT NOT NULL UNIQUE, tenant_id TEXT NOT NULL, context_id TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS returns (
+  return_id TEXT PRIMARY KEY, claim_id INTEGER NOT NULL UNIQUE,
+  order_id TEXT NOT NULL REFERENCES orders(order_id), inspection TEXT,
+  received_at TEXT NOT NULL, tenant_id TEXT NOT NULL, context_id TEXT, created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS coupons (
   coupon_id TEXT PRIMARY KEY, buyer_id TEXT NOT NULL REFERENCES buyers(buyer_id),
   purpose_code TEXT NOT NULL, campaign_id TEXT, count INTEGER NOT NULL CHECK (count > 0),

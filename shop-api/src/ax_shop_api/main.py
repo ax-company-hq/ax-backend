@@ -23,10 +23,11 @@ from ax_agent_template.config import set_agent_name
 from ax_agent_template.server import verify_token
 from ax_contracts.data_access.shop_failed_orders import ShopFailedOrdersQuery
 from ax_contracts.data_access.shop_metric_series import ShopMetricSeriesQuery
-from ax_shop_api import outbox
+from ax_shop_api import outbox, support_client
 from ax_shop_api.db import Db
 from ax_shop_api.lookups import Lookups
 from ax_shop_api.promotions import Promotions
+from ax_shop_api.refunds import Refunds
 from ax_shop_api.seed import seed
 from ax_shop_api.service import Shop, ShopError
 
@@ -84,6 +85,44 @@ class BannerIn(BaseModel):
     context_id: str | None = None  # 사후 추적용 사건 번호(선택)
 
 
+class ClaimItemIn(BaseModel):
+    order_item_id: str
+    qty: int = Field(ge=1)
+
+
+class ClaimIn(BaseModel):
+    """고객 반품·환불 신청. 금액은 받지 않는다(고객지원이 주문 사실로 계산한다)."""
+
+    buyer_id: str
+    customer_name: str = Field(min_length=1, max_length=100)
+    order_id: str
+    type: Literal["cancel", "return", "exchange"]
+    reason: Literal[
+        "change_of_mind",
+        "defect",
+        "wrong_item",
+        "damaged",
+        "missing_item",
+        "late_delivery",
+        "other",
+    ]
+    items: list[ClaimItemIn] | None = None  # 없으면 주문 전체
+    unsealed: bool = False
+    evidence_count: int = Field(default=0, ge=0)
+    description: str = Field(default="", max_length=2000)  # 고객이 쓴 문장. untrusted로만 넘긴다
+
+
+class ReturnReceivedIn(BaseModel):
+    order_id: str  # 클레임의 주문(고객지원 응답과 대조한다)
+    inspection: Literal["pass", "fail", "partial"] | None = None
+
+
+class RefundIn(BaseModel):
+    refund_amount: int = Field(gt=0)
+    idempotency_key: str = Field(min_length=1)  # `claim.context_id:refund_request:claim:<id>`
+    context_id: str | None = None
+
+
 class CouponIn(BaseModel):
     idempotency_key: str = Field(min_length=1)  # `context_id + 액션 + 대상`
     purpose_code: Literal["campaign", "compensation"]
@@ -100,6 +139,8 @@ RELEASE_ALLOWED = {"admin", "infra"}
 # 공지·쿠폰 쓰기는 마케팅 관문 토큰만, 쿠폰 조회는 사후 검증·중복 확인을 하는 부서까지
 MARKETING_ONLY = {"marketing"}
 COUPON_READERS = {"marketing", "support", "finance", "orchestrator"}
+# 현금 환불(SHOP-12)은 고객지원 관문 토큰만(마케팅 토큰 거부)
+REFUND_ALLOWED = {"support"}
 # 데이터 조회(읽기 전용)는 분석을 하는 data와 관리자만
 DATA_READERS = {"data", "admin"}
 
@@ -142,6 +183,7 @@ def create_app(db: Db | None = None, seed_data: bool = True) -> FastAPI:
     shop = Shop(database)
     promotions = Promotions(database)
     lookups = Lookups(database)
+    refunds = Refunds(database)
     interval = float(os.getenv("SHOP_MONITOR_INTERVAL_S") or 5)  # 0이면 주기 판정을 끈다
 
     async def _monitor_loop() -> None:
@@ -164,6 +206,7 @@ def create_app(db: Db | None = None, seed_data: bool = True) -> FastAPI:
     app.state.shop = shop
     app.state.promotions = promotions
     app.state.lookups = lookups
+    app.state.refunds = refunds
 
     @app.exception_handler(ShopError)
     async def _shop_error(_: Request, error: ShopError) -> JSONResponse:
@@ -281,6 +324,69 @@ def create_app(db: Db | None = None, seed_data: bool = True) -> FastAPI:
     @app.get("/api/shop/coupons/{coupon_id}")
     async def get_coupon(coupon_id: str, _: str = Depends(_caller(COUPON_READERS))) -> dict:
         return _ok(promotions.get_coupon(coupon_id))
+
+    # --- 클레임 접수·반품 입고·환불 (#117): 쇼핑몰 → 고객지원 → 재무 경로의 입구 -----------
+    @app.post("/api/shop/claims", status_code=201)
+    async def create_claim(body: ClaimIn) -> dict:
+        order = shop.get_order(body.order_id)
+        if order["buyer_id"] != body.buyer_id:
+            raise ShopError("BUYER_MISMATCH", "주문의 구매자가 아니다", 403)
+        context_id = support_client.new_context_id()
+        claim = await support_client.call(
+            "create_claim",
+            context_id,
+            {
+                "buyer_id": body.buyer_id,
+                "customer_name": body.customer_name,
+                "order_id": body.order_id,
+                "type": body.type,
+                "reason": body.reason,
+                "items": [item.model_dump() for item in body.items] if body.items else None,
+                "unsealed": body.unsealed,
+                "evidence_count": body.evidence_count,
+            },
+            {"description": body.description},
+            target=body.order_id,
+        )
+        return _ok(claim, context_id=context_id)
+
+    @app.post("/api/shop/admin/claims/{claim_id}/return-received")
+    async def return_received(
+        claim_id: int, body: ReturnReceivedIn, _: str = Depends(_caller(INJECT_ALLOWED))
+    ) -> dict:
+        done = refunds.get_return(claim_id)
+        if done is not None:  # 이미 입고 처리했다: 고객지원도 이벤트도 다시 부르지 않는다
+            return _ok(done, replayed=True)
+        shop.get_order(body.order_id)
+        context_id = support_client.new_context_id()
+        claim = await support_client.call(
+            "receive_return",
+            context_id,
+            {"claim_id": claim_id, "inspection": body.inspection},
+            target=str(claim_id),
+        )
+        if str(claim.get("order_id")) != body.order_id:
+            raise ShopError("ORDER_MISMATCH", "클레임의 주문과 다르다", 409)
+        recorded, _replayed = refunds.record_return(
+            claim_id, body.order_id, body.inspection, context_id
+        )
+        await outbox.flush(database)
+        return _ok(recorded | {"claim": claim})
+
+    @app.post("/api/shop/payments/{payment_id}/refund", status_code=201)
+    async def refund_payment(
+        payment_id: str,
+        body: RefundIn,
+        response: Response,
+        _: str = Depends(_caller(REFUND_ALLOWED)),
+    ) -> dict:
+        refund, replayed = refunds.refund(
+            payment_id, body.refund_amount, body.idempotency_key, body.context_id
+        )
+        await outbox.flush(database)
+        if replayed:
+            response.status_code = 200  # 같은 키의 재요청은 이전 환불을 그대로 돌려준다
+        return _ok(refund, replayed=replayed)
 
     # --- 데이터 조회(contracts/data-access): data 에이전트가 읽는 읽기 전용 API -----------
     @app.get("/api/shop/failed-orders")
