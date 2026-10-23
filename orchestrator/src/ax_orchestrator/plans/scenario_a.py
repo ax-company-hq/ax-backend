@@ -1,11 +1,15 @@
-"""시나리오 A: 결제 API 장애 (docs/planning.md 5장, 통합에이전트기획안 4장)."""
+"""시나리오 A: 결제 API 장애 (docs/planning.md 5장).
+
+보상·쿠폰 단계는 없다(#228 결정 A): 고객지원이 문의 접수 때 보상을 판정하고 마케팅 쿠폰을 직접
+요청한다. 총괄은 공지 게시와 재무 손실 리포트(재무 장부의 `coupon.issued`로 보상액 계산)만 부른다.
+"""
 
 from __future__ import annotations
 
 from datetime import timedelta
 from typing import Any
 
-from ax_orchestrator.models import Incident, Plan, Step, iso
+from ax_orchestrator.models import Incident, Plan, Step, iso, now
 
 
 def _window(inc: Incident) -> dict[str, Any]:
@@ -42,41 +46,20 @@ def _related_prs(inc: Incident) -> dict[str, Any]:
 
 
 def _link(inc: Incident) -> dict[str, Any]:
-    prs = [c.get("number") for c in _out(inc, "related_prs").get("candidates", [])]
+    prs = [c.get("pr_number") for c in _out(inc, "related_prs").get("candidates", [])]
     return {"incident_context_id": inc.context_id, "pr_numbers": [p for p in prs if p]}
 
 
 def _notice(inc: Incident) -> dict[str, Any]:
+    # 실제 marketing `DraftNoticeInput`: 사실만 넘기고 문장은 마케팅이 만든다
     return {
-        "kind": "maintenance",
-        "facts": {
-            "component": inc.component,
-            "since": iso(inc.opened_at),
-            "cause_status": _out(inc, "diagnose").get("status", "undetermined"),
-        },
+        "kind": "incident_opened",
+        "facts": {"component": inc.component, "opened_at": iso(inc.opened_at)},
     }
 
 
 def _publish_notice(inc: Incident) -> dict[str, Any]:
-    return {"notice_id": _out(inc, "notice").get("notice_id")}
-
-
-def _compensation(inc: Incident) -> dict[str, Any]:
-    impact = _out(inc, "impact")
-    return {
-        "customer_ids": impact.get("affected_customer_ids", []),
-        "notice_id": _out(inc, "publish_notice").get("notice_id"),
-        "reason": "payment_outage",
-    }
-
-
-def _coupon(inc: Incident) -> dict[str, Any]:
-    comp = _out(inc, "compensation")
-    return {
-        "customer_ids": comp.get("eligible_customer_ids", []),
-        "amount_per_customer": comp.get("amount_per_customer"),
-        "idempotency_scope": inc.context_id,
-    }
+    return {"draft_id": _out(inc, "notice").get("draft_id")}
 
 
 def _loss(inc: Incident) -> dict[str, Any]:
@@ -89,7 +72,18 @@ def _recovery(inc: Incident) -> dict[str, Any]:
 
 
 def _recovered_notice(inc: Incident) -> dict[str, Any]:
-    return {"notice_id": _out(inc, "notice").get("notice_id"), "kind": "recovered"}
+    return {"draft_id": _out(inc, "recovered_draft").get("draft_id")}
+
+
+def _recovered_draft(inc: Incident) -> dict[str, Any]:
+    return {
+        "kind": "incident_resolved",
+        "facts": {
+            "component": inc.component,
+            "opened_at": iso(inc.opened_at),
+            "resolved_at": iso(now()),
+        },
+    }
 
 
 def scenario_a() -> Plan:
@@ -136,26 +130,11 @@ def scenario_a() -> Plan:
                 build=_publish_notice,
             ),
             Step(
-                "compensation",
-                "request_compensation",
-                "보상 판정 (support)",
-                after=("publish_notice",),
-                build=_compensation,
-            ),
-            Step(
-                "coupon",
-                "issue_coupon",
-                "보상 쿠폰 지급 (B, finance 검증)",
-                after=("compensation",),
-                build=_coupon,
-                serial_group="coupon",
-            ),
-            Step(
                 "loss",
                 "loss_aggregation",
                 "손실 리포트 (finance)",
                 after=("impact",),
-                also_after=("coupon",),
+                also_after=("publish_notice",),
                 build=_loss,
             ),
             Step(
@@ -166,10 +145,17 @@ def scenario_a() -> Plan:
                 build=_recovery,
             ),
             Step(
+                "recovered_draft",
+                "draft_notice",
+                "정상화 공지 초안 (marketing)",
+                after=("recovery",),
+                build=_recovered_draft,
+            ),
+            Step(
                 "recovered_notice",
                 "publish_notice",
                 "정상화 공지 (marketing)",
-                after=("recovery",),
+                after=("recovered_draft",),
                 build=_recovered_notice,
             ),
             Step(

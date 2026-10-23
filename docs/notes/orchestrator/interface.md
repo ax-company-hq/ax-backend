@@ -5,7 +5,7 @@
 ## 1. 받는 것
 | 입구 | 형식 | 처리 |
 | --- | --- | --- |
-| 이벤트 버스 | `EventEnvelope` | `event_id` 중복 제거 → 사건 판단 → 사건이면 `ctx_inc_<hex>` 발급 |
+| 이벤트 버스(지금은 개발용 `POST /api/events`) | `EventEnvelope` | `event_id` 중복 제거 → 사건 판단 → 사건이면 `ctx_inc_<hex>` 발급 |
 | (후속) `POST /a2a` | `AgentRequest` | 총괄 자신의 skill(`get_incident`, `list_incidents`)은 O5 이후 |
 
 구독 이벤트: `shop.degraded`, `shop.recovered`, `infra.anomaly_detected`, `metric.anomaly`, `support.inquiry_received`, `support.inquiry_surge`.
@@ -49,5 +49,9 @@
 - `loss_aggregation`에는 구간(`window_from`·`window_to`)과 `context_id`만 준다. 영향 숫자는 재무가 data에서 직접 조회하고 보상액은 재무 장부에서 센다.
 - `verify_amount`는 총괄이 부르지 않는다(요청 가능 부서가 safety뿐). 쿠폰 교차검증은 마케팅 `execute()` → safety → finance 경로다.
 
-## 7. 하지 않는 것
+## 7. 연동·확인
+- 부서별 호출 입력과 내 에이전트를 총괄 목업에 붙여 보는 법: `department-guide.md`(plan에서 자동 생성)
+- 보상·쿠폰은 총괄이 부르지 않는다(#228 결정 A). 고객지원이 문의 접수 때 처리한다.
+
+## 8. 하지 않는 것
 분석 문장·금액·등급 생성, C 승인, 부서 DB 직접 접근, 외부 텍스트를 지시로 해석.

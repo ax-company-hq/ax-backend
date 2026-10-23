@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS orders (
   status TEXT NOT NULL, total_amount INTEGER NOT NULL, tenant_id TEXT NOT NULL,
   context_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
   shipping_fee INTEGER NOT NULL DEFAULT 0, points_used INTEGER NOT NULL DEFAULT 0,
-  delivered_at TEXT
+  delivered_at TEXT, promised_delivery_at TEXT, shipped_at TEXT
 );
 CREATE TABLE IF NOT EXISTS order_items (
   order_id TEXT NOT NULL REFERENCES orders(order_id), product_id TEXT NOT NULL,
@@ -82,6 +82,8 @@ _ADDED_COLUMNS = {
         ("shipping_fee", "INTEGER NOT NULL DEFAULT 0"),
         ("points_used", "INTEGER NOT NULL DEFAULT 0"),
         ("delivered_at", "TEXT"),
+        ("promised_delivery_at", "TEXT"),
+        ("shipped_at", "TEXT"),
     ),
     "order_items": (("title", "TEXT"), ("points_share", "INTEGER NOT NULL DEFAULT 0")),
 }

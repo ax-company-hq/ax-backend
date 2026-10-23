@@ -207,3 +207,22 @@ def test_publish_not_connected_is_skipped_quietly(monkeypatch: pytest.MonkeyPatc
         events.build_inquiry_received(request, conversation).data
     )
     assert data.category is None and data.urgency is None  # 분석이 없으면 비운다
+
+
+def test_shop_api_order_id_is_published_as_is(client: TestClient) -> None:
+    """shop-api 주문(`ord_…`)은 문의에 문자열로 저장되고 이벤트에 그대로 실린다."""
+    result = create(client, order_id="ord_0001")
+    assert result["output"]["order_id"] == "ord_0001"
+    (event,) = published()
+    assert SupportInquiryReceivedData.model_validate(event.data).order_id == "ord_0001"
+
+
+def test_numeric_order_ids_are_read_as_strings(client: TestClient) -> None:
+    """옛 숫자 주문 ID(입력·저장된 기록)는 문자열로 읽는다."""
+    from support_agent.schemas import Conversation
+
+    result = create(client, order_id=101)
+    assert result["output"]["order_id"] == "101"
+    stored = {k: v for k, v in result["output"].items() if k != "execution_id"}
+    legacy = Conversation.model_validate({**stored, "order_id": 7})
+    assert legacy.order_id == "7"

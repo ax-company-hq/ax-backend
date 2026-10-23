@@ -328,7 +328,7 @@ class ConversationListItem(BaseModel):
     sentiment: str | None = None
     urgency: Urgency | None = None
     status: ConversationStatus
-    order_id: int | None = None
+    order_id: int | str | None = None  # 목은 숫자, support는 문자열(shop-api ord_…)
     updated_at: str
     preview: str
     awaiting_reply: bool
@@ -434,7 +434,7 @@ class ConversationCreate(BaseModel):
     customer_name: str | None = None  # 실제 연결에서 support에 넘긴다. 없으면 "고객 <id>"
     subject: str = Field(min_length=1)
     message: str = Field(min_length=1)
-    order_id: int | None = None
+    order_id: int | str | None = None  # 목은 숫자, support는 문자열(shop-api ord_…)
 
 
 class TextBody(BaseModel):
@@ -446,6 +446,12 @@ class CandidateDecisionBody(BaseModel):
 
     decision: Literal["approve", "reject"]
     note: str | None = None
+
+
+class OnboardingStepBody(BaseModel):
+    """온보딩 단계 완료 표시. `done: false`면 완료를 취소한다."""
+
+    done: bool = True
 
 
 class AgentMessageBody(TextBody):

@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Header, Query, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import AwareDatetime, BaseModel, Field
 
@@ -56,6 +57,10 @@ class OrderIn(BaseModel):
     buyer_id: str
     items: list[OrderLine]
     points_used: int = Field(default=0, ge=0)  # 포인트 사용분(원). 품목 금액 비율로 나눠 기록한다
+
+
+class ShippedIn(BaseModel):
+    shipped_at: AwareDatetime | None = None  # 비우면 지금(시연·시드용으로 지난 시각도 가능)
 
 
 class DeliveredIn(BaseModel):
@@ -133,6 +138,9 @@ class CouponIn(BaseModel):
     context_id: str | None = None  # 사후 추적용 사건 번호(선택). 멱등 비교에는 쓰지 않는다
 
 
+# 브라우저(shop-web)가 직접 부르므로 허용할 출처만 연다. `SHOP_CORS_ORIGINS`(쉼표로 구분)로 바꾼다.
+DEFAULT_CORS_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000"
+
 # 관리 API 허용 요청자. 장애 해제는 infra 롤백이 관문을 거쳐 부른다(후속 결정 15)
 INJECT_ALLOWED = {"admin"}
 RELEASE_ALLOWED = {"admin", "infra"}
@@ -203,6 +211,16 @@ def create_app(db: Db | None = None, seed_data: bool = True) -> FastAPI:
                 task.cancel()
 
     app = FastAPI(title="ax-shop-api", lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            origin.strip()
+            for origin in (os.getenv("SHOP_CORS_ORIGINS") or DEFAULT_CORS_ORIGINS).split(",")
+            if origin.strip()
+        ],
+        allow_methods=["GET", "POST", "PATCH", "DELETE"],
+        allow_headers=["Content-Type", "Authorization"],
+    )
     app.state.shop = shop
     app.state.promotions = promotions
     app.state.lookups = lookups
@@ -265,6 +283,12 @@ def create_app(db: Db | None = None, seed_data: bool = True) -> FastAPI:
         order = shop.cancel(order_id, body.reason_code)
         await outbox.flush(database)
         return _ok(order)
+
+    @app.post("/api/shop/admin/orders/{order_id}/shipped")
+    async def mark_shipped(
+        order_id: str, body: ShippedIn, _: str = Depends(_caller(INJECT_ALLOWED))
+    ) -> dict:
+        return _ok(shop.mark_shipped(order_id, body.shipped_at))
 
     @app.post("/api/shop/admin/orders/{order_id}/delivered")
     async def mark_delivered(
@@ -348,6 +372,8 @@ def create_app(db: Db | None = None, seed_data: bool = True) -> FastAPI:
             {"description": body.description},
             target=body.order_id,
         )
+        if "id" not in claim:  # 클레임이 아닌 응답은 성공으로 내보내지 않는다
+            raise ShopError("UPSTREAM_ERROR", "고객지원 응답이 클레임 형식이 아니다", 502)
         return _ok(claim, context_id=context_id)
 
     @app.post("/api/shop/admin/claims/{claim_id}/return-received")

@@ -11,6 +11,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from ax_contracts.schemas.common import TENANT_ID_DEFAULT, AxModel
+from support_agent.claim_schemas import EntityId
 
 Urgency = Literal["low", "medium", "high"]
 Sentiment = Literal["calm", "frustrated", "angry"]
@@ -95,7 +96,7 @@ class ConversationListItem(AxModel):
     sentiment: str | None = None
     urgency: Urgency | None = None
     status: InquiryStatus
-    order_id: int | None = None
+    order_id: EntityId | None = None
     updated_at: str
     preview: str
     awaiting_reply: bool
@@ -143,7 +144,7 @@ class CreateInquiryInput(AxModel):
 
     user_id: int
     customer_name: str
-    order_id: int | None = None
+    order_id: EntityId | None = None
     order_no: str | None = None
     notice_id: str | None = None  # 문의가 가리키는 공지. 있으면 마케팅 get_notice로 사실을 읽는다
 

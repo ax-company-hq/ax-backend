@@ -10,11 +10,19 @@ from fastapi import APIRouter, Depends, Query
 
 from ax_contracts.schemas.hr import (
     AnswerHandoverQuestionOutput,
+    AuditEntry,
+    ChangeStatus,
+    ChangeView,
+    CheckPlanInput,
+    CheckPlanOutput,
     DecideCandidateCardOutput,
+    GetRosterOutput,
     HandoverAnswerRequest,
     HandoverQuestion,
     HandoverStatus,
     HandoverView,
+    OnboardingView,
+    StartOnboardingOutput,
 )
 from ax_contracts.schemas.record import Card
 from ax_dashboard_api import (
@@ -23,7 +31,12 @@ from ax_dashboard_api import (
     mock_actions,
     mock_data,
     mock_handover,
+    mock_hr,
+    relay,
     support_client,
+)
+from ax_dashboard_api import (
+    communications as communication_log,
 )
 from ax_dashboard_api.envelope import ApiError, is_mock, ok, require_mock
 from ax_dashboard_api.schemas import (
@@ -36,6 +49,7 @@ from ax_dashboard_api.schemas import (
     InspectionBody,
     Kpi,
     NoteBody,
+    OnboardingStepBody,
     QueueProcessBody,
     ReviewStatusBody,
     StatusBody,
@@ -412,6 +426,120 @@ async def decide_candidate_card(card_id: str, body: CandidateDecisionBody) -> di
         "decide_candidate_card", payload, target=f"card:{card_id}:{body.decision}"
     )
     return ok(DecideCandidateCardOutput.model_validate(out))
+
+
+@router.get("/onboardings")
+async def onboardings(member_id: str | None = None, area: str | None = None) -> dict:
+    if is_mock():
+        items = mock_hr.BOARD.list_onboardings(member_id, area)
+    else:
+        out = await hr_client.call("list_onboardings", _given(member_id=member_id, area=area))
+        items = [OnboardingView.model_validate(o) for o in out["onboardings"]]
+    return ok(items, total=len(items))
+
+
+@router.post("/onboardings/{onboarding_id}/steps/{step_id}")
+async def update_onboarding_step(
+    onboarding_id: str, step_id: str, body: OnboardingStepBody
+) -> dict:
+    """단계 완료 표시(또는 취소). 진행률은 hr(목은 코드)이 다시 센 값이다."""
+    if is_mock():
+        return ok(mock_hr.BOARD.update_step(onboarding_id, step_id, body.done))
+    out = await hr_client.call(
+        "update_onboarding_step",
+        {"onboarding_id": onboarding_id, "step_id": step_id, "done": body.done},
+        target=f"onboarding:{onboarding_id}:{step_id}:{body.done}",
+    )
+    return ok(StartOnboardingOutput.model_validate(out))
+
+
+@router.get("/assignment-changes")
+async def assignment_changes(
+    status: ChangeStatus | None = None, area: str | None = None, member_id: str | None = None
+) -> dict:
+    """발령·퇴직·입사·교대 요청. 시작·확정은 통합 에이전트가 하고 화면은 조회만 한다."""
+    if is_mock():
+        items = mock_hr.BOARD.list_changes(status, area, member_id)
+    else:
+        out = await hr_client.call(
+            "list_changes", _given(status=status, area=area, member_id=member_id)
+        )
+        items = [ChangeView.model_validate(c) for c in out["changes"]]
+    return ok(items, total=len(items))
+
+
+@router.get("/roster")
+async def roster(area: str | None = None) -> dict:
+    """영역별 담당·교대와 담당 공백. 개인 정보는 없다."""
+    if is_mock():
+        return ok(mock_hr.BOARD.get_roster(area))
+    return ok(GetRosterOutput.model_validate(await hr_client.call("get_roster", _given(area=area))))
+
+
+@router.get("/hr-activity/{context_id}")
+async def hr_activity(context_id: str) -> dict:
+    """사건에서 hr이 한 일의 시간순 기록."""
+    if is_mock():
+        items = mock_hr.BOARD.audit_timeline(context_id)
+    else:
+        out = await hr_client.call("get_audit_timeline", {"context_id": context_id})
+        items = [AuditEntry.model_validate(e) for e in out["entries"]]
+    return ok(items, total=len(items))
+
+
+@router.post("/plan-checks")
+async def plan_checks(body: CheckPlanInput) -> dict:
+    """새 계획이 과거에 기각된 안과 겹치는지 판정한다 (읽기, 저장 안 함)."""
+    if is_mock():
+        return ok(mock_hr.BOARD.check_plan(body.draft))
+    out = await hr_client.call("check_plan", {"draft": body.draft.model_dump(mode="json")})
+    return ok(CheckPlanOutput.model_validate(out))
+
+
+@router.get("/communications")
+def communications(dept: str | None = None, context_id: str | None = None) -> dict:
+    """부서별 소통 탭. 공통 로그의 A2A 요청·응답을 한 줄씩 보여 준다 (코드가 만든 필드만)."""
+    lines, truncated = communication_log.list_communications(dept, context_id)
+    body = ok(lines, total=len(lines))
+    body["meta"]["truncated"] = truncated
+    return body
+
+
+# ------------------------------------ AI 대화방: 총괄 사건·안전 관문 기록 (읽기 전용 중계)
+@router.get("/incidents")
+async def incidents() -> dict:
+    """총괄이 다루는 사건(단계·이벤트·사람 결정 대기). 사람 결정은 안전 관문 보류 큐에서 한다."""
+    items = relay.mock_incidents() if is_mock() else await relay.incidents()
+    return ok(items, total=len(items))
+
+
+@router.get("/incidents/{context_id}")
+async def incident(context_id: str) -> dict:
+    if is_mock():
+        found = next((i for i in relay.mock_incidents() if i["context_id"] == context_id), None)
+        if found is None:
+            raise ApiError(404, "NOT_FOUND", f"사건 {context_id}를 찾을 수 없다")
+        return ok(found)
+    return ok(await relay.incident(context_id))
+
+
+@router.get("/executions")
+async def executions(context_id: str | None = None) -> dict:
+    """안전 관문 실행 기록. 요청 원문(`params`)은 빼고 판정과 금액만 보여 준다."""
+    if is_mock():
+        items = [
+            e
+            for e in relay.mock_executions()
+            if context_id is None or e["request"]["context_id"] == context_id
+        ]
+    else:
+        items = await relay.executions(context_id)
+    return ok(items, total=len(items))
+
+
+def _given(**filters: str | None) -> dict[str, str]:
+    """값이 있는 필터만 hr 입력으로 보낸다."""
+    return {k: v for k, v in filters.items() if v is not None}
 
 
 router.include_router(mock_only)
