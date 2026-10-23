@@ -55,7 +55,7 @@
 - DB가 있으면 `change_requests` 테이블에 저장되어 재시작해도 이어진다.
 - skill `request_change`(A)가 기획개발 `create_ticket`을 직통으로 부른다 (`change_handlers.py`). 입력은 `inquiry_id`, `title`(바꿀 내용 한 줄), `evidence`(건수·ID 같은 사실 요약), `evidence_ids`이고, 제목·근거에 전화번호 등 개인정보가 있으면 보내기 전에 거부한다. 고객 원문은 보내지 않는다(`untrusted`도 비움). 기획개발이 자기 `execute()`로 요청을 만들어 `REQ-n`과 `ctx_req_`를 돌려주면(`created` 또는 `linked_duplicate`) 그 사건을 문의와 연결해 저장한다. 같은 멱등 키의 재시도는 기획개발에 다시 보내지 않는다. 기획개발이 실패·시간 초과면 `planning_unavailable`로 실패하고 아무것도 연결하지 않으며, 보류 같은 정책 거절은 `planning_<outcome>`으로 그대로 알린다.
 - `list_change_requests`(읽기)는 연결 목록을 문의·사건·상태로 걸러 돌려준다.
-- **아직 없는 것**: 결과 통지를 받는 skill. 통지 형식이 계약에 없고 기획개발도 "요청 부서 수신 skill이 생기기 전까지는 활동 기록만" 남긴다. 형식이 정해지면 저장소의 `record_result`·`attach_notice`에 연결한다.
+- `receive_change_result`(A, 요청 가능: planning만)가 기획개발이 요청을 닫을 때(완료·거절) 보내는 결과(계약 `ChangeResultInput`)를 받는다. 통지는 `ctx_req_` 사건 하나당 한 번 오고(중복 연결된 요청은 원래 요청이 닫힐 때 같은 사건으로 한 번에), 그 사건에 연결된 **모든 문의**에 같은 결과를 적용해 `applied`(적용한 문의 수)로 답한다. 같은 결과가 다시 오면 한 번만 적용한 것으로 보고(`duplicate`), 이미 닫힌 요청에 다른 결과가 오면 거절하며(`invalid_state`), 이 사건에 연결된 문의가 없으면 다른 부서 몫이라 `applied=0`(`not_linked`)이다. `ctx_req_`가 아닌 사건이나 계약을 어긴 입력(거절인데 PR 번호, 완료인데 사유 코드 등)은 `invalid_input`이다. 요약(`summary`)은 기획개발이 코드로 만든 한 줄이라 300자까지만 보관한다. 결과는 문의 목록 조회(`list_change_requests`)에 보이고 재시작해도 이어진다. 저장소 기록만 하는 내부 처리라 안전 관문(`execute()`)은 거치지 않는다(등록된 액션 없음). 고객 공지(`notice_id`)는 따로 붙인다.
 
 ## 영속 저장소 (PostgreSQL)
 `SUPPORT_PG_DSN`을 설정하면 문의·클레임·멱등 결과·보상 번호가 DB에 저장되어 재시작해도 이어진다. 비우면(CI·목 모드) 예전처럼 메모리만 쓴다. compose는 `support-db`(postgres:16, 호스트 포트 없음)를 함께 띄우고 DSN을 서비스 이름으로 덮어쓴다 (비밀번호 `SUPPORT_DB_PASSWORD`).
