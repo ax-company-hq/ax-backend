@@ -1,0 +1,261 @@
+<title>AX 개발실</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Black+Han+Sans&display=swap">
+<style>
+/* Layout: 관제실 보드 — 위에 완성 지표, 가운데 시나리오 A 15단계 선로(단독/연결/실서버 3줄), 아래 병목·사람 할 일·대화 */
+:root{
+  --bg:#eef1f4; --panel:#ffffff; --ink:#18202a; --muted:#5b6675; --line:#d5dbe3;
+  --accent:#1f4fd1; --accent-soft:#e2e9fb;
+  --pass:#1e8a52; --pass-bg:#ddf2e6; --broken:#b7791f; --broken-bg:#fbefd9;
+  --pending:#8a94a3; --pending-bg:#eceff3; --reg:#c03535; --reg-bg:#fbe1e1;
+  --human:#c03535;
+  --f-display:"Black Han Sans","IBM Plex Sans KR",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans KR",system-ui,-apple-system,"Malgun Gothic",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f141b; --panel:#161d26; --ink:#e6ebf1; --muted:#97a3b3; --line:#2a3441;
+  --accent:#7aa2ff; --accent-soft:#1d2a47;
+  --pass:#4cc58a; --pass-bg:#173326; --broken:#e2ad55; --broken-bg:#3a2d16;
+  --pending:#7f8a99; --pending-bg:#222b36; --reg:#ff7a7a; --reg-bg:#3d1e21; --human:#ff7a7a;
+  color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f141b; --panel:#161d26; --ink:#e6ebf1; --muted:#97a3b3; --line:#2a3441;
+  --accent:#7aa2ff; --accent-soft:#1d2a47;
+  --pass:#4cc58a; --pass-bg:#173326; --broken:#e2ad55; --broken-bg:#3a2d16;
+  --pending:#7f8a99; --pending-bg:#222b36; --reg:#ff7a7a; --reg-bg:#3d1e21; --human:#ff7a7a;
+  color-scheme:dark}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.55}
+.wrap{max-width:1180px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 40px;display:grid;gap:18px}
+header{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:flex-end;justify-content:space-between}
+h1{font-family:var(--f-display);font-weight:400;font-size:1.9rem;letter-spacing:.01em;margin:0;text-wrap:balance}
+.sub{color:var(--muted);font-size:.85rem}
+.stamp.example{color:var(--broken);border-color:var(--broken)}
+.stamp{font-family:var(--f-mono);font-size:.78rem;color:var(--muted);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:4px 10px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:grid;gap:4px}
+.kpi.main{border-color:var(--accent);background:linear-gradient(0deg,var(--panel),var(--panel)) padding-box}
+.kpi .lb{font-size:.74rem;color:var(--muted);letter-spacing:.04em}
+.kpi .v{font-family:var(--f-display);font-size:2.1rem;line-height:1.1;font-variant-numeric:tabular-nums}
+.kpi .v small{font-family:var(--f-body);font-size:.9rem;color:var(--muted);font-weight:500}
+.kpi .d{font-size:.78rem;font-family:var(--f-mono)}
+.up{color:var(--pass)} .warn{color:var(--broken)} .bad{color:var(--reg)}
+.bar{height:6px;background:var(--pending-bg);border-radius:3px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent)}
+section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;display:grid;gap:12px;min-width:0}
+h2{font-size:1rem;margin:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+h2 .hint{font-weight:400;font-size:.78rem;color:var(--muted)}
+.legend{display:flex;flex-wrap:wrap;gap:10px;font-size:.76rem;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.dot{width:10px;height:10px;border-radius:3px;display:inline-block}
+.track{overflow-x:auto}
+table.stages{border-collapse:separate;border-spacing:4px;min-width:900px;width:100%}
+.stages th{font-size:.7rem;font-weight:500;color:var(--muted);text-align:left;vertical-align:bottom;padding:0 2px 4px;line-height:1.3}
+.stages th.row{width:72px;font-size:.78rem;color:var(--ink);font-weight:600;vertical-align:middle}
+.stages th .n{font-family:var(--f-mono);color:var(--muted)}
+.stages th .dp{display:block;font-family:var(--f-mono);font-size:.66rem}
+.cell{height:30px;border-radius:5px;font-size:.66rem;font-family:var(--f-mono);display:flex;align-items:center;justify-content:center;font-weight:600}
+.s-pass{background:var(--pass-bg);color:var(--pass)}
+.s-broken{background:var(--broken-bg);color:var(--broken)}
+.s-pending{background:var(--pending-bg);color:var(--pending)}
+.s-regressed{background:var(--reg-bg);color:var(--reg);outline:1.5px solid var(--reg)}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:18px}
+.list{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+.row{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;min-width:0}
+.row .t{min-width:0}
+.row .t b{font-weight:600}
+.row .t div{color:var(--muted);font-size:.78rem}
+.pill{font-size:.7rem;font-family:var(--f-mono);padding:2px 8px;border-radius:999px;white-space:nowrap}
+.p-done{background:var(--pass-bg);color:var(--pass)}
+.p-doing{background:var(--accent-soft);color:var(--accent)}
+.p-todo{background:var(--pending-bg);color:var(--pending)}
+.p-hot{background:var(--reg-bg);color:var(--reg)}
+.p-wait{background:var(--broken-bg);color:var(--broken)}
+.id{font-family:var(--f-mono);font-size:.74rem;color:var(--muted);min-width:52px}
+.cap{display:grid;grid-template-columns:52px 1fr 64px;gap:10px;align-items:center;font-size:.82rem}
+.cap .bar{height:8px}
+.cap .num{font-family:var(--f-mono);font-size:.76rem;text-align:right;font-variant-numeric:tabular-nums}
+.cap.hot .bar i{background:var(--reg)}
+.cap.mid .bar i{background:var(--broken)}
+.block{display:grid;gap:10px}
+.block h3{font-size:.8rem;color:var(--muted);margin:0;font-weight:500;letter-spacing:.03em}
+.feed{display:grid;gap:8px;max-height:430px;overflow:auto;padding-right:4px}
+.msg{display:grid;gap:2px;padding:8px 10px;border-radius:8px;background:var(--bg);min-width:0}
+.msg .who{font-size:.74rem;color:var(--muted)}
+.msg .who b{color:var(--ink);font-weight:600}
+.msg .who .tm{font-family:var(--f-mono);float:right}
+.msg.human{background:var(--reg-bg);border-left:3px solid var(--human)}
+.msg.human .who b{color:var(--human)}
+.msg.bot{background:var(--accent-soft)}
+a{color:inherit;text-decoration:none} a:hover b,.msg a:hover{text-decoration:underline}
+.chart svg{width:100%;height:auto;display:block}
+.chart text{fill:var(--muted);font-family:var(--f-mono);font-size:11px}
+.note{font-size:.76rem;color:var(--muted);border-top:1px dashed var(--line);padding-top:10px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap}
+.tabs button{font:inherit;font-size:.8rem;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:999px;padding:4px 12px;cursor:pointer}
+.tabs button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+.tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (prefers-reduced-motion:no-preference){.bar i{transition:width .6s ease}}
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>AX 개발실</h1>
+      <div class="sub">개발 에이전트가 만드는 A2A 오케스트레이션 진척 · 병목 · 사람 할 일 (시나리오 A 기준)</div>
+    </div>
+    <div class="stamp" id="stamp">불러오는 중…</div>
+  </header>
+
+  <div class="kpis" id="kpis"></div>
+
+  <section>
+    <h2>시나리오 A 15단계 <span class="hint">완성 = 연결 15/15를 실서버에서 3회 연속</span></h2>
+    <div class="legend">
+      <span><i class="dot s-pass"></i>pass</span>
+      <span><i class="dot s-broken"></i>broken · 만드는 중</span>
+      <span><i class="dot s-pending"></i>pending · 아직 없음</span>
+      <span><i class="dot s-regressed"></i>regressed · 되던 게 깨짐 (자동 revert 대상)</span>
+    </div>
+    <div class="track"><table class="stages" id="stages"></table></div>
+  </section>
+
+  <div class="grid2">
+    <section class="chart">
+      <h2>진척 추이 <span class="hint">실선 = 실제, 점선 = 예상</span></h2>
+      <div id="chart"></div>
+    </section>
+    <section>
+      <h2>orchestrator 요구사항 <span class="hint">ORC-01~09</span></h2>
+      <ul class="list" id="orc"></ul>
+    </section>
+  </div>
+
+  <div class="grid2">
+    <section>
+      <h2>지금 걸리는 곳 <span class="hint">병목</span></h2>
+      <div class="block">
+        <h3>오늘 작성 cap 사용 (1인 15회)</h3>
+        <div id="caps" class="list"></div>
+      </div>
+      <div class="block">
+        <h3>막힌 항목</h3>
+        <ul class="list" id="blocks"></ul>
+      </div>
+    </section>
+    <section>
+      <h2>사람이 할 일 <span class="hint">봇이 못 하거나 사람이 더 잘하는 일</span></h2>
+      <div class="tabs" role="group" aria-label="사람 필터" id="ptabs"></div>
+      <ul class="list" id="humans"></ul>
+    </section>
+  </div>
+
+  <section>
+    <h2>에이전트 대화 <span class="hint">GitHub 이슈·PR · 사람 개입은 빨간 표시</span></h2>
+    <div class="feed" id="feed"></div>
+    <div class="note" id="note"></div>
+  </section>
+</div>
+
+<script>
+// AX 개발실: 같은 폴더의 status.json(DevStatus 형식)을 읽어 그린다.
+// 워크플로가 아침 리포트·시나리오 A·실서버 실행 뒤에 status.json을 갱신한다. 60초마다 다시 읽는다.
+const STATE_LABEL={pass:"✓",regressed:"↺",broken:"…",pending:"–"};
+const PILL={done:["p-done","완료"],doing:["p-doing","진행"],todo:["p-todo","대기"],problem:["p-hot","문제"],waiting:["p-wait","리뷰 대기"]};
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const link=(url,html)=>url?`<a href="${esc(url)}" target="_blank" rel="noreferrer">${html}</a>`:html;
+const kst=iso=>{try{return new Date(iso).toLocaleString("ko-KR",{timeZone:"Asia/Seoul",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"})}catch(e){return iso}};
+const hm=iso=>{try{return new Date(iso).toLocaleTimeString("ko-KR",{timeZone:"Asia/Seoul",hour:"2-digit",minute:"2-digit",hour12:false})}catch(e){return ""}};
+
+function render(d,isExample){
+  const st=document.getElementById("stamp");
+  st.textContent=(isExample?"예시 데이터 · ":"")+"갱신 "+kst(d.generated_at)+" KST";
+  st.classList.toggle("example",!!isExample);
+  document.getElementById("note").textContent=isExample
+    ?"status.json이 아직 없어서 예시를 보여 줘요. 시나리오 A가 한 번 돌면 실제 값으로 바뀌어요."
+    :"출처: 시나리오 A(목·실서버) 결과, 아침 리포트, GitHub 이슈·PR. 60초마다 새로 읽어요.";
+
+  const t=d.totals, sg=d.signals||{}, h=d.history||[];
+  const prev=h.length>1?h[h.length-2]:null;
+  const delta=(now,before)=>before==null?"":(now-before>=0?`+${now-before}`:`${now-before}`)+" 어제 대비";
+  const kpis=[
+    {lb:"연결 (완성 기준)",v:t.chain_pass,of:t.total,d:delta(t.chain_pass,prev?.chain_pass),cls:"up",main:true},
+    {lb:"실서버 연결",v:t.real_pass,of:t.total,d:t.real_runs_consecutive?`연속 ${t.real_runs_consecutive}회 통과`:delta(t.real_pass,prev?.real_pass),cls:"up"},
+    {lb:"단독 (참고)",v:t.unit_pass,of:t.total,d:"",cls:""},
+    {lb:"어제 revert",v:sg.reverts_yesterday??0,of:null,d:"회귀한 봇 PR 되돌림",cls:sg.reverts_yesterday?"bad":""},
+    {lb:"사람 결정 대기",v:sg.needs_human_open??0,of:null,d:"needs-human",cls:sg.needs_human_open?"warn":""},
+    {lb:"머지율 (봇)",v:sg.merge_rate?Math.round(sg.merge_rate.overall*100):"–",of:"%",d:sg.human_interventions_yesterday!=null?`어제 사람 개입 ${sg.human_interventions_yesterday}회`:"",cls:""}
+  ];
+  document.getElementById("kpis").innerHTML=kpis.map(k=>`
+   <div class="kpi${k.main?" main":""}"><div class="lb">${k.lb}</div>
+    <div class="v">${k.v}<small>${k.of===null?"":k.of==="%"?"%":" / "+k.of}</small></div>
+    ${typeof k.of==="number"?`<div class="bar"><i style="width:${(k.v/k.of*100)||0}%"></i></div>`:""}
+    <div class="d ${k.cls}">${esc(k.d)}</div></div>`).join("");
+
+  const head=`<tr><th class="row"></th>${d.stages.map(s=>`<th><span class="n">${String(s.no).padStart(2,"0")}</span> ${esc(s.name)}<span class="dp">${esc(s.dept)}</span></th>`).join("")}</tr>`;
+  const cell=(s,key,label)=>{const r=s[key]; if(!r) return `<td><div class="cell s-pending" title="${esc(s.name)} · ${label}: 아직 없음">–</div></td>`;
+    const issue=r.issue?`https://github.com/ax-company-hq/ax-backend/issues/${r.issue}`:null;
+    return `<td>${link(issue,`<div class="cell s-${r.state}" title="${esc(s.name)} · ${label}: ${r.state}${r.note?" · "+esc(r.note):""}">${STATE_LABEL[r.state]||"–"}</div>`)}</td>`};
+  const rows=[["단독","unit"],["연결","chain"],["실서버","real"]].map(([n,k])=>`<tr><th class="row">${n}</th>${d.stages.map(s=>cell(s,k,n)).join("")}</tr>`).join("");
+  document.getElementById("stages").innerHTML=head+rows;
+
+  document.getElementById("orc").innerHTML=(d.orc||[]).map(o=>`<li class="row"><span class="id">${esc(o.id)}</span><span class="t"><b>${link(o.issue?`https://github.com/ax-company-hq/ax-backend/issues/${o.issue}`:null,esc(o.title))}</b>${o.note?`<div>${esc(o.note)}</div>`:""}</span><span class="pill ${(PILL[o.state]||PILL.todo)[0]}">${(PILL[o.state]||PILL.todo)[1]}</span></li>`).join("");
+
+  const b=d.bottlenecks||{};
+  document.getElementById("caps").innerHTML=(b.caps||[]).map(c=>{const r=c.write_used/c.write_cap;return `<div class="cap ${r>=0.8?"hot":r>=0.65?"mid":""}"><span title="${esc((c.depts||[]).join(", "))}">${esc(c.name)}</span><div class="bar"><i style="width:${r*100}%"></i></div><span class="num">${c.write_used}/${c.write_cap}</span></div>`}).join("")||`<div class="sub">오늘 실행 기록이 없어요.</div>`;
+  const kindPill={review:["p-wait","리뷰"],decision:["p-wait","결정"],env:["p-hot","환경"],wip:["p-hot","가득"]};
+  document.getElementById("blocks").innerHTML=(b.blocked||[]).map(x=>`<li class="row"><span class="pill ${(kindPill[x.kind]||kindPill.review)[0]}">${(kindPill[x.kind]||kindPill.review)[1]}</span><span class="t"><b>${link(x.url,esc(x.title))}</b><div>${esc(x.detail)}</div></span><span class="id">${x.since?kst(x.since):""}</span></li>`).join("")||`<li class="sub">막힌 항목이 없어요.</li>`;
+
+  renderPeople(d.people||[]);
+
+  document.getElementById("feed").innerHTML=(d.feed||[]).map(m=>`<div class="msg ${m.kind==="human"?"human":m.kind==="bot"?"bot":""}"><div class="who">${m.kind==="human"?"🚨 ":""}<b>${esc(m.from)}</b> ${m.to?"→ "+esc(m.to):m.kind==="human"?"사람 개입":""}<span class="tm">${hm(m.at)}</span></div><div>${link(m.url,esc(m.text))}</div></div>`).join("")||`<div class="sub">아직 대화가 없어요.</div>`;
+
+  drawChart(h,d.forecast||[]);
+}
+
+let PEOPLE=[]; let sel="전체";
+try{sel=localStorage.getItem("ax-devroom-person")||"전체"}catch(e){}
+function renderPeople(list){
+  PEOPLE=list;
+  const names=["전체",...new Set(list.map(p=>p.who))];
+  if(!names.includes(sel)) sel="전체";
+  document.getElementById("ptabs").innerHTML=names.map(p=>`<button type="button" id="pt-${esc(p)}" aria-pressed="${p===sel}" data-p="${esc(p)}">${esc(p)}</button>`).join("");
+  const shown=list.filter(p=>sel==="전체"||p.who===sel);
+  document.getElementById("humans").innerHTML=shown.map(p=>`<li class="row"><span class="id">${esc(p.who)}</span><span class="t"><b>${link(p.url,esc(p.task))}</b><div>${esc(p.detail)}</div></span><span class="pill ${(PILL[p.state]||PILL.todo)[0]}">${(PILL[p.state]||PILL.todo)[1]}</span></li>`).join("")||`<li class="sub">배정된 일이 없어요.</li>`;
+}
+document.getElementById("ptabs").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;sel=b.dataset.p;try{localStorage.setItem("ax-devroom-person",sel)}catch(err){}renderPeople(PEOPLE)});
+
+function drawChart(hist,fc){
+  const el=document.getElementById("chart");
+  const dates=[...new Set([...hist.map(x=>x.date),...fc.map(x=>x.date)])].sort();
+  if(!dates.length){el.innerHTML=`<div class="sub">기록이 쌓이면 그래프가 그려져요.</div>`;return}
+  const W=520,H=230,L=34,R=60,T=14,B=28,iw=W-L-R,ih=H-T-B;
+  const x=i=>L+(dates.length>1?i*(iw/(dates.length-1)):iw/2), y=v=>T+ih-(v/15)*ih;
+  const series=(arr,key)=>arr.map(p=>[dates.indexOf(p.date),p[key]]).filter(p=>p[0]>=0&&p[1]!=null);
+  const path=pts=>pts.map((p,i)=>`${i?"L":"M"}${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ");
+  let g="";
+  [0,5,10,15].forEach(v=>{g+=`<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)" stroke-width="1"/><text x="${L-8}" y="${y(v)+4}" text-anchor="end">${v}</text>`});
+  dates.forEach((dt,i)=>{if(dates.length<=8||i%2===0) g+=`<text x="${x(i)}" y="${H-8}" text-anchor="middle">${dt.slice(5).replace("-","/")}</text>`});
+  const ca=series(hist,"chain_pass"), ra=series(hist,"real_pass"), cf=series(fc,"chain_pass"), rf=series(fc,"real_pass");
+  if(ca.length>1) g+=`<path d="${path(ca)} L${x(ca[ca.length-1][0])},${y(0)} L${x(ca[0][0])},${y(0)} Z" fill="var(--accent-soft)" stroke="none"/>`;
+  if(cf.length) g+=`<path d="${path(cf)}" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="4 4"/>`;
+  if(rf.length) g+=`<path d="${path(rf)}" fill="none" stroke="var(--pass)" stroke-width="1.5" stroke-dasharray="4 4"/>`;
+  if(ca.length) g+=`<path d="${path(ca)}" fill="none" stroke="var(--accent)" stroke-width="2.5"/>`;
+  if(ra.length) g+=`<path d="${path(ra)}" fill="none" stroke="var(--pass)" stroke-width="2.5"/>`;
+  const end=(pts,color,label,dy)=>{if(!pts.length)return "";const p=pts[pts.length-1];return `<circle cx="${x(p[0])}" cy="${y(p[1])}" r="4" fill="${color}"/><text x="${x(p[0])+8}" y="${y(p[1])+dy}" style="fill:${color}">${label} ${p[1]}</text>`};
+  g+=end(ca,"var(--accent)","연결",-6)+end(ra,"var(--pass)","실서버",14);
+  el.innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="연결·실서버 점수 추이">${g}</svg>`;
+}
+
+async function load(){
+  try{
+    const res=await fetch("status.json?t="+Date.now(),{cache:"no-store"});
+    if(!res.ok) throw new Error(res.status);
+    render(await res.json(),false);
+  }catch(e){
+    try{const r=await fetch("status.example.json",{cache:"no-store"}); render(await r.json(),true)}catch(err){document.getElementById("stamp").textContent="데이터를 불러오지 못했어요"}
+  }
+}
+load(); setInterval(load,60000);
+</script>

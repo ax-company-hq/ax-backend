@@ -1,0 +1,763 @@
+{
+ "generated_at": "2026-10-26T08:00:00Z",
+ "scenario": "SCN-A",
+ "stages": [
+  {
+   "no": 1,
+   "name": "장애 주입",
+   "dept": "shop-api",
+   "req_ids": [
+    "SHOP-07"
+   ],
+   "unit": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "chain": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "real": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   }
+  },
+  {
+   "no": 2,
+   "name": "감지",
+   "dept": "dejafix",
+   "req_ids": [
+    "DJF-01"
+   ],
+   "unit": {
+    "state": "broken",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "chain": {
+    "state": "pending",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "real": {
+    "state": "pending",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   }
+  },
+  {
+   "no": 3,
+   "name": "사건 개시",
+   "dept": "orchestrator",
+   "req_ids": [
+    "ORC-03"
+   ],
+   "unit": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "chain": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "real": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   }
+  },
+  {
+   "no": 4,
+   "name": "영향 분석",
+   "dept": "data",
+   "req_ids": [
+    "DEP-DATA-02"
+   ],
+   "unit": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "chain": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "real": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   }
+  },
+  {
+   "no": 5,
+   "name": "롤백",
+   "dept": "dejafix·safety",
+   "req_ids": [
+    "DJF-04",
+    "SAF-04"
+   ],
+   "unit": {
+    "state": "broken",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "chain": {
+    "state": "pending",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "real": {
+    "state": "pending",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   }
+  },
+  {
+   "no": 6,
+   "name": "점검 공지",
+   "dept": "marketing",
+   "req_ids": [
+    "DEP-MKT-01"
+   ],
+   "unit": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "chain": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "real": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   }
+  },
+  {
+   "no": 7,
+   "name": "보상",
+   "dept": "support",
+   "req_ids": [
+    "DEP-CS-02"
+   ],
+   "unit": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "chain": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "real": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   }
+  },
+  {
+   "no": 8,
+   "name": "쿠폰 발급",
+   "dept": "marketing",
+   "req_ids": [
+    "DEP-MKT-02"
+   ],
+   "unit": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "chain": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "real": {
+    "state": "broken",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   }
+  },
+  {
+   "no": 9,
+   "name": "재무 B 검증",
+   "dept": "finance",
+   "req_ids": [
+    "DEP-FIN-02"
+   ],
+   "unit": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "chain": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "real": {
+    "state": "broken",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   }
+  },
+  {
+   "no": 10,
+   "name": "지급",
+   "dept": "marketing·safety",
+   "req_ids": [
+    "SAF-04"
+   ],
+   "unit": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "chain": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "real": {
+    "state": "pending",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   }
+  },
+  {
+   "no": 11,
+   "name": "get_notice 응대",
+   "dept": "support",
+   "req_ids": [
+    "DEP-MKT-04"
+   ],
+   "unit": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "chain": {
+    "state": "regressed",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": "#238부터 깨짐, 봇 PR 되돌림"
+   },
+   "real": {
+    "state": "pending",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   }
+  },
+  {
+   "no": 12,
+   "name": "손실 집계",
+   "dept": "finance",
+   "req_ids": [
+    "DEP-FIN-01"
+   ],
+   "unit": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "chain": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "real": {
+    "state": "pending",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   }
+  },
+  {
+   "no": 13,
+   "name": "복구 검증",
+   "dept": "dejafix",
+   "req_ids": [
+    "DJF-03"
+   ],
+   "unit": {
+    "state": "pending",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "chain": {
+    "state": "pending",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "real": {
+    "state": "pending",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   }
+  },
+  {
+   "no": 14,
+   "name": "정상화 공지",
+   "dept": "marketing",
+   "req_ids": [
+    "DEP-MKT-01"
+   ],
+   "unit": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "chain": {
+    "state": "pending",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "real": {
+    "state": "pending",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   }
+  },
+  {
+   "no": 15,
+   "name": "사건 기록",
+   "dept": "hr→memory",
+   "req_ids": [
+    "DEP-HR-01",
+    "MEM-01"
+   ],
+   "unit": {
+    "state": "pass",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "chain": {
+    "state": "pending",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   },
+   "real": {
+    "state": "pending",
+    "since": null,
+    "last_pass_commit": null,
+    "issue": null,
+    "note": null
+   }
+  }
+ ],
+ "totals": {
+  "unit_pass": 12,
+  "chain_pass": 9,
+  "real_pass": 5,
+  "total": 15,
+  "real_runs_consecutive": 0
+ },
+ "history": [
+  {
+   "date": "2026-10-23",
+   "chain_pass": 0,
+   "real_pass": 0
+  },
+  {
+   "date": "2026-10-24",
+   "chain_pass": 2,
+   "real_pass": 0
+  },
+  {
+   "date": "2026-10-25",
+   "chain_pass": 5,
+   "real_pass": 0
+  },
+  {
+   "date": "2026-10-26",
+   "chain_pass": 9,
+   "real_pass": 5
+  }
+ ],
+ "forecast": [
+  {
+   "date": "2026-10-26",
+   "chain_pass": 9,
+   "real_pass": 5
+  },
+  {
+   "date": "2026-10-27",
+   "chain_pass": 13,
+   "real_pass": 11
+  },
+  {
+   "date": "2026-10-28",
+   "chain_pass": 15,
+   "real_pass": 14
+  },
+  {
+   "date": "2026-10-29",
+   "chain_pass": 15,
+   "real_pass": 15
+  }
+ ],
+ "orc": [
+  {
+   "id": "ORC-01",
+   "title": "인터페이스 고정",
+   "state": "done",
+   "note": "뼈대 PR",
+   "issue": null
+  },
+  {
+   "id": "ORC-02",
+   "title": "이벤트 구독",
+   "state": "done",
+   "note": "",
+   "issue": null
+  },
+  {
+   "id": "ORC-03",
+   "title": "사건 판단 · contextId",
+   "state": "done",
+   "note": "",
+   "issue": null
+  },
+  {
+   "id": "ORC-04",
+   "title": "Agent Card 수집",
+   "state": "done",
+   "note": "",
+   "issue": null
+  },
+  {
+   "id": "ORC-05",
+   "title": "Task 분배",
+   "state": "done",
+   "note": "병렬 분배 포함",
+   "issue": null
+  },
+  {
+   "id": "ORC-06",
+   "title": "input-required 중계",
+   "state": "problem",
+   "note": "regressed 1회 → revert 후 재작성 중",
+   "issue": null
+  },
+  {
+   "id": "ORC-07",
+   "title": "결과 취합",
+   "state": "doing",
+   "note": "봇 PR 리뷰 중",
+   "issue": null
+  },
+  {
+   "id": "ORC-08",
+   "title": "이관 처리",
+   "state": "todo",
+   "note": "ORC-05 뒤 대기",
+   "issue": null
+  },
+  {
+   "id": "ORC-09",
+   "title": "사건 종료 · hr 기록",
+   "state": "todo",
+   "note": "blocked-by ORC-07",
+   "issue": null
+  }
+ ],
+ "bottlenecks": {
+  "caps": [
+   {
+    "login": "haakim7",
+    "name": "준하",
+    "write_used": 13,
+    "write_cap": 15,
+    "depts": [
+     "orchestrator",
+     "hr"
+    ]
+   },
+   {
+    "login": "NYejin",
+    "name": "예진",
+    "write_used": 11,
+    "write_cap": 15,
+    "depts": [
+     "dejafix",
+     "planning"
+    ]
+   },
+   {
+    "login": "JangJaehyeonn",
+    "name": "재현",
+    "write_used": 9,
+    "write_cap": 15,
+    "depts": [
+     "data",
+     "memory",
+     "agent-template",
+     "infra"
+    ]
+   },
+   {
+    "login": "2taeyoon",
+    "name": "태윤",
+    "write_used": 6,
+    "write_cap": 15,
+    "depts": [
+     "finance",
+     "safety"
+    ]
+   },
+   {
+    "login": "areatmadm",
+    "name": "재헌",
+    "write_used": 5,
+    "write_cap": 15,
+    "depts": [
+     "marketing",
+     "shop-api"
+    ]
+   },
+   {
+    "login": "bxbae",
+    "name": "병환",
+    "write_used": 4,
+    "write_cap": 15,
+    "depts": [
+     "support",
+     "dashboard-api"
+    ]
+   }
+  ],
+  "wip": [
+   {
+    "dept": "orchestrator",
+    "open_bot_prs": 3,
+    "limit": 3
+   }
+  ],
+  "blocked": [
+   {
+    "kind": "wip",
+    "title": "orchestrator 동시 작업 3/3 가득",
+    "detail": "relay·collect·escalation 차례 대기 · 준하 cap 2회 남음",
+    "url": null,
+    "since": null
+   },
+   {
+    "kind": "review",
+    "title": "dejafix 뼈대 리뷰 대기 18시간",
+    "detail": "예진 · 감지·롤백·복구 검증 3단계가 여기서 막힘",
+    "url": null,
+    "since": "2026-10-25T14:00:00Z"
+   },
+   {
+    "kind": "decision",
+    "title": "결정: get_notice 응답 형식",
+    "detail": "support↔marketing · 반대 없으면 오늘 22:00 기본안",
+    "url": null,
+    "since": null
+   },
+   {
+    "kind": "env",
+    "title": "실서버 Zabbix 접속 안 됨",
+    "detail": "감지 단계만 목으로 둘지 결정 필요",
+    "url": null,
+    "since": null
+   }
+  ]
+ },
+ "people": [
+  {
+   "who": "병환",
+   "task": "대시보드 사건 흐름 화면",
+   "detail": "실서버 녹화 대상",
+   "state": "doing",
+   "url": null
+  },
+  {
+   "who": "재헌",
+   "task": "shop-web 장애 중 화면",
+   "detail": "점검 공지·쿠폰",
+   "state": "todo",
+   "url": null
+  },
+  {
+   "who": "예진",
+   "task": "dejafix 뼈대 리뷰",
+   "detail": "막힌 3단계가 풀림",
+   "state": "waiting",
+   "url": null
+  },
+  {
+   "who": "예진",
+   "task": "서버 PC Zabbix 접속 확인",
+   "detail": "재현과 같이",
+   "state": "problem",
+   "url": null
+  },
+  {
+   "who": "태윤",
+   "task": "기준표 데모값 확정 PR",
+   "detail": "실서버 판정 기준",
+   "state": "doing",
+   "url": null
+  },
+  {
+   "who": "준하",
+   "task": "ORC-06 중계 봇 PR 확인",
+   "detail": "가장 많이 깨지는 구간",
+   "state": "waiting",
+   "url": null
+  },
+  {
+   "who": "재현",
+   "task": "아침 /go · needs-human 2건",
+   "detail": "매일 10분",
+   "state": "done",
+   "url": null
+  },
+  {
+   "who": "모두",
+   "task": "업무 시스템 써보기 30분",
+   "detail": "승인 대기열·인수인계 답변을 직접 해 보고 이상하면 이슈로",
+   "state": "todo",
+   "url": null
+  }
+ ],
+ "feed": [
+  {
+   "at": "2026-10-26T07:52:00Z",
+   "kind": "bot",
+   "to": "orchestrator 에이전트",
+   "text": "#241 머지돼서 ORC-07 결과 취합 진행하셔도 돼요",
+   "url": null,
+   "from": "relay"
+  },
+  {
+   "at": "2026-10-26T07:40:00Z",
+   "kind": "agent",
+   "to": "support 에이전트",
+   "text": "input-required 중계 다시 붙였어요. 답이 원래 Task로 이어지는지 봐 주세요",
+   "url": null,
+   "from": "orchestrator 에이전트"
+  },
+  {
+   "at": "2026-10-26T06:58:00Z",
+   "kind": "bot",
+   "to": "support 에이전트",
+   "text": "get_notice 응대가 깨졌어요. #238부터예요. 봇 PR이라 되돌렸어요",
+   "url": null,
+   "from": "e2e"
+  },
+  {
+   "at": "2026-10-25T23:34:00Z",
+   "kind": "human",
+   "to": null,
+   "text": "/go 4 — orchestrator 2, finance 1, marketing 1",
+   "url": null,
+   "from": "재현"
+  }
+ ],
+ "signals": {
+  "reverts_yesterday": 1,
+  "needs_human_open": 2,
+  "merge_rate": {
+   "overall": 0.64,
+   "by_dept": {}
+  },
+  "human_interventions_yesterday": 6
+ }
+}

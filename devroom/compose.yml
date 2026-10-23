@@ -1,0 +1,19 @@
+# AX 개발실: 제품 compose(infra/compose.yml)와 분리된 별도 프로젝트. 제품을 내려도 유지된다.
+#
+#   docker compose -p ax-devroom -f devroom/compose.yml up -d     # 켜기
+#   docker compose -p ax-devroom -f devroom/compose.yml down      # 끄기 (status.json은 지워지지 않음)
+#
+# AX_DEVROOM_DIR: 서버 PC의 데이터 폴더 (devroom-update 워크플로가 여기에 status.json을 쓴다).
+#   Windows 서버 PC는 bind mount여도 된다 (정적 파일이라 문제없음). 예: AX_DEVROOM_DIR=C:/ax-devroom-data
+# AX_DEVROOM_PORT: 접속 포트 (기본 8090)
+services:
+  devroom:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "${AX_DEVROOM_PORT:-8090}:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./index.html:/usr/share/nginx/html/index.html:ro
+      - ./status.example.json:/usr/share/nginx/html/status.example.json:ro
+      - ${AX_DEVROOM_DIR:?AX_DEVROOM_DIR에 서버 PC의 데이터 폴더를 지정한다}:/data:ro
