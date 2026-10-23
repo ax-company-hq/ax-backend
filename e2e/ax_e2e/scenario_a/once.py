@@ -28,8 +28,10 @@ def run_once(mode: str | None = None) -> dict:
     unit_out: dict[str, Outcome] = {}
     chain_out: dict[str, Outcome] = {}
     meta: dict = {"mode": mode}
+    if mode == "real" and harness.real_host():
+        return _run_real(stages, harness.real_host() or "localhost")
     if mode == "real":
-        # 실서버 호출부는 PR-C(real-run.yml)가 채운다. 지금은 모든 단계를 pending으로 표시한다.
+        # AX_REAL_HOST가 없으면 실서버가 없는 것으로 보고 모든 단계를 pending으로 표시한다.
         for s in stages:
             o = Outcome("absent", "real 호출부 없음 (PR-C 이후)")
             unit_out[_k(s)], chain_out[_k(s)] = o, o
@@ -60,6 +62,33 @@ def run_once(mode: str | None = None) -> dict:
         "status": (view or {}).get("status"),
         "calls": len(calls),
     }
+    return _pack(stages, unit_out, chain_out, meta)
+
+
+DETECT_STAGE = "diagnose"  # 감지·진단 (DJF-01): AX_REAL_DETECT=mock이면 "감지: 목" 표시
+CHAIN_PENDING = "real 연결 점수는 총괄 실서버 연결 뒤 (지금은 단독만)"
+
+
+def _run_real(stages: list[Stage], host: str) -> dict:
+    """실서버(compose가 호스트에 연 포트)로 단독 점수를 낸다. 연결 점수는 아직 pending."""
+    import os
+
+    harness.prepare_real_env(host)
+    detect_mock = os.getenv("AX_REAL_DETECT") == "mock"
+    meta: dict = {"mode": "real", "host": host, "detect": "mock" if detect_mock else "real"}
+    apps = harness.Apps()  # 프로세스 안 앱 없음: 모든 호출이 HTTP
+    inc_unit, outputs = asyncio.run(unit.run_incident_units(stages, apps))
+    notice_unit = (outputs.get("publish_notice") or {}).get("notice_id")
+    cust_unit = asyncio.run(customer.run_unit(stages, apps, notice_unit))
+    unit_out: dict[str, Outcome] = {}
+    chain_out: dict[str, Outcome] = {}
+    for s in stages:
+        src = inc_unit if s.path == INCIDENT else cust_unit
+        out = src[s.key]
+        if detect_mock and s.path == INCIDENT and s.key == DETECT_STAGE:
+            out = Outcome(out.state, f"{out.note} (감지: 목)".strip(), out.blocked_by, out.checks)
+        unit_out[_k(s)] = out
+        chain_out[_k(s)] = Outcome("absent", CHAIN_PENDING)
     return _pack(stages, unit_out, chain_out, meta)
 
 

@@ -17,6 +17,7 @@ from pathlib import Path
 
 from ax_contracts.data_access.dev_status import DevStatus
 from ax_e2e.scenario_a import harness
+from ax_e2e.scenario_a import judge as judge_mod
 from ax_e2e.scenario_a.judge import RUNS_REQUIRED, judge, regressions
 from ax_e2e.scenario_a.stages import build_stage_table
 
@@ -52,7 +53,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     mode = harness.e2e_mode()  # 잘못된 모드는 바로 실패
     stages = build_stage_table()
     prev = None
-    if args.prev and Path(args.prev).exists():
+    prev_real = None
+    if mode == "real":
+        # real 모드의 직전 결과는 real-result.json (real 자리를 단독 자리로 옮겨 비교)
+        if args.prev_real and Path(args.prev_real).exists():
+            prev_real = DevStatus.model_validate_json(
+                Path(args.prev_real).read_text(encoding="utf-8")
+            )
+            prev = judge_mod.real_as_unit(prev_real)
+    elif args.prev and Path(args.prev).exists():
         prev = DevStatus.model_validate_json(Path(args.prev).read_text(encoding="utf-8"))
     with tempfile.TemporaryDirectory() as tmp:
         runs = [run_subprocess(i, Path(tmp)) for i in range(1, args.runs + 1)]
@@ -67,15 +76,27 @@ def cmd_run(args: argparse.Namespace) -> int:
     )
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    if mode == "real":
+        # 실서버 결과: e2e-result.json(mock 결과)을 덮어쓰지 않고 real-result.json으로 남긴다
+        status = judge_mod.to_real_status(status, prev_real)
+        name = "real-result.json"
+    else:
+        name = "e2e-result.json"
     result = status.model_dump(mode="json", by_alias=True)
-    (out / "e2e-result.json").write_text(
-        json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8"
-    )
+    (out / name).write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
     (out / "e2e-detail.json").write_text(
         json.dumps(detail, ensure_ascii=False, indent=1), encoding="utf-8"
     )
     kind = "기준선(첫 실행)" if detail["baseline"] else f"회귀 {len(detail['regressions'])}건"
-    print(f"SCN-A e2e [{mode}] {' · '.join(summary_lines(detail, status))} · {kind}")
+    if mode == "real":
+        t = status.totals
+        detect = runs[0]["meta"].get("detect", "-")
+        print(
+            f"SCN-A e2e [real] 실서버 {t.real_pass}/{t.total} · 연속 {t.real_runs_consecutive}회"
+            f" · 감지: {detect} · {kind}"
+        )
+    else:
+        print(f"SCN-A e2e [{mode}] {' · '.join(summary_lines(detail, status))} · {kind}")
     return 0
 
 
@@ -85,6 +106,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("run")
     p.add_argument("--out", required=True)
     p.add_argument("--prev")
+    p.add_argument("--prev-real", help="직전 real-result.json (real 모드에서 연속 횟수 계산)")
     p.add_argument("--commit")
     p.add_argument("--runs", type=int, default=RUNS_REQUIRED)
     return cmd_run(ap.parse_args(argv))
