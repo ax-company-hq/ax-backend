@@ -4,17 +4,17 @@ hr 구현(`agents/hr`)이 현재 계약 안에서 우회한 곳과, 계약에 �
 계약 변경은 계약 PR → 구현 PR 순서이고 소비자 파트 승인이 필요하다(`CLAUDE.md`). 아래는 **제안**이며 어느 것도 `contracts/`를 고치지 않았다.
 우선순위: ① 다른 부서가 hr 카드를 쓰기 전에 필요 → ② 3단계(실제 연동) 전에 필요 → ③ 있으면 좋음.
 
-## 0. 적용 상태 (2026-10-23, 로컬 브랜치 `feat/hr-dashboard-data`, PR 없음)
+## 0. 적용 상태 (2026-10-23, 계약 PR #177 + 구현 브랜치 `feat/hr-dashboard-data`)
 
 아래 표의 제안 중 **hr 쪽 계약은 이 브랜치에 이미 적용**해 hr 구현과 테스트(290개+)까지 맞춰 두었다. 다만 `contracts/` 변경이라 계약 PR로 올려 소비자 승인을 받아야 한다.
 
 | 제안 | 적용 | 비고 |
 |---|---|---|
-| ① 1 `Card.status`에 `candidate` | ✅ | **호환성 검사가 "깨짐"으로 잡는다**(`Card`·`CardGetOutput`·`CardHit`·`CardLinkOutput`·`CardSearchOutput` 5건, 응답 enum 값 추가). 카드를 읽는 모든 소비자(memory·support·data·infra·planning)의 승인이 필요하다 |
+| ① 1 후보 카드 표시 | ✅(형태 변경) | `Card.status`에 `candidate`를 넣으면 **호환성 검사가 "깨짐"으로 잡아서**(응답 enum 값 추가, 5건) 대신 **`Card.candidate: bool`(기본 false)** 필드를 PR #177에 넣었다. status 값을 늘리려면 소비자(memory·support·data·infra·planning) 합의가 먼저다 |
 | ① 3 `RecordCase.area` | ✅ | 선택 필드 추가라 호환 |
 | ② 5 `ErrorCode.INVALID_INPUT` | ✅ | hr은 형식 위반을 `rejected`로 돌려준다 |
-| ② 6 `ConfirmOffboardingOutput.status`에 `rejected` | ✅ | |
-| ② 7 `ConfirmReassignmentOutput.status`에 `held` | ✅ | |
+| ② 6 `ConfirmOffboardingOutput.status`에 `rejected` | ⬜ | 응답 enum 추가라 호환성 검사가 막는다. hr은 지금 dict로 돌려준다 |
+| ② 7 `ConfirmReassignmentOutput.status`에 `held` | ⬜ | 위와 같음 |
 | ③ 11·12 온보딩 단계 완료 | ✅ | `update_onboarding_step`(입력 `UpdateOnboardingStepInput`, 출력 `StartOnboardingOutput`) 구현 |
 | (새) 대시보드 인사 화면용 조회 | ✅ | `list_handovers`·`list_open_questions`·`list_onboardings`·`list_changes`·`list_candidate_cards`·`get_audit_timeline`, 사람 입력 `decide_candidate_card` — `hr.py`에 모델 추가, Agent Card는 18개 skill |
 | ① 2 카드 구조화 필드(`area`·`outcome` 등) | ⬜ | 아직 `Card.extra` (memory와 정해야 함) |
