@@ -4,7 +4,7 @@ skill과 등급(등급 신고는 안전 레이어 레지스트리가 원본이�
 
 | skill | 등급 | 하는 일 |
 | --- | --- | --- |
-| `record_case` | A | 사건·결정 기록 → 결정 카드 (입력은 `RecordCase`, 출력은 `RecordCaseOutput`) |
+| `record_case` | A | 사건·결정 기록 → 결정 카드 (입력 `RecordCase`, 출력 `RecordCaseOutput`) |
 | `start_handover` | A | 인수인계 초안·빈 자리·완성도, 빈 자리 질문 |
 | `answer_handover_question` | A | 인계자의 답변을 받아 초안을 이어서 보완 |
 | `confirm_handover` | B(검증자 planning), 완성도 미달이면 C | 인수인계 확정 |
@@ -14,6 +14,8 @@ skill과 등급(등급 신고는 안전 레이어 레지스트리가 원본이�
 | `start_onboarding` | A | 읽기 순서·입문 체크리스트 |
 | `check_plan` | 읽기 | 새 계획이 과거에 기각된 안인지 판정 |
 | `get_roster` | 읽기 | 담당·교대 명부 (개인정보 제외) |
+
+`RecordCaseOutput`은 모델만 추가했고, hr의 출력 전환은 hr 담당 PR에서 한다.
 
 인계자 질문은 `input-required`(+ `reason_code: human_input`) 결과의 `output`에 담는다.
 질문을 기다리는 동안은 hr이 상태를 저장하고, 답변은 새 요청(`answer_handover_question`)으로

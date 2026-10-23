@@ -3,7 +3,7 @@
 ## 1. 역할
 인사 에이전트. 부서(planning, support, infra 등)가 보낸 사건·결정 기록을 받아 결정 카드로 정리해 회사 기억에 남긴다.
 이 폴더는 에이전트 템플릿(`agent-template`)으로 만든 **최소 예시**이기도 하다. 다른 부서는 이 폴더를 복사해서 시작한다.
-v0은 skill `record_case` 하나이고, 핸들러는 카드를 만들지 않고 `record_only`만 돌려주는 스텁이다.
+v0은 skill `record_case` 하나이고, 핸들러는 입력을 그대로 돌려주는 스텁이다.
 ## 2. 실행 방법
 - 서버: `docker compose -f infra/compose.yml up hr`, 또는 `uv run uvicorn hr_agent.main:app --port 8104`
 - 목 모드: `HR_MOCK=1` (LLM·외부 호출 대신 가짜 응답. CI는 항상 1)
@@ -12,7 +12,7 @@ v0은 skill `record_case` 하나이고, 핸들러는 카드를 만들지 않고 
   (목 모드에서는 `orchestrator`인 것처럼 보낸다. 요청자는 `--as planning`처럼 바꾼다)
 ## 3. 입출력 계약
 - skill: `record_case` (등급 A, 우선순위 required, 요청 가능: orchestrator·planning·support·infra)
-- 입력: `contracts/src/ax_contracts/schemas/record.py`의 `RecordCase`, 출력: `contracts/src/ax_contracts/schemas/hr.py`의 `RecordCaseOutput`
+- 입력: `contracts/src/ax_contracts/schemas/record.py`의 `RecordCase` (v0은 출력도 같은 형식으로 돌려준다)
 - 요청·결과 공통 필드: `contracts/src/ax_contracts/schemas/message.py`
 - Agent Card: `agent-card.json` (`/.well-known/agent-card.json`으로 공개)
 ## 4. 의존

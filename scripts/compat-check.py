@@ -3,8 +3,7 @@
 실행: python scripts/compat-check.py <base_dir> <head_dir>   (종료 코드 1 = 깨짐)
 
 분류 규칙 (계약 모델 클래스 이름 접미사):
-- 요청형: Request, Query, Input, Command, Params, Meta, Case  -> validation 스키마 + 요청 규칙
-                        (Case: hr `RecordCase`처럼 skill 입력으로만 쓰는 모델)
+- 요청형: Request, Query, Input, Command, Params, Meta  -> validation 스키마 + 요청 규칙
 - 응답형: Result, Response, Output, Event, Card, Record, Decision, Data
                                                       -> serialization 스키마 + 응답 규칙
 - 그 외: 둘 다 (요청 규칙과 응답 규칙을 모두 적용, 가장 엄격)
@@ -26,7 +25,7 @@ import json
 import sys
 from pathlib import Path
 
-REQUEST_SUFFIXES = ("Request", "Query", "Input", "Command", "Params", "Meta", "Case")
+REQUEST_SUFFIXES = ("Request", "Query", "Input", "Command", "Params", "Meta")
 RESPONSE_SUFFIXES = (
     "Result", "Response", "Output", "Event", "Card", "Record", "Decision", "Data",
 )  # fmt: skip

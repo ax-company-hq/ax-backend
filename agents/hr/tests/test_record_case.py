@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
-from ax_contracts.schemas import RecordCaseOutput
+from ax_contracts.schemas import RecordCase
 from hr_agent.main import app, load_card
 
 
@@ -45,13 +45,13 @@ def test_agent_card_matches_template_format() -> None:
     assert served["name"] == "hr"
 
 
-def test_record_case_returns_record_only_and_is_deterministic() -> None:
+def test_record_case_echoes_input_and_is_deterministic() -> None:
     client = TestClient(app)
     first = client.post("/a2a", json=_body()).json()
     second = client.post("/a2a", json=_body()).json()
     assert first["status"] == "completed"
     assert first["output"] == second["output"]
-    assert RecordCaseOutput.model_validate(first["output"]).outcome == "record_only"
+    assert RecordCase.model_validate(first["output"]).summary == "결제 재시도 기준 확정"
     assert first["decision_reason"] == "중복 결제 위험을 줄이기 위해"
     assert first["alternatives_considered"] == ["재시도 없음"]
 

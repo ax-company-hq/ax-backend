@@ -44,7 +44,6 @@ def test_classify():
     assert cc.classify("FooRequest") == (cc.REQ,)
     assert cc.classify("FooResult") == (cc.RES,)
     assert cc.classify("Escalation") == (cc.REQ, cc.RES)
-    assert cc.classify("RecordCase") == (cc.REQ,)  # hr skill 입력 (이슈 #103)
 
 
 def test_request_required_add_fails(tmp_path):
@@ -132,18 +131,6 @@ def test_enum_rules(tmp_path):
     assert run(tmp_path, {"m.XResult": obj({"k": e2})}, {"m.XResult": obj({"k": e1})}) == []
     assert run(tmp_path, {"m.XRequest": obj({"k": e2})}, {"m.XRequest": obj({"k": e1})})
     assert run(tmp_path, {"m.XRequest": obj({"k": e1})}, {"m.XRequest": obj({"k": e2})}) == []
-
-
-def test_case_suffix_is_request_only(tmp_path):
-    # RecordCase처럼 skill 입력으로만 쓰는 모델은 enum 값을 추가해도 호환이다 (요청 규칙)
-    e1 = {"type": "string", "enum": ["a", "b"]}
-    e2 = {"type": "string", "enum": ["a", "b", "c"]}
-    assert run(tmp_path, {"m.RecordCase": obj({"k": e1})}, {"m.RecordCase": obj({"k": e2})}) == []
-    # 요청 규칙은 그대로 적용된다: enum 값 제거와 필수 필드 추가는 여전히 깨짐
-    assert run(tmp_path / "x", {"m.RecordCase": obj({"k": e2})}, {"m.RecordCase": obj({"k": e1})})
-    base = {"m.RecordCase": obj({"a": S})}
-    head = {"m.RecordCase": obj({"a": S, "b": S}, ["b"])}
-    assert run(tmp_path / "y", base, head)
 
 
 def test_model_removed_fails_added_ok(tmp_path):
