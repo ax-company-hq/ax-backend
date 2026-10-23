@@ -265,3 +265,41 @@ def test_refund_cannot_exceed_the_payment_or_hit_unpaid_payments(client: TestCli
         headers=SUPPORT,
     )
     assert zero.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("outcome", "code", "http"),
+    [
+        ("duplicate_claim", "DUPLICATE_CLAIM", 409),
+        ("invalid_state", "INVALID_STATE", 409),
+        ("not_found", "NOT_FOUND", 404),
+        ("not_executed_held", "NOT_EXECUTED", 409),
+    ],
+)
+def test_support_error_outcomes_sent_as_completed_become_api_errors(
+    client: TestClient, support: FakeSupport, outcome: str, code: str, http: int
+) -> None:
+    """고객지원은 중복 접수 같은 거절도 status=completed + outcome으로 돌려준다."""
+    order = _paid_order(client)
+    support.result = AgentResult(
+        meta=RequestMeta(context_id="ctx_shop_x", token="t", deadline="2030-01-01T00:00:00Z"),
+        status=TaskStatus.COMPLETED,
+        outcome=outcome,
+        output={"message": "이미 같은 품목에 대한 클레임이 있다"},
+    )
+    response = client.post("/api/shop/claims", json=_claim_body(order))
+    assert (response.status_code, response.json()["error"]["code"]) == (http, code)
+    assert "id" not in response.json().get("data", {})  # 성공 응답으로 새지 않는다
+
+
+def test_a_completed_answer_that_is_not_a_claim_is_not_passed_through(
+    client: TestClient, support: FakeSupport
+) -> None:
+    order = _paid_order(client)
+    support.result = AgentResult(
+        meta=RequestMeta(context_id="ctx_shop_x", token="t", deadline="2030-01-01T00:00:00Z"),
+        status=TaskStatus.COMPLETED,
+        output={"message": "알 수 없는 응답"},
+    )
+    response = client.post("/api/shop/claims", json=_claim_body(order))
+    assert (response.status_code, response.json()["error"]["code"]) == (502, "UPSTREAM_ERROR")
