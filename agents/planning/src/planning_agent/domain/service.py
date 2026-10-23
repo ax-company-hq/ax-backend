@@ -71,8 +71,10 @@ from planning_agent.domain.rules import (
     PROMOTE_AFTER,
     auto_limit,
     check_simple,
+    deploy_of,
     estimate,
     find_duplicate,
+    incident_of,
     merged_in_window,
     para_of,
     verify_rollback,
@@ -1296,6 +1298,12 @@ class PlanningService:
 
         await self._apply(log)
         return found
+
+    def rollback_record(
+        self, context_id: str, service: str, version: str
+    ) -> tuple[PR | None, Incident | None]:
+        """롤백 검증에 쓸 planning 자기 기록: (그 버전으로 나간 머지 PR, 요청 사건)."""
+        return deploy_of(self.state, service, version), incident_of(self.state, context_id)
 
     async def verify_rollback_target(
         self,

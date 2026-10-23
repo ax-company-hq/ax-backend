@@ -160,6 +160,8 @@ class PR(DomainModel):
     merged: bool
     merged_at: UtcDatetime | None = None
     changed_paths: list[str] = Field(default_factory=list)
+    # 이 머지로 나간 배포 "서비스 버전" (데모: 머지 = dev 배포). 대응을 모르면 None
+    deployed_version: str | None = None
     auto: bool = False  # 간단 요청 규칙·자동 머지 규칙으로 자동 머지됨
     auto_review: AutoReview | None = None  # 자동 머지를 멈춘 이유 (머지되면 비움)
 

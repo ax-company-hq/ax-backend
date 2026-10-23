@@ -242,7 +242,7 @@ async def verify_rollback_target(request: AgentRequest) -> AgentResult:
     출력은 계약 `VerifyRollbackTargetOutput`이고 safety는 `approved == true`일 때만 승인으로 본다.
     """
     try:
-        inp, execution_id = _rollback_input(request.input)
+        inp, execution_id, sources = _rollback_input(request.input, request.meta.context_id)
     except ValidationError as exc:
         return _invalid(request, exc)
     except ValueError as exc:
@@ -274,9 +274,11 @@ async def verify_rollback_target(request: AgentRequest) -> AgentResult:
                 f"deployed_at({inp.deployed_at.isoformat()}) <= "
                 f"incident_opened_at({inp.incident_opened_at.isoformat()})",
                 f"prs WHERE merged_at BETWEEN deployed_at - {minutes}m AND deployed_at",
-            ],
+            ]
+            + [f"{k} 출처: {v}" for k, v in sources.items()],
             data_summary=(
                 f"{inp.service} {inp.target_version}: {reason}, 구간 안 머지 PR {len(related)}건"
+                + "".join(f" · {k} ← {v}" for k, v in sources.items())
             ),
             ref_ids=([f"execution:{execution_id}"] if execution_id else []) + _refs(related),
         ),
@@ -356,8 +358,8 @@ class SafetyReviewInput(BaseModel):
     `{execution_id, action, requester, params, computed_amount, threshold_version}`.
     hr `confirm_handover`의 params는 `handover_id`·`owner_id`·`area`·`item_ids`(또는
     `handover_item_ids`)·`completeness_percent` 등이다. 완성도는 safety 규칙이 보므로 쓰지 않는다.
-    infra `rollback_deployment`의 params는 `service`·`from_version`·`to_version`에
-    `deployed_at`·`incident_opened_at`이 더해진 것이다(`verify_rollback_target`).
+    infra `rollback_deployment`의 params는 `service`·`from_version`·`to_version`이고,
+    `deployed_at`·`incident_opened_at`은 선택이다(planning 기록이 먼저, `verify_rollback_target`).
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -394,26 +396,49 @@ def _handover_input(raw: dict[str, Any]) -> tuple[VerifyHandoverInput, str | Non
 ROLLBACK_ACTIONS = ("rollback_deployment",)
 
 
-def _rollback_input(raw: dict[str, Any]) -> tuple[VerifyRollbackTargetInput, str | None]:
-    """계약 형식이면 그대로, safety 검토 형식이면 계약 입력으로 바꾼다. (입력, execution_id).
+def _rollback_input(
+    raw: dict[str, Any], context_id: str
+) -> tuple[VerifyRollbackTargetInput, str | None, dict[str, str]]:
+    """계약 형식이면 그대로, safety 검토 형식이면 계약 입력으로 바꾼다.
 
-    infra `rollback_deployment` params(`RollbackDeploymentParams`)의 `from_version`이 되돌릴
-    대상 배포, 즉 계약의 `target_version`이다. `deployed_at`·`incident_opened_at`은 params에
-    같은 이름으로 와야 하고, 없으면 판정하지 않는다(failed → safety 보류).
+    돌려주는 값은 (입력, execution_id, 시각 출처). infra `rollback_deployment`
+    params(`RollbackDeploymentParams`)의 `from_version`이 되돌릴 대상 배포, 즉 계약의
+    `target_version`이다. 검토 형식의 두 시각은 planning 자기 기록을 먼저 쓴다:
+    - `deployed_at`: 그 버전으로 나간 머지 PR의 `merged_at` (데모: 머지 = dev 배포)
+    - `incident_opened_at`: 요청 `context_id`의 사건 기록 `opened_at`
+    기록이 없으면 params의 같은 이름 값을 쓰고, 그것도 없으면 판정하지 않는다(failed → 보류).
     """
     if "execution_id" not in raw or "params" not in raw:
-        return VerifyRollbackTargetInput.model_validate(raw), None
+        return VerifyRollbackTargetInput.model_validate(raw), None, {}
     review = SafetyReviewInput.model_validate(raw)
     if review.action not in ROLLBACK_ACTIONS:
         raise ValueError(f"verify_rollback_target가 검증하지 않는 액션: {review.action}")
     p = review.params
+    service = p.get("service")
+    version = p.get("target_version") or p.get("from_version")
+    pr, incident = (None, None)
+    if isinstance(service, str) and isinstance(version, str):
+        pr, incident = get_service().rollback_record(context_id, service, version)
+    sources: dict[str, str] = {}
+    deployed_at: Any = p.get("deployed_at")
+    if pr is not None:
+        deployed_at = pr.merged_at
+        sources["deployed_at"] = f"머지 기록 {pr.id} ({pr.deployed_version})"
+    elif deployed_at is not None:
+        sources["deployed_at"] = "params"
+    opened_at: Any = p.get("incident_opened_at")
+    if incident is not None:
+        opened_at = incident.opened_at
+        sources["incident_opened_at"] = f"사건 기록 {incident.context_id}"
+    elif opened_at is not None:
+        sources["incident_opened_at"] = "params"
     converted = {
-        "service": p.get("service"),
-        "target_version": p.get("target_version") or p.get("from_version"),
-        "deployed_at": p.get("deployed_at"),
-        "incident_opened_at": p.get("incident_opened_at"),
+        "service": service,
+        "target_version": version,
+        "deployed_at": deployed_at,
+        "incident_opened_at": opened_at,
     }
-    return VerifyRollbackTargetInput.model_validate(converted), review.execution_id
+    return VerifyRollbackTargetInput.model_validate(converted), review.execution_id, sources
 
 
 async def verify_handover(request: AgentRequest) -> AgentResult:

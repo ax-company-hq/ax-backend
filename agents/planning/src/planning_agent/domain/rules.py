@@ -10,7 +10,15 @@ import re
 from datetime import datetime, timedelta
 from typing import Literal
 
-from planning_agent.domain.models import PR, AutoCheck, AutoLevel, AutoPolicy, Request, State
+from planning_agent.domain.models import (
+    PR,
+    AutoCheck,
+    AutoLevel,
+    AutoPolicy,
+    Incident,
+    Request,
+    State,
+)
 
 # ---- 자동 처리 단계 (data.ts AUTO_LEVELS, PROMOTE_AFTER). 시연값, AS-B11
 AUTO_LEVELS: list[AutoLevel] = [
@@ -119,6 +127,22 @@ def merged_in_window(
         and (not component or any(path.startswith(component) for path in p.changed_paths))
     ]
     return sorted(found, key=lambda p: (p.merged_at, p.number), reverse=True)
+
+
+def deploy_of(state: State, service: str, version: str) -> PR | None:
+    """버전에 해당하는 배포 = 그 버전으로 나간 머지 PR (데모: 머지 = dev 배포). 가장 최근 것."""
+    target = f"{service} {version}"
+    found = [
+        p
+        for p in state.prs
+        if p.merged and p.merged_at is not None and p.deployed_version == target
+    ]
+    return max(found, key=lambda p: (p.merged_at, p.number), default=None)
+
+
+def incident_of(state: State, context_id: str) -> Incident | None:
+    """planning이 가진 사건 기록 (link_incident·find_related_prs로 받은 사건)."""
+    return next((i for i in state.incidents if i.context_id == context_id), None)
 
 
 RollbackReason = Literal["deploy_before_incident", "no_deploy_in_window", "deploy_after_incident"]

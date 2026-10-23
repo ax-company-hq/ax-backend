@@ -11,6 +11,7 @@ from ax_contracts.schemas.planning import (
     LinkIncidentOutput,
     VerifyRollbackTargetOutput,
 )
+from planning_agent.domain.models import Incident
 from planning_agent.main import app
 
 
@@ -196,23 +197,28 @@ def test_verify_rejects_when_no_merge_in_window(a2a_body) -> None:
 
 
 # ---- verify_rollback_target: safety 교차검증 호출 형식 (`Gate._cross_verify`)
+#
+# 두 시각은 planning 자기 기록이 먼저다: deployed_at = 그 버전으로 나간 머지 PR(시드 PR #28 =
+# shop-api v2.4.1, 05:02Z), incident_opened_at = 요청 context_id의 사건(ctx_inc_0001, 05:04Z).
 
 ROLLBACK_PARAMS = {
     "service": "shop-api",
     "from_version": "v2.4.1",
     "to_version": "v2.4.0",
     "release_fault_injection": True,
-    "incident_opened_at": "2026-10-21T05:04:00Z",
 }
+NO_RECORD = {"from_version": "v2.3.9"}  # planning이 배포 기록을 모르는 버전
+NO_INCIDENT_CTX = "ctx_inc_0099"  # planning이 사건 기록을 모르는 context
 
 
 def _rollback_review(
-    a2a_body, deployed_at: str | None, action: str = "rollback_deployment", **extra
+    a2a_body,
+    action: str = "rollback_deployment",
+    context_id: str = "ctx_inc_0001",
+    **extra,
 ) -> dict:
     """safety `Gate._cross_verify`가 verifier skill에 넣는 input과 같은 모양."""
-    params = {**ROLLBACK_PARAMS, **extra}
-    if deployed_at is not None:
-        params["deployed_at"] = deployed_at
+    params = {k: v for k, v in {**ROLLBACK_PARAMS, **extra}.items() if v is not None}
     payload = {
         "execution_id": "exe_rb_1",
         "action": action,
@@ -222,7 +228,11 @@ def _rollback_review(
         "threshold_version": "2026-10-23",
     }
     body = a2a_body(
-        "verify_rollback_target", payload, token="mock:safety", idempotency_key="verify:exe_rb_1"
+        "verify_rollback_target",
+        payload,
+        token="mock:safety",
+        context_id=context_id,
+        idempotency_key="verify:exe_rb_1",
     )
     return _call(body)
 
@@ -237,41 +247,89 @@ def _safety_verdict(result: dict) -> str:
 
 
 def test_verify_review_format_approves(a2a_body) -> None:
-    result = _rollback_review(a2a_body, "2026-10-21T05:03:00Z")
+    # infra는 두 시각을 보내지 않는다 (RollbackDeploymentParams 그대로)
+    result = _rollback_review(a2a_body)
     assert (result["status"], result["outcome"]) == ("completed", None)
     out = VerifyRollbackTargetOutput.model_validate(result["output"])
     assert (out.approved, out.reason_code) == (True, "deploy_before_incident")
     assert [p.pr_number for p in out.related_prs] == [28]
     assert _safety_verdict(result) == "approved"
     assert "execution:exe_rb_1" in result["evidence"]["ref_ids"]
+    queries = result["evidence"]["queries"]
+    assert "deployed_at 출처: 머지 기록 PR #28 (shop-api v2.4.1)" in queries
+    assert "incident_opened_at 출처: 사건 기록 ctx_inc_0001" in queries
     # 계약 형식과 같은 판정이다
-    contract = _verify(a2a_body, "2026-10-21T05:03:00Z")
+    contract = _verify(a2a_body, "2026-10-21T05:02:00Z")
     assert result["output"] == contract["output"]
     # 계약 이름(target_version)으로 와도 같다
-    named = _rollback_review(a2a_body, "2026-10-21T05:03:00Z", target_version="v2.4.1")
+    named = _rollback_review(a2a_body, from_version=None, target_version="v2.4.1")
     assert named["output"] == result["output"]
 
 
-def test_verify_review_format_rejects(a2a_body) -> None:
-    after = _rollback_review(a2a_body, "2026-10-21T05:10:00Z")
+def test_verify_review_format_records_win_over_params(a2a_body) -> None:
+    # params가 사건 뒤 배포라고 해도 planning 기록(05:02 머지, 05:04 사건)으로 판정한다
+    result = _rollback_review(
+        a2a_body,
+        deployed_at="2026-10-21T05:10:00Z",
+        incident_opened_at="2026-10-21T05:00:00Z",
+    )
+    assert _safety_verdict(result) == "approved"
+    assert "params" not in result["evidence"]["data_summary"]
+
+
+def test_verify_review_format_rejects(service, a2a_body) -> None:
+    # 사건이 그 버전 배포(05:02)보다 먼저 열렸다는 기록 → 거절
+    service.state.incidents.append(
+        Incident(context_id="ctx_inc_0009", title="이른 사건", opened_at="2026-10-21T05:00:00Z")
+    )
+    result = _rollback_review(a2a_body, context_id="ctx_inc_0009")
+    assert (result["status"], result["outcome"]) == ("completed", "rejected_by_review")
+    assert result["output"]["reason_code"] == "deploy_after_incident"
+    assert _safety_verdict(result) == "rejected"
+    assert "incident_opened_at 출처: 사건 기록 ctx_inc_0009" in result["evidence"]["queries"]
+
+
+def test_verify_review_format_params_only(a2a_body) -> None:
+    # 버전·사건 기록이 없으면 params 값을 쓴다
+    ok = _rollback_review(
+        a2a_body,
+        context_id=NO_INCIDENT_CTX,
+        deployed_at="2026-10-21T05:03:00Z",
+        incident_opened_at="2026-10-21T05:04:00Z",
+        **NO_RECORD,
+    )
+    assert _safety_verdict(ok) == "approved"
+    assert "deployed_at 출처: params" in ok["evidence"]["queries"]
+    assert "incident_opened_at 출처: params" in ok["evidence"]["queries"]
+    after = _rollback_review(
+        a2a_body,
+        context_id=NO_INCIDENT_CTX,
+        deployed_at="2026-10-21T05:10:00Z",
+        incident_opened_at="2026-10-21T05:04:00Z",
+        **NO_RECORD,
+    )
     assert (after["status"], after["outcome"]) == ("completed", "rejected_by_review")
     assert after["output"]["reason_code"] == "deploy_after_incident"
     assert _safety_verdict(after) == "rejected"
-    none = _rollback_review(a2a_body, "2026-10-20T05:03:00Z")
+    none = _rollback_review(a2a_body, deployed_at="2026-10-20T05:03:00Z", **NO_RECORD)
     assert (none["status"], none["outcome"]) == ("completed", "rejected_by_review")
     assert none["output"]["reason_code"] == "no_deploy_in_window"
     assert _safety_verdict(none) == "rejected"
 
 
 def test_verify_review_format_bad_input_fails(a2a_body) -> None:
-    # 배포 시각이 없으면 판정하지 않는다 → failed (safety는 무응답 → 보류)
-    no_deploy = _rollback_review(a2a_body, None)
+    # 버전 기록도 params 배포 시각도 없으면 판정하지 않는다 → failed (safety는 무응답 → 보류)
+    no_deploy = _rollback_review(a2a_body, **NO_RECORD)
     assert (no_deploy["status"], no_deploy["outcome"]) == ("failed", "invalid_input")
     assert _safety_verdict(no_deploy) == "unavailable"
+    # 사건 기록도 params 사건 시각도 없으면 실패
+    no_incident = _rollback_review(a2a_body, context_id=NO_INCIDENT_CTX)
+    assert (no_incident["status"], no_incident["outcome"]) == ("failed", "invalid_input")
+    assert _safety_verdict(no_incident) == "unavailable"
     # 되돌릴 버전(from_version)도 없으면 실패
-    no_version = _rollback_review(a2a_body, "2026-10-21T05:03:00Z", from_version=None)
+    no_version = _rollback_review(a2a_body, from_version=None, deployed_at="2026-10-21T05:03:00Z")
     assert (no_version["status"], no_version["outcome"]) == ("failed", "invalid_input")
     # 다른 액션의 검토는 받지 않는다
-    other = _rollback_review(a2a_body, "2026-10-21T05:03:00Z", action="restart_service")
+    other = _rollback_review(a2a_body, action="restart_service")
     assert (other["status"], other["outcome"]) == ("failed", "invalid_input")
     assert _safety_verdict(other) == "unavailable"
