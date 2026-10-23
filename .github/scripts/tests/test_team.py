@@ -789,9 +789,10 @@ def test_dispatch_write_explicit_dept_mode_skips_label_lookup(team: Team, monkey
     calls = []
     monkeypatch.setattr(team_mod, "gh_api", lambda path, *e: calls.append((path, e)))
     assert "data:task" in team_mod.dispatch_write("o/r", team, 9, "data", "task")
-    assert [c[0] for c in calls] == ["repos/o/r/issues/9/labels",
+    # 부서·모드로 라벨을 고르지는 않지만, answered 방어를 위해 이슈를 한 번 읽는다
+    assert [c[0] for c in calls] == ["repos/o/r/issues/9", "repos/o/r/issues/9/labels",
                                      "repos/o/r/actions/workflows/_claude-write.yml/dispatches"]
-    assert "inputs[dept]=data" in calls[1][1] and "inputs[mode]=task" in calls[1][1]
+    assert "inputs[dept]=data" in calls[2][1] and "inputs[mode]=task" in calls[2][1]
 
 
 def test_guard_same_name_in_two_files_must_both_survive() -> None:

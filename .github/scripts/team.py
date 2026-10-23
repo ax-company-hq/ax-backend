@@ -885,8 +885,10 @@ def dispatch_write(repo: str, team: Team, issue: int, dept: str | None = None,
     run 제목이 claude:<부서>:<모드> #<이슈>라 cap이 작성으로 센다. 실패해도 예외를 올리지 않는다.
     """
     try:
+        info = gh_api(f"repos/{repo}/issues/{issue}") or {}
+        if "answered" in [lb["name"] for lb in info.get("labels", [])]:
+            return f"#{issue}: answered라서 다시 실행하지 않음"
         if not (dept in team.depts and mode in ("task", "request")):
-            info = gh_api(f"repos/{repo}/issues/{issue}") or {}
             target = write_target(team, [lb["name"] for lb in info.get("labels", [])])
             if not target:
                 return f"#{issue}: to:/dept: 라벨이 없어 다시 실행하지 않음"

@@ -571,10 +571,11 @@ def write_apply(team: team_mod.Team, dept: str, mode: str, issue_no: int, retry:
     for r in create:
         body = (f"hop: {r['hop']}\n\n요청 출처: #{issue_no} ({dept})\n\n"
                 f"{r['text']}\n\n{r['marker']}")
+        first_label = request_label(r["to"], r["text"])  # 한 번만 정해 라벨과 댓글이 어긋나지 않게
         new = api(f"repos/{repo()}/issues", "-X", "POST", "-f",
                   f"title=[요청 {dept}→{r['to']}] {result['title'][:80]}", "-f", f"body={body}",
-                  "-f", "labels[]=request", "-f", f"labels[]={request_label(r['to'], r['text'])}")
-        if request_label(r["to"], r["text"]) == "waiting":
+                  "-f", "labels[]=request", "-f", f"labels[]={first_label}")
+        if first_label == "waiting":
             comment(new["number"], team_mod.relay_to_comment(f"to:{r['to']}"))
         lock(new["number"])
         made.append(new["number"])

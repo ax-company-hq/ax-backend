@@ -540,7 +540,7 @@ def relay_unblock(team: team_mod.Team) -> list[str]:
     done = []
     for issue in list_open_issues(WAIT_LABEL):
         labels = labels_of(issue)
-        if "needs-human" in labels or "blocked" in labels:
+        if {"needs-human", "blocked", "answered"} & set(labels):
             continue
         refs = sorted({int(n) for n in BLOCKED_BY.findall(issue.get("body") or "")})
         if not refs or not all(is_done(n) for n in refs):
@@ -570,7 +570,7 @@ def answer_allowed(team: team_mod.Team, login: str, to_label: str | None) -> boo
     if login.lower() in code_owners(team):
         return True
     dept = to_label[3:] if to_label else None
-    return bool(dept in team.depts and login in team.owners(dept))
+    return bool(dept in team.depts and login.lower() in {o.lower() for o in team.owners(dept)})
 
 
 def relay_answered(team: team_mod.Team) -> list[str]:
@@ -593,7 +593,7 @@ def relay_answered(team: team_mod.Team) -> list[str]:
             continue
         num = issue["number"]
         add_labels(num, ["answered"])
-        for lb in [x for x in (to, "wip-wait") if x]:
+        for lb in [x for x in (to, "wip-wait", WAIT_LABEL) if x]:
             remove_label(num, lb)
         if to:
             team_mod.post_comment(repo(), num, team_mod.relay_to_comment(to))

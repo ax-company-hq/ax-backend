@@ -15,6 +15,7 @@ spec = importlib.util.spec_from_file_location("autopilot", SCRIPTS / "autopilot.
 ap = importlib.util.module_from_spec(spec)
 sys.modules["autopilot"] = ap
 spec.loader.exec_module(ap)
+ORIG_DISPATCH = ap.team_mod.dispatch_write
 cj_spec = importlib.util.spec_from_file_location("claude_jobs_x", SCRIPTS / "claude_jobs.py")
 cj = importlib.util.module_from_spec(cj_spec)
 sys.modules["claude_jobs_x"] = cj
@@ -333,6 +334,35 @@ def test_relay_answered_needs_answer_command_from_allowed_person(monkeypatch, te
     assert "answered" in fake.names(52) and "to:support" not in fake.names(52)
     assert ap.team_mod.relay_to_comment("to:support") in [
         c["body"] for c in fake.issues[52]["comments"]]
+
+
+def test_answered_waiting_request_is_not_restarted_by_relay(monkeypatch, team):
+    monkeypatch.setenv("AX_RELAY", "on")
+    monkeypatch.setenv("AX_GO", "on")
+    fake = Fake(monkeypatch)
+    fake.add(30, "선행", state="open")
+    fake.add(60, "요청", "blocked-by #30", ["request", "waiting", "to:support"])
+    fake.issues[60]["comments"] += [relay_comment("to:support"),
+                                    {"body": "/answer", "user": {"login": "haakim7"}}]
+    assert ap.relay(team) == ["#60: answered"]
+    assert "waiting" not in fake.names(60) and "answered" in fake.names(60)
+    fake.issues[30]["state"] = "closed"
+    fake.add(61, "waiting 그대로", "blocked-by #30", ["request", "waiting", "answered"])
+    assert ap.relay(team) == ["처리할 것 없음"]
+    assert fake.dispatched == [] and "to:support" not in fake.names(60)
+
+
+def test_dispatch_write_skips_answered_issue(monkeypatch, team):
+    calls = []
+
+    def fake_api(path, *extra):
+        calls.append(path)
+        return {"labels": [{"name": "answered"}, {"name": "to:support"}]}
+
+    monkeypatch.setattr(ap.team_mod, "dispatch_write", ORIG_DISPATCH)
+    monkeypatch.setattr(ap.team_mod, "gh_api", fake_api)
+    out = ap.team_mod.dispatch_write(REPO, team, 9, "support", "request")
+    assert "answered" in out and not any("dispatches" in c for c in calls)
 
 
 # ── 아침 리포트 ───────────────────────────────────────────────

@@ -1,8 +1,9 @@
 name: relay
 
-# dev에 머지될 때마다(push) + 3시간마다: `blocked-by #N`이 전부 닫힌 이슈의 blocked를 풀고 ready로 바꾼다
-# (저장해 둔 `<!-- relay-to: to:<부서> -->` 라벨을 다시 붙임. AX_GO=on이면 작성도 시작),
-# 사람이 답한 request 이슈는 answered로, 같은 출처·제목의 요청 이슈는 합친다. AX_RELAY=on일 때만.
+# dev에 머지될 때마다(push) + 3시간마다: 라벨 `waiting`이 붙고 `blocked-by #N`이 전부 닫힌 이슈를 ready로 바꾼다
+# (봇이 남긴 `<!-- relay-to: to:<부서> -->` 댓글의 라벨을 다시 붙임. AX_GO=on이면 작성도 시작).
+# `blocked`(사람이 멈춤)는 건드리지 않는다. request 이슈는 `/answer` 댓글(code owner 또는 대상 부서 담당자)이
+# 있을 때만 answered로, 같은 출처·부서·req digest의 요청 이슈는 합친다. AX_RELAY=on일 때만.
 # PR 코드는 가져오지 않는다: push는 dev에 이미 머지된 코드만 돌리고 checkout도 ref: dev다.
 on:
   push:
