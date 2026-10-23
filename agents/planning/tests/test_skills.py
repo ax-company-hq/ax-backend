@@ -246,7 +246,7 @@ def _safety_verdict(result: dict) -> str:
     return "approved" if approved else "rejected"
 
 
-def test_verify_review_format_approves_from_records(a2a_body) -> None:
+def test_verify_review_format_approves(a2a_body) -> None:
     # infra는 두 시각을 보내지 않는다 (RollbackDeploymentParams 그대로)
     result = _rollback_review(a2a_body)
     assert (result["status"], result["outcome"]) == ("completed", None)
@@ -277,7 +277,7 @@ def test_verify_review_format_records_win_over_params(a2a_body) -> None:
     assert "params" not in result["evidence"]["data_summary"]
 
 
-def test_verify_review_format_rejects_from_records(service, a2a_body) -> None:
+def test_verify_review_format_rejects(service, a2a_body) -> None:
     # 사건이 그 버전 배포(05:02)보다 먼저 열렸다는 기록 → 거절
     service.state.incidents.append(
         Incident(context_id="ctx_inc_0009", title="이른 사건", opened_at="2026-10-21T05:00:00Z")
