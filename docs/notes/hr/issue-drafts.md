@@ -11,13 +11,13 @@ Issue는 만들지 않았다. 올릴 때는 아래 제목·본문을 그대로 �
 
 **제목**: `to:dashboard-api 인사 탭 API를 support와 같은 방식으로 열어 주세요 (hr skill A2A 호출)`
 
-**결론**: 대시보드 "인사" 탭이 쓸 엔드포인트 11개를 `/api/dashboard/hr/...`로 열어 주세요. hr skill을 A2A로 부르면 되고, 모양은 문의 API(`support_client.py`)와 같습니다.
+**결론**: 대시보드 "인사" 탭이 쓸 엔드포인트 11개를 `/api/dashboard/...`로 열어 주세요. hr skill을 A2A로 부르면 되고, 모양은 문의 API(`support_client.py`)와 같습니다.
 
 **이유**: hr이 화면에 보여 줄 현황(인수인계·질문·온보딩·변경·후보 카드·감사)과 사람 입력(질문 답변·온보딩 단계 완료·후보 카드 승인)을 skill로 제공하게 됐습니다. 화면 담당이 가짜 응답으로 먼저 만들 수 있도록 응답 샘플도 만들어 두었습니다.
 
 **필요한 것**
-1. `GET /api/dashboard/hr/{handovers,questions,onboardings,changes,roster,candidate-cards}`, `GET /hr/audit/{context_id}` — hr의 `list_handovers`·`list_open_questions`·`list_onboardings`·`list_changes`·`get_roster`·`list_candidate_cards`·`get_audit_timeline`을 부릅니다.
-2. `POST /hr/questions/{id}/answer`(`answer_handover_question`, 본문은 계약 `HandoverAnswerRequest`), `POST /hr/onboardings/{id}/steps/{step_id}`(`update_onboarding_step`), `POST /hr/candidate-cards/{id}/decision`(`decide_candidate_card`), 선택 `POST /hr/plan-check`(`check_plan`).
+1. `GET /api/dashboard/hr/{handovers,questions,onboardings,changes,roster,candidate-cards}`, `GET /hr-activity/{context_id}` — hr의 `list_handovers`·`list_open_questions`·`list_onboardings`·`list_changes`·`get_roster`·`list_candidate_cards`·`get_audit_timeline`을 부릅니다.
+2. `POST /handover-questions/{id}/answer`(`answer_handover_question`, 본문은 계약 `HandoverAnswerRequest`), `POST /onboardings/{id}/steps/{step_id}`(`update_onboarding_step`), `POST /candidate-cards/{id}/decision`(`decide_candidate_card`), 선택 `POST /plan-checks`(`check_plan`).
 3. 응답은 `{data, meta}`, 오류는 `{error:{code,message}}`. hr 결과 → HTTP 오류 매핑은 계약 문서 5장 표(`unwrap`과 같은 방식).
 4. 목 모드(`DASHBOARD_MOCK=1`)는 `docs/notes/hr/dashboard-fixtures/*.json`을 그대로 돌려주면 됩니다. hr 주소는 `AX_HR_URL`(기본 `http://hr:8104`), 토큰은 기존 `DASHBOARD_API_TOKEN`.
 5. 쓰기 요청의 멱등 키는 `ctx_req_<hex>:<skill>:<대상>`(대상 필수). hr은 같은 키·같은 대상은 한 번만 처리하고, **같은 키를 다른 대상에 쓰면 거부**합니다.

@@ -5,7 +5,7 @@
 
 ## 1. 만들 화면 6개 (인사 탭 안)
 
-| # | 화면 | 하는 일 | 쓰는 API (`/api/dashboard/hr/...`) | 데모의 같은 탭 |
+| # | 화면 | 하는 일 | 쓰는 API (`/api/dashboard/...`) | 데모의 같은 탭 |
 |---|---|---|---|---|
 | 1 | 인수인계 | 진행 중 인수인계와 빈 칸 질문, 답하기 | `GET handovers`, `GET questions`, `POST questions/{id}/answer` | 4 인수인계 |
 | 2 | 변경(발령·퇴직·입사) | 요청 상태와 확인 목록 | `GET changes` | 5 발령·퇴직 (조회 부분) |
@@ -64,7 +64,7 @@
 - 오류 메시지는 서버의 `error.message`를 그대로 보여 준다(5장 오류 표).
 
 ## 4. MSW로 먼저 만들기
-1. `docs/notes/hr/dashboard-fixtures/`의 파일을 핸들러 응답으로 쓴다. 이름 규칙: `GET_hr_handovers.json` → `GET /api/dashboard/hr/handovers`, `POST_hr_candidate-cards_decision.json` → `POST /api/dashboard/hr/candidate-cards/{id}/decision`.
+1. `docs/notes/hr/dashboard-fixtures/`의 파일을 핸들러 응답으로 쓴다. 이름 규칙: `GET_handovers.json` → `GET /api/dashboard/handovers`, `POST_candidate-cards_decision.json` → `POST /api/dashboard/candidate-cards/{id}/decision`(`_`는 경로의 `/`, 이름 끝의 `answer`·`decision`·`step`은 하위 경로).
 2. 오류 화면은 `ERROR_*.json`(상태 코드가 파일 이름 앞부분)으로 만든다.
 3. 파일은 실제 hr 출력이라 계약 모델과 정확히 같다. 코드가 바뀌면 `uv run python agents/hr/scripts/make_dashboard_fixtures.py`로 다시 만든다(테스트가 어긋남을 알려 준다).
 4. 서버가 준비되면 MSW만 끄고 주소는 그대로 쓴다.

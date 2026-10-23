@@ -24,16 +24,16 @@ FIXTURES = ROOT / "docs" / "notes" / "hr" / "dashboard-fixtures"
 SCRIPT = ROOT / "agents" / "hr" / "scripts" / "make_dashboard_fixtures.py"
 
 MODELS = {
-    "GET_hr_handovers": ("list", HandoverView),
-    "GET_hr_questions": ("list", HandoverQuestion),
-    "GET_hr_onboardings": ("list", OnboardingView),
-    "GET_hr_changes": ("list", ChangeView),
-    "GET_hr_candidate-cards": ("list", Card),
-    "GET_hr_audit": ("list", AuditEntry),
-    "GET_hr_roster": ("one", GetRosterOutput),
-    "POST_hr_onboardings_step": ("one", StartOnboardingOutput),
-    "POST_hr_candidate-cards_decision": ("one", DecideCandidateCardOutput),
-    "POST_hr_plan-check": ("one", CheckPlanOutput),
+    "GET_handovers": ("list", HandoverView),
+    "GET_handover-questions": ("list", HandoverQuestion),
+    "GET_onboardings": ("list", OnboardingView),
+    "GET_assignment-changes": ("list", ChangeView),
+    "GET_candidate-cards": ("list", Card),
+    "GET_hr-activity": ("list", AuditEntry),
+    "GET_roster": ("one", GetRosterOutput),
+    "POST_onboardings_step": ("one", StartOnboardingOutput),
+    "POST_candidate-cards_decision": ("one", DecideCandidateCardOutput),
+    "POST_plan-checks": ("one", CheckPlanOutput),
 }
 
 

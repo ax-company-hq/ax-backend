@@ -216,14 +216,15 @@ def test_list_changes_filters_by_status_and_area(svc, client) -> None:
 
 
 # ---- 후보 카드 -----------------------------------------------------------------------------
-def test_low_confidence_cards_are_stored_with_candidate_status(svc, client) -> None:
+def test_low_confidence_cards_are_stored_with_the_candidate_flag(svc, client) -> None:
     card_id = candidate_card(client)
     row = svc.store.one("SELECT data FROM mock_cards WHERE card_id = ?", (card_id,))
-    assert '"status": "candidate"' in row["data"] or '"status":"candidate"' in row["data"]
+    assert '"candidate": true' in row["data"] or '"candidate":true' in row["data"]
+    assert '"status": "active"' in row["data"] or '"status":"active"' in row["data"]
     out = ListCandidateCardsOutput.model_validate(
         post(client, "list_candidate_cards", {})["output"]
     )
-    assert [c.card_id for c in out.cards] == [card_id] and out.cards[0].status == "candidate"
+    assert [c.card_id for c in out.cards] == [card_id] and out.cards[0].candidate is True
     assert out.cards[0].extra["area"] == "payment"  # RecordCase.area 필드를 썼다
     none = ListCandidateCardsOutput.model_validate(
         post(client, "list_candidate_cards", {"area": "search"})["output"]
@@ -309,9 +310,11 @@ async def test_card_state_reads_both_new_and_old_candidate_forms(svc) -> None:
         "confidence": "low",
         "created_at": now,
     }
-    assert card_state(Card(**base, status="candidate")) == "candidate"
+    assert card_state(Card(**base, candidate=True)) == "candidate"
     assert card_state(Card(**base, extra={"candidate": True})) == "candidate"  # 옛 방식
     assert card_state(Card(**base)) == "active"
+    retired = Card(**base, candidate=True, status="retired")
+    assert card_state(retired) == "retired"  # 폐기된 카드는 후보여도 폐기가 우선
 
 
 # ---- 감사 -----------------------------------------------------------------------------------

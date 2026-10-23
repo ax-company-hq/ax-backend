@@ -197,17 +197,17 @@ def main(out_dir: Path) -> None:
     )["output"]
 
     files = {
-        "GET_hr_handovers": envelope(handovers["handovers"], len(handovers["handovers"])),
-        "GET_hr_questions": envelope(questions["questions"], len(questions["questions"])),
-        "POST_hr_questions_answer": envelope(answer),
-        "GET_hr_onboardings": envelope(onboardings["onboardings"], len(onboardings["onboardings"])),
-        "POST_hr_onboardings_step": envelope(step_done),
-        "GET_hr_changes": envelope(changes["changes"], len(changes["changes"])),
-        "GET_hr_roster": envelope(roster),
-        "GET_hr_candidate-cards": envelope(candidates["cards"], len(candidates["cards"])),
-        "POST_hr_candidate-cards_decision": envelope(approve),
-        "GET_hr_audit": envelope(audit["entries"], len(audit["entries"])),
-        "POST_hr_plan-check": envelope(plan),
+        "GET_handovers": envelope(handovers["handovers"], len(handovers["handovers"])),
+        "GET_handover-questions": envelope(questions["questions"], len(questions["questions"])),
+        "POST_handover-questions_answer": envelope(answer),
+        "GET_onboardings": envelope(onboardings["onboardings"], len(onboardings["onboardings"])),
+        "POST_onboardings_step": envelope(step_done),
+        "GET_assignment-changes": envelope(changes["changes"], len(changes["changes"])),
+        "GET_roster": envelope(roster),
+        "GET_candidate-cards": envelope(candidates["cards"], len(candidates["cards"])),
+        "POST_candidate-cards_decision": envelope(approve),
+        "GET_hr-activity": envelope(audit["entries"], len(audit["entries"])),
+        "POST_plan-checks": envelope(plan),
     }
     errors = {
         "422_INVALID_INPUT": {

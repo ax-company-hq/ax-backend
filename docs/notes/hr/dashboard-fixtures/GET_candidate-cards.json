@@ -3,6 +3,7 @@
     {
       "author": "support",
       "body": "결정: 야간 알림 기준을 낮추기로 했다\n이유: 확인할 수 없음\n검토한 대안: 없음\n근거: 확인할 수 없음",
+      "candidate": true,
       "card_id": "card_d2c8a53d7ee0",
       "confidence": "low",
       "context_id": "ctx_dec_0003",
@@ -26,7 +27,7 @@
       },
       "kind": "decision",
       "source_refs": [],
-      "status": "candidate",
+      "status": "active",
       "superseded_by": null,
       "tags": [
         "decision",
