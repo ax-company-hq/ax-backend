@@ -20,7 +20,11 @@ from ax_contracts.schemas.data import (
     KpiSummaryOutput,
     MetricVerdict,
 )
-from ax_contracts.schemas.escalation import Escalation
+from ax_contracts.schemas.escalation import (
+    Escalation,
+    FindActiveIncidentInput,
+    FindActiveIncidentOutput,
+)
 from ax_contracts.schemas.event import (
     EVENT_DATA_MODELS,
     CampaignCreatedData,
@@ -197,6 +201,8 @@ __all__ = [
     "ContextPrefix",
     "CouponIssuedData",
     "Escalation",
+    "FindActiveIncidentInput",
+    "FindActiveIncidentOutput",
     "ErrorCode",
     "EventEnvelope",
     "EventType",
