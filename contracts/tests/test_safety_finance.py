@@ -4,6 +4,10 @@ from pydantic import ValidationError
 from ax_contracts.schemas import (
     EVENT_DATA_MODELS,
     EventType,
+    ReviewHoldInput,
+    ReviewHoldOutput,
+    ReviewThresholdChangeInput,
+    ReviewThresholdChangeOutput,
     SafetyActionExecutedData,
     SafetyActionHeldData,
     SafetyReviewDecidedData,
@@ -89,3 +93,76 @@ def test_verify_amount_output_rejects_unknown_reason_code() -> None:
         VerifyAmountOutput.model_validate({"decision": "approved", "reason_code": "looks_fine"})
     with pytest.raises(ValidationError):
         VerifyAmountOutput.model_validate({"decision": "held", "reason_code": "recomputed_match"})
+
+
+def test_review_hold_models_match_what_safety_sends() -> None:
+    """safety `call_reviewer`가 보내는 입력과 finance `review_hold`의 출력."""
+    sent = {
+        "review_id": "rev_1",
+        "execution_id": "exe_1",
+        "action": "issue_coupon",
+        "requester": "marketing",
+        "params": {"count": 20, "unit_value": 20_000, "buyer_id": "buy_0001"},
+        "computed_amount": 400_000,
+        "hold_reason": "over_threshold",
+        "rules": [{"key": "coupon_total", "observed": 400_000, "value": 300_000}],
+        "totals": {"daily_total": 400_000, "context_total": 400_000, "customer_total": None},
+    }
+    inp = ReviewHoldInput.model_validate(sent)
+    assert inp.model_dump(mode="json") == sent
+    with pytest.raises(ValidationError):
+        ReviewHoldInput.model_validate({**sent, "unknown_field": 1})
+    with pytest.raises(ValidationError):
+        ReviewHoldInput.model_validate({k: v for k, v in sent.items() if k != "hold_reason"})
+
+    out = ReviewHoldOutput.model_validate(
+        {"decision": "escalate", "reason_code": "over_ai_limit", "explanation": "큰 금액"}
+    )
+    assert out.decision == "escalate"
+    with pytest.raises(ValidationError):
+        ReviewHoldOutput.model_validate(
+            {"decision": "approved", "reason_code": "x", "explanation": "y"}
+        )
+
+
+def test_review_threshold_change_models_match_what_safety_sends() -> None:
+    """safety `_ask_threshold_reviewer`가 보내는 입력과 finance `review_threshold_change`의 출력."""
+    sent = {
+        "change_id": "thc_0123456789ab",
+        "key": "coupon_total",
+        "current_value": 300_000,
+        "new_value": 350_000,
+        "baseline": 300_000,
+        "stats": {
+            "action": "issue_coupon",
+            "holds_24h": 3,
+            "executed_today": 120_000,
+            "ai_approved_24h": 1,
+            "human_approved_24h": 2,
+            "expired_24h": 0,
+        },
+    }
+    inp = ReviewThresholdChangeInput.model_validate(sent)
+    assert inp.model_dump(mode="json") == sent
+    # 마감 기준(review_timeout_seconds)은 action이 없고, 값이 없는 기준은 current_value가 null
+    ReviewThresholdChangeInput.model_validate(
+        {**sent, "key": "review_timeout_seconds", "current_value": None, "stats": {"action": None}}
+    )
+    # 요청 이유(untrusted)는 입력에 넣지 않는다
+    with pytest.raises(ValidationError):
+        ReviewThresholdChangeInput.model_validate({**sent, "reason": "올려 주세요"})
+    with pytest.raises(ValidationError):
+        ReviewThresholdChangeInput.model_validate(
+            {k: v for k, v in sent.items() if k != "new_value"}
+        )
+
+    out = ReviewThresholdChangeOutput.model_validate(
+        {"decision": "approve", "reason_code": "raise_with_holds", "explanation": "보류 3건"}
+    )
+    assert out.decision == "approve"
+    with pytest.raises(ValidationError):
+        ReviewThresholdChangeOutput.model_validate(
+            {"decision": "applied", "reason_code": "x", "explanation": "y"}
+        )
+    with pytest.raises(ValidationError):
+        ReviewThresholdChangeOutput.model_validate({"decision": "approve", "reason_code": "x"})
