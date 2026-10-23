@@ -24,8 +24,14 @@ def test_mock_lists_lines_with_code_fields_only(monkeypatch):
     data = res.json()["data"]
     assert len(data) == 4
     assert set(data[0]) == {
-        "log_id", "occurred_at", "from_agent", "to_agent", "skill",
-        "outcome", "context_id", "execution_id",
+        "log_id",
+        "occurred_at",
+        "from_agent",
+        "to_agent",
+        "skill",
+        "outcome",
+        "context_id",
+        "execution_id",
     }
     assert (data[0]["from_agent"], data[0]["to_agent"]) == ("orchestrator", "support")
 

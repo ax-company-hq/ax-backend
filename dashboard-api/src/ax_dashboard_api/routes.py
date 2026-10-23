@@ -28,12 +28,14 @@ from ax_contracts.schemas.record import Card
 from ax_dashboard_api import (
     claim_mapping,
     hr_client,
-    communications as communication_log,
     mock_actions,
     mock_data,
     mock_handover,
     mock_hr,
     support_client,
+)
+from ax_dashboard_api import (
+    communications as communication_log,
 )
 from ax_dashboard_api.envelope import ApiError, is_mock, ok, require_mock
 from ax_dashboard_api.schemas import (

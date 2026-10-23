@@ -60,15 +60,44 @@ def _mock_records() -> CommonLogResult:
 
     return CommonLogResult(
         records=[
-            rec(1, 0, source="support", kind="request_received", skill="get_claim",
-                task_status="working", requester="orchestrator"),
-            rec(2, 1, source="support", kind="result_sent", skill="get_claim",
-                task_status="completed", requester="orchestrator"),
-            rec(3, 2, source="finance", kind="execute_decided", skill="hold_settlement",
-                grade="C", task_status="input-required", requester="orchestrator",
-                payload={"execution_id": "exe_mock1", "decision": "hold"}),
-            rec(4, 3, source="marketing", kind="rejected", skill="issue_coupon",
-                task_status="rejected", requester="support"),
+            rec(
+                1,
+                0,
+                source="support",
+                kind="request_received",
+                skill="get_claim",
+                task_status="working",
+                requester="orchestrator",
+            ),
+            rec(
+                2,
+                1,
+                source="support",
+                kind="result_sent",
+                skill="get_claim",
+                task_status="completed",
+                requester="orchestrator",
+            ),
+            rec(
+                3,
+                2,
+                source="finance",
+                kind="execute_decided",
+                skill="hold_settlement",
+                grade="C",
+                task_status="input-required",
+                requester="orchestrator",
+                payload={"execution_id": "exe_mock1", "decision": "hold"},
+            ),
+            rec(
+                4,
+                3,
+                source="marketing",
+                kind="rejected",
+                skill="issue_coupon",
+                task_status="rejected",
+                requester="support",
+            ),
         ]
     )
 
