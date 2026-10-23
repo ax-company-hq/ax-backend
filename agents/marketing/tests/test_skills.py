@@ -37,6 +37,8 @@ def _call(skill: str, input: dict, **kwargs) -> dict:
     return client.post("/a2a", json=_body(skill, input, **kwargs)).json()
 
 
+SUPPORT = "mock:support"
+
 DRAFT_INPUT = {
     "kind": "incident_opened",
     "facts": {"component": "payment"},
@@ -58,7 +60,7 @@ def _publish_notice() -> str:
 
 def _coupon(sequence: int | None = 1, **overrides) -> dict:
     data = {"purpose_code": "compensation", "buyer_id": "buy_a1", "count": 1, "unit_value": 2000}
-    return _call("issue_coupon", data | overrides, sequence=sequence)
+    return _call("issue_coupon", data | overrides, sequence=sequence, token=SUPPORT)
 
 
 def _decision(**fields) -> ExecuteDecision:
@@ -109,6 +111,22 @@ def test_acl() -> None:
         _call("get_notice", {"notice_id": notice_id}, token="mock:support")["status"] == "completed"
     )
     assert _call("issue_coupon", {}, token="mock:finance")["outcome"] == "FORBIDDEN_SKILL"
+
+
+def test_coupons_are_requested_by_support_only() -> None:
+    """#228 A안: 보상 쿠폰은 고객지원 `request_compensation` 요청으로만 나간다.
+
+    총괄(orchestrator)은 공지만 맡고 쿠폰을 직접 부르지 않는다(이중 지급 방지).
+    """
+    coupon = {"purpose_code": "compensation", "buyer_id": "buy_a1", "count": 1, "unit_value": 2000}
+    for caller in ("orchestrator", "finance", "dashboard-api", "data"):
+        denied = _call("issue_coupon", coupon, sequence=1, token=f"mock:{caller}")
+        assert (denied["status"], denied["outcome"]) == ("rejected", "FORBIDDEN_SKILL"), caller
+    allowed = _call("issue_coupon", coupon, sequence=1, token=SUPPORT)
+    assert allowed["status"] != "rejected"
+    card = {s.id: s for s in load_card().skills}
+    assert card["issue_coupon"].allowed_requesters == ["support"]
+    assert "orchestrator" in card["publish_notice"].allowed_requesters  # 공지는 그대로
 
 
 def test_publish_and_coupon_are_idempotent() -> None:
@@ -223,7 +241,9 @@ def test_compensation_requires_sequence_and_campaign_requires_campaign_id() -> N
 
 def test_invalid_input_is_failed_not_executed() -> None:
     result = _call(
-        "issue_coupon", {"purpose_code": "gift", "buyer_id": "b", "count": 0, "unit_value": 1}
+        "issue_coupon",
+        {"purpose_code": "gift", "buyer_id": "b", "count": 0, "unit_value": 1},
+        token=SUPPORT,
     )
     assert (result["status"], result["outcome"]) == ("failed", "invalid_input")
 
