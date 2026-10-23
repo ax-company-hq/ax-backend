@@ -11,7 +11,7 @@ e커머스 가상회사의 부서별 AI 에이전트를 A2A로 연결한 AX 플�
 
 | 폴더 | 부서 id | 내용 | 담당 | 리뷰 부서 (자동) |
 | --- | --- | --- | --- | --- |
-| `contracts/` | contracts | 팀 계약 원본: schemas, data-access, openapi | 준하, 태윤 | agent-template + safety (작성자가 둘 중 하나면 그 자리는 data) + **code owner 승인** (준하, 태윤, 재현) |
+| `contracts/` | contracts | 팀 계약 원본: schemas, data-access, openapi | 준하, 태윤, 재현 | 바뀐 계약 파일을 쓰는 부서 (`team.yml` `contracts_affected`, 공통 파일은 agent-template + safety). 깨지는 변경은 `contracts-compat`이 막음 |
 | `agent-template/` | agent-template | 공통 템플릿, execute 구현 | 준하 | finance + planning |
 | `orchestrator/` | orchestrator | 통합 에이전트 | 준하 | dejafix |
 | `safety/` | safety | 안전 레이어 | 태윤 | agent-template |
@@ -28,6 +28,7 @@ e커머스 가상회사의 부서별 AI 에이전트를 A2A로 연결한 AX 플�
 | `infra/` | infra | 전체 compose, 장애 주입 | 준하 | finance + planning |
 | `docs/notes/<부서>/` | 그 부서 | 부서별 작업 메모 | 그 부서 담당 | 그 부서와 같음 |
 | 그 외 전부 (`.github/`, `.claude/`, `scripts/`, `CLAUDE.md`, `docs/`, 루트 파일) | — | 자동화·문서·규칙 (human_paths) | 사람 | **사람 code owner 승인** (`.github/`·`.claude/`·`scripts/`·`CLAUDE.md`는 재현, 준하, 태윤 / 그 밖은 재현, 준하) |
+| 부서 폴더 안의 기준표 (`safety/.../thresholds.toml`, `agents/finance/.../ai_review_policy.toml`) | — | 기준 금액 등급표·AI 재량 한도 (`team.yml` `human_files`, human_paths로 취급) | 사람 | **사람 code owner 승인** (태윤, 재현, 준하). 에이전트는 못 바꿈 |
 | 루트 `uv.lock` | — | 의존성 잠금 | 자동 생성 | 같은 PR에서 그 부서 `pyproject.toml`이 바뀐 경우만 허용 |
 
 리뷰 부서 담당이 PR 작성자와 같은 사람이면 자동으로 다른 부서로 바뀐다. 상세는 `docs/automation-spec.md` "리뷰어 배정".
@@ -80,9 +81,9 @@ e커머스 가상회사의 부서별 AI 에이전트를 A2A로 연결한 AX 플�
 - PR이 dev에 머지되는 조건 (전부 초록이면 자동 머지):
   - `ci`, `contracts-compat`, `automation-tests` (GitHub Actions)
   - `folder-guard`, `test-guard`, `dev-health`, `agent-review` (ax-bot 커밋 상태)
-  - human_paths·`contracts/`를 바꿨으면 code owner 승인 (`.github/`·`.claude/`·`scripts/`·`CLAUDE.md`·`contracts/`는 재현·준하·태윤 중 한 명, 그 밖의 human_paths는 재현·준하 중 한 명)
+  - human_paths를 바꿨으면 code owner 승인 (`.github/`·`.claude/`·`scripts/`·`CLAUDE.md`·기준표 toml은 재현·준하·태윤 중 한 명, 그 밖의 human_paths는 재현·준하 중 한 명)
 - `agent-review`는 다른 부서 에이전트가 한다. 단 공유 폴더(`contracts/`, `agent-template/`)·안전 레이어(`safety/`)·통합 에이전트(`orchestrator/`)를 건드렸거나 부서 2개 이상에 걸친 PR에만 돈다. 부서 폴더 하나 안에서만 바뀐 PR은 `agent-review`가 "not required"로 통과하고 CI·관문만으로 자동 머지된다. 사람 승인 수(Required approvals)는 0이다. 사람이 승인 버튼을 누를 필요가 없다.
-- contracts는 에이전트 2명 리뷰 + 하위 호환 검사(`contracts-compat`) + code owner(준하·태윤·재현) 승인으로 머지한다.
+- contracts는 사람 승인 없이, 바뀐 계약 파일을 쓰는 부서의 에이전트 리뷰 + 하위 호환 검사(`contracts-compat`)로 머지한다. 하위 호환이 깨지는 변경은 `contracts-compat`이 막으니, 필드 추가 → 이전 → 삭제처럼 호환되는 단계로 나눈다.
 - 사람 PR은 자기가 맡은 부서 여러 개를 함께 바꿀 수 있고, 해당 리뷰 부서 전부가 승인해야 한다. 에이전트 PR은 부서 하나만.
 - 급한 수정: code owner(재현·준하)가 `hotfix` 라벨을 붙이면 관문을 통과한다. 새 커밋이 올라오면 라벨이 떨어진다.
 - 에이전트 PR이 ci나 관문에서 실패하면 실패 요약을 이슈에 힌트로 남기고 PR을 닫아 한 번 다시 작성한다. 같은 이슈가 두 번 실패하면 `needs-human`, 작성이 턴 한도에 걸리면 `needs-split`(작업을 나눠 다시 올린다)으로 멈춘다.

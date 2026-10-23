@@ -83,6 +83,8 @@ class Team:
         self.review_required_depts: list[str] = data.get("review_required_depts", [])
         self.wip: dict[str, int] = data.get("wip", {})
         self.stale_hours: int = int(data.get("stale_hours", 48))
+        self.contracts_affected: dict[str, list[str]] = data.get("contracts_affected", {})
+        self.human_files: set[str] = set(data.get("human_files", []))
         self._validate()
 
     @classmethod
@@ -104,6 +106,13 @@ class Team:
         for d in self.review_required_depts:
             if d not in self.depts:
                 raise TeamError(f"review_required_depts의 {d}가 depts에 없음")
+        for prefix, ds in self.contracts_affected.items():
+            for d in ds:
+                if d not in self.depts:
+                    raise TeamError(f"contracts_affected {prefix}의 {d}가 depts에 없음")
+        for f in self.human_files:
+            if not self._dept_folder_of(f):
+                raise TeamError(f"human_files {f}가 부서 폴더 안이 아님")
         for login, m in self.members.items():
             for kind in CAP_KINDS:
                 if not isinstance(m.get(f"{kind}_cap"), int):
@@ -141,18 +150,30 @@ class Team:
         return [d for d, info in self.depts.items() if login in info["owners"]]
 
     # ── 경로 ─────────────────────────────────────────────
-    def dept_of_path(self, path: str) -> str | None:
-        """경로가 속한 부서. docs/notes/<부서>/는 그 부서. 없으면 None (human_paths 또는 shared)."""
-        if path.startswith(self.notes_prefix):
-            rest = path[len(self.notes_prefix) :]
-            if "/" in rest:
-                return self.resolve_dept(rest.split("/", 1)[0])
-            return None
+    def _dept_folder_of(self, path: str) -> str | None:
         for dept_id, dept in self.depts.items():
             folder = dept["folder"].rstrip("/")
             if path == folder or path.startswith(folder + "/"):
                 return dept_id
         return None
+
+    def is_human_file(self, path: str) -> bool:
+        """부서 폴더 안이지만 사람만 바꾸는 파일 (team.yml human_files)."""
+        return path in self.human_files
+
+    def dept_of_path(self, path: str) -> str | None:
+        """경로가 속한 부서. docs/notes/<부서>/는 그 부서. 없으면 None (human_paths 또는 shared).
+
+        human_files(부서 폴더 안의 사람 전용 파일)는 None → human_paths로 취급한다.
+        """
+        if path.startswith(self.notes_prefix):
+            rest = path[len(self.notes_prefix) :]
+            if "/" in rest:
+                return self.resolve_dept(rest.split("/", 1)[0])
+            return None
+        if self.is_human_file(path):
+            return None
+        return self._dept_folder_of(path)
 
     def unknown_notes_dir(self, path: str) -> str | None:
         """docs/notes/<x>/에서 x가 부서 id·별칭이 아니면 x.
@@ -263,8 +284,37 @@ class Team:
                 violations.append(f"{p}: 사람 승인 경로(human_paths) — 에이전트는 바꿀 수 없음")
         return violations
 
-    def reviewers_for(self, changed_depts: list[str], author_person: str) -> list[str]:
-        """리뷰 부서 목록 (순서 유지, 중복 없음). 같은 사람이면 대체한다."""
+    def contracts_reviewers(self, paths: list[str] | None) -> list[str]:
+        """contracts PR의 리뷰 부서: 바뀐 계약 파일을 쓰는 부서 (contracts_affected).
+
+        표에 없는 파일이 하나라도 있거나 경로를 모르면 reviewers.contracts(공통 리뷰)를 더한다.
+        contracts/tests/·*.md는 리뷰 부서를 정하는 데 쓰지 않는다.
+        """
+        default = self.reviewers.get("contracts", [])
+        if paths is None:
+            return list(default)
+        folder = self.depts["contracts"]["folder"].rstrip("/") + "/"
+        out: list[str] = []
+        unmapped = False
+        for p in paths:
+            rel = p[len(folder):] if p.startswith(folder) else p
+            if rel.startswith("tests/") or rel.endswith(".md"):
+                continue
+            hit = [ds for prefix, ds in self.contracts_affected.items() if rel.startswith(prefix)]
+            if not hit:
+                unmapped = True
+            for ds in hit:
+                out += [d for d in ds if d not in out]
+        if unmapped or not out:
+            out += [d for d in default if d not in out]
+        return out
+
+    def reviewers_for(self, changed_depts: list[str], author_person: str,
+                      contracts_paths: list[str] | None = None) -> list[str]:
+        """리뷰 부서 목록 (순서 유지, 중복 없음). 같은 사람이면 대체한다.
+
+        contracts는 contracts_paths(바뀐 contracts 경로)로 영향받는 부서를 고른다.
+        """
         result: list[str] = []
 
         def take_fallback() -> str | None:
@@ -274,7 +324,9 @@ class Team:
             return None
 
         for dept in changed_depts:
-            for reviewer in self.reviewers.get(dept, []):
+            revs = (self.contracts_reviewers(contracts_paths) if dept == "contracts"
+                    else self.reviewers.get(dept, []))
+            for reviewer in revs:
                 slot: str | None = reviewer
                 if author_person in self.owners(reviewer):
                     slot = None
@@ -554,10 +606,24 @@ def save_cap_cache(cache: dict[str, list[str]]) -> None:
         json.dump(cache, fh)
 
 
-def resolve_failed_runs(runs: list[tuple], cache: dict[str, list[str]]) -> dict[str, list[str]]:
-    """실패·취소 run마다 Claude 단계가 돈 부서 목록을 채운다 (캐시에 없는 것만 jobs 조회)."""
-    for repo, run_id, _title, conclusion in runs:
-        if conclusion not in FAILED_CONCLUSIONS or str(run_id) in cache:
+def needs_jobs(title: str, conclusion: str | None, team: Team | None = None) -> bool:
+    """run 제목만으로는 Claude 잡 부서를 알 수 없어 jobs를 읽어야 하는 run.
+
+    실패·취소 run (Claude 단계까지 갔는지),
+    끝난 contracts 리뷰 run (리뷰 부서가 바뀐 파일로 정해짐).
+    """
+    if conclusion in FAILED_CONCLUSIONS:
+        return True
+    m = REVIEW_TITLE.match(title)
+    return bool(team and conclusion and conclusion != "skipped" and m
+                and team.dept_of_branch(m.group(1)) == "contracts")
+
+
+def resolve_failed_runs(runs: list[tuple], cache: dict[str, list[str]],
+                        team: Team | None = None) -> dict[str, list[str]]:
+    """jobs가 필요한 run마다 Claude 단계가 돈 부서 목록을 채운다 (캐시에 없는 것만 jobs 조회)."""
+    for repo, run_id, title, conclusion in runs:
+        if not needs_jobs(title, conclusion, team) or str(run_id) in cache:
             continue
         data = gh_api(f"repos/{repo}/actions/runs/{run_id}/jobs?per_page=100") or {}
         cache[str(run_id)] = [d for d in (job_claude_dept(j) for j in data.get("jobs", [])) if d]
@@ -577,7 +643,7 @@ def usage_by_owner(team: Team, runs: list[tuple], ran: dict[str, list[str]] | No
     for _repo, run_id, title, conclusion in runs:
         if conclusion == "skipped" or (kind and run_kind(title) != kind):
             continue
-        if conclusion in FAILED_CONCLUSIONS and str(run_id) in ran:
+        if needs_jobs(title, conclusion, team) and str(run_id) in ran:
             depts = [team.resolve_dept(d) or d for d in ran[str(run_id)]]
         else:
             depts = run_token_depts(team, title)
@@ -621,7 +687,7 @@ def cap_status(team: Team, owners: list[str], kind: str, day: str | None = None
     day = day or datetime.now(UTC).strftime("%Y-%m-%d")
     try:
         runs = todays_claude_runs(day)
-        ran = resolve_failed_runs(runs, load_cap_cache())
+        ran = resolve_failed_runs(runs, load_cap_cache(), team)
         save_cap_cache(ran)
         usage = usage_by_owner(team, runs, ran, kind)
     except subprocess.CalledProcessError:
@@ -894,8 +960,9 @@ def main(argv: list[str] | None = None) -> int:
         depts = [d for d in (team.resolve_dept(x) for x in args.depts.split(",") if x) if d]
         violations = team.check_diff(changes, depts, args.author_kind, args.branch)
     elif cmd == "reviewers-for":
-        changed = list(team.classify([c.path for c in changes]).depts)
-        reviewers = team.reviewers_for(changed, args.author_person)
+        classified = team.classify([c.path for c in changes])
+        reviewers = team.reviewers_for(list(classified.depts), args.author_person,
+                                       classified.depts.get("contracts"))
         if not reviewers:
             print("리뷰 부서 없음", file=sys.stderr)
             return 1

@@ -76,8 +76,11 @@ docs/requirements.md (사람이 수정) ──claude-plan──▶ 작업 이슈
 - 대체 규칙: 리뷰 부서 담당이 PR 작성자와 같은 사람이면 `fallback_order`(orchestrator, data, finance, planning, support, marketing)에서 작성자·다른 리뷰어와 겹치지 않는 첫 부서로 바꾼다.
 - 에이전트 PR은 부서 하나만 바꿀 수 있다. 사람 PR은 그 사람이 맡은 부서 여러 개를 함께 바꿀 수 있고, 해당 리뷰 부서 전부가 승인해야 한다.
 - 부서 id `infra`는 `infra/` 폴더(준하), `dejafix`는 `agents/infra-dejafix/`(예진)다. 브랜치 접두사로 폴더 이름(`infra-dejafix/…`)을 써도 dejafix로 인식한다.
-- contracts는 에이전트 2명 리뷰, 하위 호환 검사, code owner(준하·태윤·재현 중 한 명) 승인으로 머지한다 (CODEOWNERS `/contracts/`).
+- contracts는 사람 승인 없이, 바뀐 계약 파일을 쓰는 부서(team.yml `contracts_affected`)의 에이전트 리뷰와 하위 호환 검사로 머지한다.
+  표에 없는 공통 파일은 reviewers.contracts(agent-template + safety). 깨지는 변경은 contracts-compat(필수 체크)이 막는다 (CODEOWNERS `/contracts/`는 소유자 없음).
   `.github/`·`.claude/`·`scripts/`·`CLAUDE.md`의 code owner는 재현·준하·태윤, 그 밖의 human_paths는 재현·준하.
+- 부서 폴더 안의 사람 전용 파일(team.yml `human_files`: safety thresholds.toml, finance ai_review_policy.toml)은 human_paths로 취급한다.
+  에이전트는 못 바꾸고(folder-guard·guard-folder 훅·write_post), 사람 PR은 CODEOWNERS(태윤·재현·준하) 승인
 
 
 ## 구현 규칙 (확인된 사실)
@@ -369,6 +372,8 @@ claude-review.yml — 트리거: pull_request_target [opened, synchronize, reope
   revert/·openapi/sync- 같은 봇 브랜치 PR은 dev-health 담당이라 건드리지 않는다.
   체크(커밋 상태·check run)가 모두 초록이고 승인만 기다리는 봇 PR(예: code owner 승인이 필요한 계약 PR)은 닫지 않는다
 - 기준 문서와 다른 동작: docs PR(requirements·agent-common)을 먼저 합의·머지한 뒤 코드 PR (CLAUDE.md 작업 규칙 11, review.md 막는 기준 1)
+- contracts 리뷰 부서: 바뀐 contracts 경로 → contracts_affected 표의 부서 (team.py `Team.contracts_reviewers`). 표에 없는 파일이 있으면 reviewers.contracts를 더한다.
+  cap은 끝난 contracts 리뷰 run의 jobs를 읽어 실제 리뷰 부서로 센다 (run 제목으로는 알 수 없음, 결과는 캐시)
 
 ### 완료 기준 (각 단계는 자기 범위에 해당하는 항목만)
 - team.py 단위 테스트: 리뷰어 표 모든 행, 같은 사람 대체, contracts 대체, 빈 목록 실패, check-diff(human_paths·루트 파일·notes 예외·uv.lock·심볼릭 링크 거부·bot_branches),

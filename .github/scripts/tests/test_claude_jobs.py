@@ -639,3 +639,25 @@ def test_pr_all_green(monkeypatch, status, runs, green) -> None:
     monkeypatch.setattr(cj, "api", lambda path, *e: {"state": status} if path.endswith("/status")
                         else {"check_runs": runs})
     assert cj.pr_all_green("s") is green
+
+
+
+def test_write_post_drops_human_files(team, tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    (ws / "safety/src/ax_safety/rules").mkdir(parents=True)
+    run(ws, "init", "-q", "-b", "dev")
+    run(ws, "config", "user.email", "t@example.com")
+    run(ws, "config", "user.name", "t")
+    (ws / "safety/src/ax_safety/rules/thresholds.toml").write_text("a = 1\n")
+    run(ws, "add", "-A")
+    run(ws, "commit", "-q", "-m", "base")
+    run(ws, "branch", "ax-baseline")
+    (ws / "safety/src/ax_safety/rules/thresholds.toml").write_text("a = 2\n")
+    (ws / "safety/src/ax_safety/gate.py").write_text("x = 1\n")
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "result.json").write_text(json.dumps(
+        {"title": "feat(safety): x", "body": "", "summary": "", "requests": []}), encoding="utf-8")
+    info = cj.write_post(team, "safety", ws, out)
+    assert info["kept"] == ["safety/src/ax_safety/gate.py"]
+    assert "safety/src/ax_safety/rules/thresholds.toml" in info["dropped"]
