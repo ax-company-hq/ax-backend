@@ -36,6 +36,8 @@ mk request       1d76db "다른 부서가 요청한 작업 이슈"
 mk priority      d93f0b "우선 처리"
 mk report        c5def5 "일일 리포트 이슈"
 mk generated-pr  c5def5 "기획 에이전트가 만든 PR (사람이 머지)"
+mk bug            d73a4a "버그 (회귀 이슈 등)"
+mk from:e2e      fbca04 "시나리오 A e2e 회귀가 자동으로 연 이슈"
 # 진행 상태
 mk in-progress   fbca04 "에이전트가 작업 중"
 mk blocked       b60205 "재시도 초과로 정지 (사람 확인 필요)"

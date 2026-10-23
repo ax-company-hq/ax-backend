@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from ax_contracts.data_access.dev_status import DevStatus, Stage, StageResult, Totals
+from ax_e2e.scenario_a import paths
 from ax_e2e.scenario_a.result import Outcome
 from ax_e2e.scenario_a.stages import CUSTOMER, INCIDENT
 from ax_e2e.scenario_a.stages import Stage as StageDef
@@ -92,6 +93,7 @@ def judge(
                 "key": s.key,
                 "name": s.label,
                 "dept": s.dept,
+                "folder": paths.cards().get(s.dept, {}).get("_folder"),
                 "skill": s.skill,
                 "req_ids": s.req_ids,
                 "condition": s.condition,

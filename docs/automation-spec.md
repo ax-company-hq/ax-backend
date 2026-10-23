@@ -384,6 +384,15 @@ claude-review.yml — 트리거: pull_request_target [opened, synchronize, reope
 - 매일 정리 report에 "지난 24시간 핵심 파일 변경" 목록 (core-change 라벨)
 - (보류) 감사 에이전트 2개 구조(#213)
 
+### 13. 시나리오 A e2e · 회귀 처리 · 토큰 분리 (오토파일럿 PR-A)
+
+모든 스위치는 repo 변수이고 꺼져 있으면(기본) 아무 동작도 하지 않는다.
+
+- `team.yml` `token_owner`(부서, 선택): 그 부서 Claude 실행의 토큰·하루 cap 주인. 없으면 `owners[0]`. 리뷰어 배정·담당 표시는 계속 `owners`를 쓴다. `wip_overrides`(`{부서: {open_bot_prs, in_progress_issues}}`)는 부서별 WIP 한도로 `wip` 기본값보다 먼저 쓴다
+- `e2e/`(uv workspace 멤버, 사람 경로): 시나리오 A 단계 표(총괄 12 + 고객 경로 5)를 plan에서 읽어 만들고 단독/연결 점수를 낸다. `AX_E2E_MODE=mock|real`(real은 PR-C 전 스텁). 같은 입력 3회가 모두 같아야 pass, 상태는 pass/pending/broken/regressed. 결과 형식은 `contracts/.../data_access/dev_status.py`(DevStatus)의 부분
+- `scenario-a.yml`: dev push마다 1회(취소 없음) + 매일 00:30 KST. `AX_E2E=on`일 때만 job이 돈다. 직전 결과는 아티팩트에서 받고, 첫 실행은 기준선만 남긴다
+- `e2e_follow.py`: `AX_E2E=on`이면 regressed만 `dept:<부서>` `bug` `from:e2e` 이슈로 연다(열린 같은 이슈가 있으면 댓글). `AX_GO=on`이면 `dispatch_write`로 작성을 시작한다. `AX_AUTO_REVERT=on`이면 회귀 직전 범위의 원인 PR이 하나일 때만 처리한다: 봇 PR이면 `revert/<번호>` PR, 사람 PR이면 작성자 멘션 + `needs-human`, 핵심 파일·기준표를 바꾼 PR은 `needs-human`, `revert/` 브랜치 PR은 다시 되돌리지 않는다. 되돌린 뒤에도 회귀면 `AX_AUTO_PAUSE=on`. LLM을 부르지 않는다
+
 ### 완료 기준 (각 단계는 자기 범위에 해당하는 항목만)
 - team.py 단위 테스트: 리뷰어 표 모든 행, 같은 사람 대체, contracts 대체, 빈 목록 실패, check-diff(human_paths·루트 파일·notes 예외·uv.lock·심볼릭 링크 거부·bot_branches),
   사람 PR 다부서, dept-of-branch 별칭, cap 계산(token_dept 기준), requeue 단계

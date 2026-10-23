@@ -1,0 +1,107 @@
+name: scenario-a
+
+# 시나리오 A e2e (mock): dev에 커밋이 들어올 때마다 1회(취소 없음) + 매일 00:30 KST.
+# 단독/연결/고객 경로 점수를 e2e-result.json으로 남기고, 직전 결과(아티팩트)와 비교해 회귀를 알린다.
+# 첫 실행은 기준선만 남긴다. repo 변수 AX_E2E가 on이 아니면 job이 실행되지 않는다 (아무 동작 없음).
+# 후속 처리(follow)는 회귀 이슈(AX_E2E=on) · 작성 시작(AX_GO=on) · 자동 revert(AX_AUTO_REVERT=on).
+# pull_request 계열 트리거를 쓰지 않는다: dev에 머지된 코드만 돈다.
+on:
+  push:
+    branches: [dev]
+  schedule:
+    - cron: "30 15 * * *" # 00:30 KST
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  # 커밋마다 한 번씩 돈다: 같은 그룹으로 묶으면 대기 중인 실행이 취소되므로 run 단위로 나눈다
+  group: scenario-a-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    if: vars.AX_E2E == 'on'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      prev_sha: ${{ steps.prev.outputs.sha }}
+    env:
+      AX_E2E_MODE: mock
+      TENANT_ID: shop-demo
+      LLM_MODEL: ""
+      LLM_BASE_URL: ""
+      LLM_API_KEY: ""
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.1"
+          enable-cache: true
+      - name: Sync workspace
+        run: uv sync --all-packages --locked
+      - name: 직전 결과 (아티팩트)
+        id: prev
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha="$(uv run python .github/scripts/e2e_follow.py prev --run-id "$GITHUB_RUN_ID" --out prev)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: e2e 실행 (같은 입력 3회)
+        run: |
+          uv run ax-e2e run --out out --prev prev/e2e-result.json --commit "$GITHUB_SHA" | tee summary.txt
+          cat summary.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e2e-result
+          path: out/
+          retention-days: 30
+
+  follow:
+    # 회귀 이슈 · 작성 시작 · 자동 revert. 각 동작은 자기 스위치가 on일 때만 한다 (e2e_follow.py)
+    needs: e2e
+    if: vars.AX_E2E == 'on'
+    runs-on: ubuntu-latest
+    environment: bot
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: dev, fetch-depth: 0, persist-credentials: false }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: team.py 의존성
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet --require-hashes -r .github/scripts/requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-result
+          path: out
+      - name: ax-bot token
+        id: bot
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ secrets.AX_BOT_APP_ID }}
+          private-key: ${{ secrets.AX_BOT_PRIVATE_KEY }}
+          permission-issues: write
+          permission-pull-requests: write
+          permission-contents: write
+          permission-actions: write
+      - name: 회귀 후속 처리
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          AX_E2E: ${{ vars.AX_E2E }}
+          AX_GO: ${{ vars.AX_GO }}
+          AX_AUTO_REVERT: ${{ vars.AX_AUTO_REVERT }}
+          SHA: ${{ github.sha }}
+          PREV_SHA: ${{ needs.e2e.outputs.prev_sha }}
+        run: |
+          args=(--result out/e2e-result.json --detail out/e2e-detail.json --sha "$SHA")
+          if [ -n "$PREV_SHA" ]; then args+=(--prev-sha "$PREV_SHA"); fi
+          "$RUNNER_TEMP/venv/bin/python" -I .github/scripts/e2e_follow.py act "${args[@]}"
