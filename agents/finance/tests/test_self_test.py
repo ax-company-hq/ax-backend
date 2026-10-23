@@ -132,6 +132,8 @@ async def test_self_test_leaves_no_trace_in_real_records() -> None:
 
 
 def test_endpoints_run_and_remember_last(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import UTC, datetime
+
     async def fake_run(*args: Any, **kwargs: Any) -> dict:
         return {
             "result": "pass",
@@ -140,7 +142,7 @@ def test_endpoints_run_and_remember_last(monkeypatch: pytest.MonkeyPatch) -> Non
             "passed": 0,
             "total": 0,
             "duration_ms": 1,
-            "ran_at": "2026-10-22T00:00:00+00:00",
+            "ran_at": datetime.now(UTC).isoformat(),
         }
 
     monkeypatch.setattr("finance_agent.main.run_self_test", fake_run)
