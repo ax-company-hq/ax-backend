@@ -2,6 +2,7 @@
 
 재무 AI의 답은 `ai_review`로만 남고 상태는 `pending`이다(기준 문서 docs PR 전).
 사람이 적용하면 이후 판정이 새 값을 쓰고, 바뀐 값은 파일에 저장돼 재시작 뒤 복원된다.
+이 파일은 스위치 `SAFETY_THRESHOLD_CHANGES=1`(켜짐)에서 본다. 꺼짐은 맨 아래 테스트에서 본다.
 """
 
 from __future__ import annotations
@@ -48,6 +49,11 @@ class FakeThresholdReviewer:
         if isinstance(self.outcome, Exception):
             raise self.outcome
         return self.outcome
+
+
+@pytest.fixture(autouse=True)
+def _feature_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SAFETY_THRESHOLD_CHANGES", "1")
 
 
 APPROVE = ReviewOutcome("approve", "raise_with_holds", "최근 24시간 보류 3건이라 올립니다")
@@ -495,3 +501,71 @@ def test_overrides_path_from_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     assert OverrideFile.from_env().path == tmp_path / "o.json"
     monkeypatch.delenv("SAFETY_THRESHOLD_OVERRIDES_PATH")
     assert OverrideFile.from_env().path == Path("data") / "safety" / "threshold_overrides.json"
+
+
+# ---------------------------------------------------------------- 스위치 SAFETY_THRESHOLD_CHANGES
+@pytest.mark.parametrize("value", [None, "", "0", "true"])
+def test_feature_off_blocks_requests_and_decisions(
+    monkeypatch: pytest.MonkeyPatch, clock, verifier, sent, value
+) -> None:
+    """기본(꺼짐): 요청·결정은 403 FEATURE_OFF, 재무 AI에 묻지 않고, 기록은 빈 목록이다."""
+    if value is None:
+        monkeypatch.delenv("SAFETY_THRESHOLD_CHANGES", raising=False)
+    else:
+        monkeypatch.setenv("SAFETY_THRESHOLD_CHANGES", value)
+    reviewer = FakeThresholdReviewer(APPROVE)
+    gate = make_gate(clock, verifier, sent, reviewer)
+    client = make_client(gate)
+
+    for res in (
+        _ask(client, "coupon_total", 400_000),
+        _ask(client, "coupon_total", 400_000, headers=FINANCE),
+        client.post(f"{URL}/thc_1/decision", json={"decision": "approved"}, headers=HUMAN),
+    ):
+        assert res.status_code == 403
+        assert res.json() == {
+            "error": {
+                "code": "FEATURE_OFF",
+                "message": "기준 바꾸기는 기준 문서 변경(docs PR) 머지 후 켭니다",
+            }
+        }
+    assert reviewer.tasks == []
+    assert gate.store.list_changes() == []
+    assert client.get(URL).json() == {"data": [], "meta": {}}
+    # 기준표는 TOML 그대로
+    assert gate.current_value("coupon_total") == 300_000
+    assert client.get("/api/safety/thresholds").status_code == 200
+
+
+def test_feature_off_does_not_restore_saved_values(
+    monkeypatch: pytest.MonkeyPatch, clock, verifier, sent, tmp_path: Path
+) -> None:
+    path = tmp_path / "overrides.json"
+    _applied_gate(clock, verifier, sent, path)  # 켜진 상태에서 저장
+    assert path.exists()
+
+    monkeypatch.delenv("SAFETY_THRESHOLD_CHANGES", raising=False)
+    restarted = make_gate(clock, verifier, sent, None, OverrideFile(path))
+    assert restarted.current_value("coupon_total") == 300_000
+    assert restarted.current_value("refund_single") == restarted.baseline_values()["refund_single"]
+    assert restarted.thresholds.version == restarted.baseline.version
+    steps = [e.step for e in restarted.store.list_audit()]
+    assert "threshold_overrides_restored" not in steps
+    assert "threshold_overrides_ignored" in steps
+    assert path.exists()  # 파일은 지우지 않는다 (켜면 다시 복원)
+
+    monkeypatch.setenv("SAFETY_THRESHOLD_CHANGES", "1")
+    again = make_gate(clock, verifier, sent, None, OverrideFile(path))
+    assert again.current_value("coupon_total") == 400_000
+
+
+def test_feature_on_allows_request_and_decision(clock, verifier, sent) -> None:
+    """켜짐(`SAFETY_THRESHOLD_CHANGES=1`, 이 파일의 기본): 요청 → pending → 사람이 적용."""
+    gate = make_gate(clock, verifier, sent, FakeThresholdReviewer(APPROVE))
+    client = make_client(gate)
+    res = _ask(client, "coupon_total", 400_000)
+    assert res.status_code == 200
+    change = res.json()["data"]
+    assert change["status"] == "pending"
+    assert _decide(client, change["change_id"])["status"] == "applied"
+    assert [c["change_id"] for c in client.get(URL).json()["data"]] == [change["change_id"]]

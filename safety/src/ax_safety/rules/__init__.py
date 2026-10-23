@@ -6,6 +6,7 @@
 `SAFETY_REVIEW_TIMEOUT_SECONDS`가 있으면 기준표의 `review_timeout_seconds`(데모 10분)를 덮어쓴다
 (운영 24시간 = 86400). 값이 정수가 아니거나 범위 밖이면 시작할 때 실패한다.
 AI 1차 판단(`[auto_review]`)은 기준표에서 켜져 있어도 `SAFETY_AUTO_REVIEW=1`일 때만 돈다(기본 꺼짐).
+실행 중 기준 바꾸기(API·저장 값 복원)는 `SAFETY_THRESHOLD_CHANGES=1`일 때만 쓴다(기본 꺼짐).
 """
 
 from __future__ import annotations
@@ -29,6 +30,10 @@ RULES_VERIFIER = "safety"
 # AI 1차 판단 마스터 스위치. "1"일 때만 `[auto_review]`가 돈다(기본 꺼짐).
 # 기준 문서(SAF-05: C 건은 담당자가 결정)를 바꾸는 docs PR이 머지되기 전에는 켜지 않는다
 AUTO_REVIEW_ENV = "SAFETY_AUTO_REVIEW"
+
+# 실행 중 기준 바꾸기 마스터 스위치. "1"일 때만 기준 바꾸기 API와 저장 값 복원이 돈다(기본 꺼짐).
+# 기준 문서(SAF-02: 기준표는 사람이 PR로 바꾼다)를 바꾸는 docs PR이 머지되기 전에는 켜지 않는다
+THRESHOLD_CHANGES_ENV = "SAFETY_THRESHOLD_CHANGES"
 
 # 사람 확인 기한 환경변수 덮어쓰기. 1분~7일만 받는다(오타로 0초·몇 년이 되지 않게)
 REVIEW_TIMEOUT_ENV = "SAFETY_REVIEW_TIMEOUT_SECONDS"
@@ -237,6 +242,11 @@ def load_thresholds() -> ThresholdTable:
 def auto_review_on() -> bool:
     """마스터 스위치 `SAFETY_AUTO_REVIEW`가 "1"인가. 부를 때마다 읽는다(기본 꺼짐)."""
     return os.getenv(AUTO_REVIEW_ENV, "").strip() == "1"
+
+
+def threshold_changes_on() -> bool:
+    """마스터 스위치 `SAFETY_THRESHOLD_CHANGES`가 "1"인가. 부를 때마다 읽는다(기본 꺼짐)."""
+    return os.getenv(THRESHOLD_CHANGES_ENV, "").strip() == "1"
 
 
 def without_self_review(registry: Registry, table: ThresholdTable) -> ThresholdTable:

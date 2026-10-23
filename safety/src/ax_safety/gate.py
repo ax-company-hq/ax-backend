@@ -41,6 +41,7 @@ from ax_safety.rules import (
     ThresholdTable,
     auto_review_on,
     higher,
+    threshold_changes_on,
     without_self_review,
 )
 from ax_safety.store import ExecutionRecord, Review, Store, ThresholdChange
@@ -224,7 +225,13 @@ class Gate:
         self._now = now
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
         if overrides is not None:
-            self._restore_overrides()
+            if threshold_changes_on():
+                self._restore_overrides()
+            elif overrides.path.exists():  # 꺼져 있으면 저장된 값을 읽지 않고 TOML 값을 쓴다
+                self._overrides_audit(
+                    "threshold_overrides_ignored",
+                    {"reason": "feature_off", "path": str(overrides.path)},
+                )
 
     # ------------------------------------------------------------------ 진입점
     async def execute(self, request: ExecuteRequest) -> ExecuteDecision:

@@ -25,6 +25,7 @@ def _mock_mode(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     monkeypatch.delenv("SAFETY_MOCK", raising=False)  # CI는 SAFETY_MOCK=1이라 테스트마다 정한다
     monkeypatch.delenv("SAFETY_REVIEW_TIMEOUT_SECONDS", raising=False)  # 기본은 기준표 값(10분)
     monkeypatch.delenv("SAFETY_AUTO_REVIEW", raising=False)  # AI 1차 판단은 기본 꺼짐
+    monkeypatch.delenv("SAFETY_THRESHOLD_CHANGES", raising=False)  # 기준 바꾸기도 기본 꺼짐
     # 바뀐 기준 저장 파일은 테스트마다 임시 폴더에 (레포에 쓰지 않게)
     monkeypatch.setenv(
         "SAFETY_THRESHOLD_OVERRIDES_PATH", str(tmp_path / "threshold_overrides.json")

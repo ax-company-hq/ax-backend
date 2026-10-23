@@ -13,6 +13,9 @@
 | `GET /api/safety/threshold-changes` | 기준 바꾸기 기록 (최근 것부터) | 없음(조회) |
 | `POST /api/safety/threshold-changes/{change_id}/decision` | 적용·거절 | **사람만** |
 
+기준 바꾸기(위 POST 두 개, 저장 값 복원)는 `SAFETY_THRESHOLD_CHANGES=1`일 때만 쓴다(기본 꺼짐).
+꺼져 있으면 POST는 403 `FEATURE_OFF`이고 GET 기록은 빈 목록이다.
+
 `ExecuteRequest.requester`는 믿지 않는다. 토큰에서 꺼낸 이름과 다르면 403이다.
 """
 
@@ -36,7 +39,7 @@ from ax_contracts.schemas import ExecuteRequest
 from ax_safety.auth import agent_from_token, bearer, human_from_token
 from ax_safety.gate import Gate, Publisher, Reviewer, ThresholdReviewer, Verifier
 from ax_safety.overrides import OverrideFile
-from ax_safety.rules import load_registry, load_thresholds
+from ax_safety.rules import load_registry, load_thresholds, threshold_changes_on
 from ax_safety.store import Store
 from ax_safety.verify import (
     call_reviewer,
@@ -77,6 +80,8 @@ class ThresholdChangeBody(BaseModel):
 
 # 기준 바꾸기를 요청할 수 있는 에이전트 (사람 토큰은 항상 허용)
 THRESHOLD_CHANGE_AGENTS = {"finance"}
+
+FEATURE_OFF_MESSAGE = "기준 바꾸기는 기준 문서 변경(docs PR) 머지 후 켭니다"
 
 
 def _ok(data: Any) -> dict[str, Any]:
@@ -218,6 +223,8 @@ def create_app(
     async def request_threshold_change(
         body: ThresholdChangeBody, authorization: str | None = Header(default=None)
     ) -> dict | JSONResponse:
+        if not threshold_changes_on():
+            return _error(403, "FEATURE_OFF", FEATURE_OFF_MESSAGE)
         token = bearer(authorization)
         by_agent = False
         try:
@@ -243,6 +250,8 @@ def create_app(
 
     @app.get("/api/safety/threshold-changes")
     def list_threshold_changes() -> dict:
+        if not threshold_changes_on():  # 꺼져 있으면 조회는 되지만 비어 있다
+            return _ok([])
         return _ok([c.model_dump(mode="json") for c in gate.store.list_changes()])
 
     @app.post("/api/safety/threshold-changes/{change_id}/decision", response_model=None)
@@ -251,6 +260,8 @@ def create_app(
         body: ReviewDecisionBody,
         authorization: str | None = Header(default=None),
     ) -> dict | JSONResponse:
+        if not threshold_changes_on():
+            return _error(403, "FEATURE_OFF", FEATURE_OFF_MESSAGE)
         try:
             person = human_from_token(bearer(authorization))
         except PermissionError as exc:
