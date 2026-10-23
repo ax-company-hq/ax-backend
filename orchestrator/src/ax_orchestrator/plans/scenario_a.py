@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any
 
-from ax_orchestrator.models import Incident, Plan, Step, iso
+from ax_orchestrator.models import Incident, Plan, Step, iso, now
 
 
 def _window(inc: Incident) -> dict[str, Any]:
@@ -42,23 +42,20 @@ def _related_prs(inc: Incident) -> dict[str, Any]:
 
 
 def _link(inc: Incident) -> dict[str, Any]:
-    prs = [c.get("number") for c in _out(inc, "related_prs").get("candidates", [])]
+    prs = [c.get("pr_number") for c in _out(inc, "related_prs").get("candidates", [])]
     return {"incident_context_id": inc.context_id, "pr_numbers": [p for p in prs if p]}
 
 
 def _notice(inc: Incident) -> dict[str, Any]:
+    # 실제 marketing `DraftNoticeInput`: 사실만 넘기고 문장은 마케팅이 만든다
     return {
-        "kind": "maintenance",
-        "facts": {
-            "component": inc.component,
-            "since": iso(inc.opened_at),
-            "cause_status": _out(inc, "diagnose").get("status", "undetermined"),
-        },
+        "kind": "incident_opened",
+        "facts": {"component": inc.component, "opened_at": iso(inc.opened_at)},
     }
 
 
 def _publish_notice(inc: Incident) -> dict[str, Any]:
-    return {"notice_id": _out(inc, "notice").get("notice_id")}
+    return {"draft_id": _out(inc, "notice").get("draft_id")}
 
 
 def _compensation(inc: Incident) -> dict[str, Any]:
@@ -89,7 +86,18 @@ def _recovery(inc: Incident) -> dict[str, Any]:
 
 
 def _recovered_notice(inc: Incident) -> dict[str, Any]:
-    return {"notice_id": _out(inc, "notice").get("notice_id"), "kind": "recovered"}
+    return {"draft_id": _out(inc, "recovered_draft").get("draft_id")}
+
+
+def _recovered_draft(inc: Incident) -> dict[str, Any]:
+    return {
+        "kind": "incident_resolved",
+        "facts": {
+            "component": inc.component,
+            "opened_at": iso(inc.opened_at),
+            "resolved_at": iso(now()),
+        },
+    }
 
 
 def scenario_a() -> Plan:
@@ -166,10 +174,17 @@ def scenario_a() -> Plan:
                 build=_recovery,
             ),
             Step(
+                "recovered_draft",
+                "draft_notice",
+                "정상화 공지 초안 (marketing)",
+                after=("recovery",),
+                build=_recovered_draft,
+            ),
+            Step(
                 "recovered_notice",
                 "publish_notice",
                 "정상화 공지 (marketing)",
-                after=("recovery",),
+                after=("recovered_draft",),
                 build=_recovered_notice,
             ),
             Step(

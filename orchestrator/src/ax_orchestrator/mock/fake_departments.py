@@ -102,10 +102,14 @@ DEFAULT_OUTPUTS: dict[str, Callable[[AgentRequest], dict[str, Any]]] = {
         damage_amount=5_430_000,
     ),
     "rollback_deployment": lambda r: _ok(rolled_back_to=r.input.get("to_version")),
-    "find_related_prs": lambda r: _ok(candidates=[{"number": 412}, {"number": 418}]),
+    "find_related_prs": lambda r: _ok(candidates=[{"pr_number": 412}, {"pr_number": 418}]),
     "link_incident": lambda r: _ok(linked_paras=["PR #412", "PR #418"]),
-    "draft_notice": lambda r: _ok(notice_id="ntc_mock01"),
-    "publish_notice": lambda r: _ok(notice_id=r.input.get("notice_id") or "ntc_mock01"),
+    "draft_notice": lambda r: _ok(draft_id=f"drf_{r.input.get('kind', 'x')}"),
+    "publish_notice": lambda r: _ok(
+        notice_id=f"ntc_{r.input.get('draft_id', 'none')}",
+        channel_code="banner",
+        status="published",
+    ),
     "request_compensation": lambda r: _ok(
         eligible_customer_ids=r.input.get("customer_ids", []), amount_per_customer=5_000
     ),
