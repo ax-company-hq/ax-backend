@@ -127,6 +127,43 @@ def create_api_router(get_service: Callable[[], PlanningService]) -> APIRouter:
             svc,
         )
 
+    @router.get("/review-queue")
+    def list_review_queue(state: str | None = None) -> dict:
+        """자동 확정·자동 머지를 멈춘 건 (답 대기·교차검증 대기·사람 확인).
+
+        판단은 `decide_with`의 기존 사람 버튼(`POST /actions`)으로 한다.
+        실제 교차검증자 연결·학습은 safety 협의 뒤 (#166 3번).
+        """
+        svc = get_service()
+        rows: list[dict] = []
+        for sp in svc.state.specs:
+            if sp.status != "확정" and sp.auto_review is not None:
+                rows.append(
+                    {
+                        "kind": "spec",
+                        "id": sp.id,
+                        "title": sp.title,
+                        "action": "confirm_spec",
+                        **dump(sp.auto_review),
+                        "decide_with": {"type": "confirmSpec", "spec": sp.id},
+                    }
+                )
+        for pr in svc.state.prs:
+            if not pr.merged and pr.auto_review is not None:
+                rows.append(
+                    {
+                        "kind": "pr",
+                        "id": pr.id,
+                        "title": pr.title,
+                        "action": "merge_pr",
+                        **dump(pr.auto_review),
+                        "decide_with": {"type": "mergePr", "pr": pr.id},
+                    }
+                )
+        if state is not None:
+            rows = [r for r in rows if r["state"] == state]
+        return _ok(rows, svc, count=len(rows))
+
     @router.get("/auto-policy")
     def get_auto_policy() -> dict:
         svc = get_service()

@@ -5,7 +5,12 @@
 인사(hr)에는 인수인계용 진행 중 항목을 알려 주고(`list_in_progress`), 인계 목록 누락을 교차검증하고(`verify_handover`), 기각한 안을 `record_case`(kind `decision_rejected`)로 보낸다.
 프로토타입(`ax-frontend/planning-web/src/data.ts`·`trace.ts`·`projects.tsx`)의 리듀서·초기 상태·간단 요청 판정·자동 처리 범위·역추적·프로젝트 보기를 그대로 백엔드로 옮겼다.
 
-- 간단 요청(화면 표시만 고치는 작은 요청)은 사람 클릭 없이 기획서(자동 확정) → 작업 → PR(`execute(generate_pr)` B) → 검수 → 머지(`execute(merge_pr)` B) → 회신까지 간다. 그 밖의 요청은 팀장 확정·사람 머지.
+- 간단 요청(화면 표시만 고치는 작은 요청)은 사람 클릭 없이 기획서(자동 확정) → 작업 → PR(`execute(generate_pr)` B) → 검수 → 머지(`execute(merge_pr)` B) → 회신까지 간다.
+- 기획서·PR은 사람 사전 승인 대신 규칙 교차검증 + 사후 감사로 처리한다 (10/23 결정, `domain/autocheck.py`).
+  - 기획서: 질문 0·경고 0·근거 1 이상·되돌릴 수 없음 0이면 자동 확정(`execute(confirm_spec)`) → 작업 분할. 아니면 확정하지 않고 `auto_review.state` = `답 대기`(질문 남음) 또는 `교차검증 대기`. 질문에 답하면(`answerQuestion`)·`checkSpec`으로 다시 본다.
+  - PR: 마지막 검수 통과 + `merge_pr` 규칙에 안 걸리면 자동 머지(`execute(merge_pr)` B). 걸리면 `교차검증 대기`, 되돌릴 수 없는 영역이면 `사람 확인`. safety가 보류·거절해도 `교차검증 대기`.
+  - 자동 확정·머지는 활동(`audit.auto_confirmed`·`execute(merge_pr)`)과 `record_case`(`decision_reason`에 규칙 값)로 남겨 사후 감사한다. 대기 건 판단은 기존 사람 버튼(`confirmSpec`·`mergePr`)으로 한다.
+  - 실제 교차검증자 연결·학습(한 번 학습, 백테스트, 시험 3건)은 safety 협의(#166 3번) 뒤. 지금은 대기열 상태와 `GET /review-queue`만 있다.
 - 자동 처리 범위(L0~L3, 시연값): 연속 정상 3건이면 승급을 제안(`auto_policy_propose` C)하고 승인은 사람이 한다. 자동 머지 PR이 장애에 연결되면 승인 없이 한 단계 줄인다.
 - 같은 제목 요청은 새로 만들지 않고 연결한다(`linked_duplicate`).
 - 숫자(지표 6종·중복·간단 요청 판정·PR 크기)는 모두 코드로 계산한다. LLM은 쓰지 않는다.
@@ -17,6 +22,7 @@
 | `domain/models.py` | 상태 모델 (Request, Spec, Task, PR, Thread, Doc, Decision, Incident, Activity, OutMsg, AutoPolicy, State) |
 | `domain/seed.py` | 초기 데이터 (프로토타입 `initialState`) |
 | `domain/service.py` | 액션 전부 (`inbound` 10종, 확정·질문 답·PR 생성·검수·머지·초안 채택·승급 승인/보류·소통·문서·창구) |
+| `domain/autocheck.py` | 기획서 자동 확정·PR 자동 머지 판정, #171 규칙 키 params 계산, 되돌릴 수 없는 영역 경로 접두사 |
 | `domain/rules.py` | 간단 요청 판정, 자동 처리 단계, 중복 찾기, 구간 안 PR, 롤백 교차검증 |
 | `domain/handover.py` | 인수인계용 진행 중 항목 계산 (담당자·영역 대응, 인계 목록 비교) |
 | `domain/trace.py` · `projects.py` · `metrics.py` · `docs.py` | 역추적, 프로젝트 6단계, 지표, 정리 문서 블록 |
@@ -70,6 +76,7 @@ hr 연동 항목 규칙 (`domain/handover.py`, 시연값):
 | GET | `/metrics` | 지표 6종 + 계산 원자료 |
 | GET | `/projects` · `/projects/{id}` | 프로젝트 목록(진행 중 먼저)·상세(6단계, 모은 항목) |
 | GET | `/trace/{pr}` | 역추적 (`28`, `PR-28`, `PR%20%2328` 모두 받음) |
+| GET | `/review-queue?state=` | 자동 확정·머지를 멈춘 건 (`kind` spec/pr, `state` 답 대기·교차검증 대기·사람 확인, 걸린 `rules`, 계산한 `params`, safety `gate_status`·`review_id`, 판단 버튼 `decide_with`) |
 | GET | `/auto-policy` | 자동 처리 범위 (단계표, 현재 기준, 승급 기준) |
 | POST | `/actions` | 프로토타입 Action 그대로 (`{"type": "confirmSpec", "spec": "SPEC-7"}`, snake_case 이름도 받음). 응답 `data`는 새 상태, `meta.changed`·`outcome`·`result` |
 | POST | `/requests/{id}/reject` | 개선 초안 기각. 본문 `{decision_reason, alternatives_considered}` 둘 다 필수. `/actions` + `rejectDraft`와 같은 길. 요청 상태 `기각`, hr `record_case` kind `decision_rejected` |
@@ -77,6 +84,15 @@ hr 연동 항목 규칙 (`domain/handover.py`, 시연값):
 | GET | `/events` | SSE `text/event-stream`. 연결 즉시·상태가 바뀔 때마다 `event: state` + 전체 상태 JSON |
 
 기각 액션: `rejectDraft`(`request`, `decision_reason`, `alternatives_considered`) · `rejectDecision`(`spec`, `text`, `decision_reason`, `alternatives_considered`). 이유나 대안이 비면 hr에 보내지 않고 400 `MISSING_DECISION_REASON`.
+
+execute params (safety #171 `thresholds.toml` 규칙 키, 모두 도메인 상태에서 코드로 계산. 요청 본문의 숫자는 받지 않는다):
+
+| 액션 | params | 계산 |
+| --- | --- | --- |
+| `confirm_spec` | `open_questions`·`warnings`·`basis_count`·`irreversible_count` (+ `auto`, 경고가 있으면 `warn_ignored`) | 남은 질문 수, 인사 경고가 붙은 문단 수, 근거 수, 바꿀 경로가 되돌릴 수 없는 영역에 닿는 요구사항 문단 수 |
+| `merge_pr` | `changed_lines`·`changed_files`·`changed_paths`·`review_mismatch_count`·`linked_incident_count`·`irreversible_count` (+ `auto`) | PR 크기·경로, 검수 불일치 횟수, 이 PR 문단 또는 같은 파일을 바꾼 PR 문단 중 장애 표시 수, 되돌릴 수 없는 영역 경로 수 |
+
+되돌릴 수 없는 영역(제안 목록, 확정은 safety·사람): `shop-api/payment/migrations/`(결제 데이터 삭제·변경), `shop-api/accounts/pii/`(개인정보 필드), `shop-api/settlement/payout/`(실제 송금·정산 연동). 문단에 `paths`가 있으면 그 경로로, 없으면 역추적 규칙으로 정한다.
 
 경고 무시 확정 (FR-SPEC-006): 인사 경고(`warn`)가 남은 문단을 둔 채 `confirmSpec`을 하면 "warn 무시 진행"을 세 곳에 남긴다. `execute(confirm_spec)` params `warn_ignored`, `record_case`(kind `spec_confirmed`) params의 `record_case.summary`·`source_refs`와 `warn_ignored`, 활동 로그(point `audit.warn_ignored`, hr로 가는 `record_case` 활동).
 
