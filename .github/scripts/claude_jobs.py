@@ -96,6 +96,19 @@ def hop_of(body: str) -> int:
 
 
 # ── 결과 형식 검사 ────────────────────────────────────────
+CHAT_COMMENT = re.compile(r"<!--\s*chat:\s*(.*?)\s*-->", re.S)
+MAX_CHAT = 120
+
+
+def chat_line(text: str) -> str:
+    """Claude가 남긴 마지막 chat 주석의 내용을 한 줄·120자로 정제한다 (없으면 빈 문자열)."""
+    found = CHAT_COMMENT.findall(text or "")
+    if not found:
+        return ""
+    line = re.sub(r"\s+", " ", HTML_COMMENT.sub("", found[-1]).replace("<!--", "")).strip()
+    return line.replace("-->", "").replace("@", "")[:MAX_CHAT]
+
+
 def check_result(data: object, team: team_mod.Team) -> dict:
     """result.json {"title","body","summary","requests":[{"to","text"}]}"""
     if not isinstance(data, dict):
@@ -106,8 +119,11 @@ def check_result(data: object, team: team_mod.Team) -> dict:
         if not isinstance(v, str) or len(v) > limit:
             raise JobError(f"result.json {key}가 문자열이 아니거나 너무 김")
         out[key] = v
+    chat = chat_line(out["body"]) or chat_line(out["summary"])
     # 봇 표시(<!-- ax-issue:N --> 등)를 흉내 내지 못하게 Claude가 쓴 HTML 주석은 지운다
     out["body"] = HTML_COMMENT.sub("", out["body"]).replace("<!--", "")
+    if chat:  # 개발실 피드용 한 줄만 다시 붙인다 (정제한 한 줄, 다른 주석은 그대로 지워짐)
+        out["body"] = out["body"].rstrip() + "\n\n<!-- chat: " + chat + " -->"
     if not out["title"].strip():
         raise JobError("result.json title이 비어 있음")
     if any(ord(ch) < 32 for ch in out["title"]):

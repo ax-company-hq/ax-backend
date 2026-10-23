@@ -263,6 +263,7 @@ jobs:
                다른 폴더가 필요하면 고치지 말고 result.json의 requests에 적는다.
             4. 셸은 없다. 파일만 수정한다. 커밋·테스트는 다음 단계가 한다.
             5. 끝나면 ${{ runner.temp }}/ax-out/result.json 을 rules.md 형식으로 쓴다.
+            6. result.json의 body 맨 끝에 한 줄 `<!-- chat: 무엇을 했는지 사람이 읽는 한 문장, 120자 이내, 비밀·고객 정보 없음 -->`을 붙인다.
           claude_args: |
             --model ${{ vars.AX_MODEL_WRITE }}
             --setting-sources user
