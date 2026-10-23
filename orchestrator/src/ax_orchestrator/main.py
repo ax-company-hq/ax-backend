@@ -16,8 +16,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
+from ax_agent_template.config import set_agent_name
 from ax_contracts.schemas import EventEnvelope, EventType
 from ax_orchestrator.engine import Engine
+from ax_orchestrator.hybrid import HybridDepartments, real_depts_from_env
 from ax_orchestrator.manager import IncidentManager
 from ax_orchestrator.mock.fake_departments import FakeDepartments
 from ax_orchestrator.models import Incident
@@ -31,7 +33,7 @@ DEPTS = ["infra", "data", "planning", "marketing", "support", "finance", "hr"]
 class DemoRequest(BaseModel):
     """목업 화면의 장애 주입 옵션. 각 옵션은 가짜 부서의 동작을 바꾼다."""
 
-    hold_coupon: bool = False  # 쿠폰 지급이 C 등급 보류가 됨
+    hold_rollback: bool = False  # 롤백이 C 등급 보류가 됨(사람 승인 대기)
     fail_marketing: bool = False  # 공지 게시가 한 번 실패(재시도로 복구)
     wrong_owner: bool = False  # 공지 게시가 소관 아님으로 거절(이관)
     infra_card_empty: bool = False  # 인프라 카드 수집 실패(= 현재 dev 상태)
@@ -50,22 +52,28 @@ class AppState:
         self.fakes: FakeDepartments | None = None
         self.manager: IncidentManager | None = None
         self.published: list[dict[str, Any]] = []
+        self.modes: dict[str, str] = {}
 
     async def build(self, demo: DemoRequest | None = None) -> IncidentManager:
         demo = demo or DemoRequest()
         fakes = FakeDepartments(latency=self.latency)
         if demo.infra_card_empty:
             fakes.empty_cards.add("infra")
-        if demo.hold_coupon:
-            fakes.script("marketing", "issue_coupon", "hold")
+        if demo.hold_rollback:
+            fakes.script("infra", "rollback_deployment", "hold")
         if demo.fail_marketing:
             fakes.script("marketing", "publish_notice", "fail")
         if demo.wrong_owner:
             fakes.script("marketing", "publish_notice", "forbidden")
-        await self.registry.load(DEPTS, fakes.fetch_card)
+        real = real_depts_from_env(DEPTS)
+        if real:
+            set_agent_name("orchestrator")
+        caller = HybridDepartments(fakes, real)
+        self.modes = caller.modes(DEPTS)
+        await self.registry.load(DEPTS, caller.fetch_card)
         engine = Engine(
             self.registry,
-            fakes,
+            caller,
             publish=self._publish,
             hold_timeout=self.hold_timeout,
             retry_delay=0.2,
@@ -105,7 +113,10 @@ async def registry() -> dict:
     _require_mock()
     if state.manager is None:
         await state.build()
-    return {"data": state.registry.view(), "meta": {"mock": True}}
+    view = state.registry.view()
+    for dept in view["depts"]:
+        dept["mode"] = state.modes.get(dept["name"], "mock")
+    return {"data": view, "meta": {"mock": True, "modes": state.modes}}
 
 
 @app.get("/api/incidents")

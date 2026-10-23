@@ -34,12 +34,8 @@ CARDS: dict[str, list[tuple[str, str, str | None]]] = {
         ("link_incident", "A", None),
         ("verify_rollback_target", "read", None),
     ],
-    "marketing": [
-        ("draft_notice", "read", None),
-        ("publish_notice", "A", None),
-        ("issue_coupon", "B", "finance"),
-    ],
-    "support": [("request_compensation", "A", None), ("send_reply", "A", None)],
+    "marketing": [("draft_notice", "read", None), ("publish_notice", "A", None)],
+    "support": [("send_reply", "A", None)],
     "finance": [("loss_aggregation", "read", None)],
     "hr": [("record_case", "A", None)],
 }
@@ -110,13 +106,6 @@ DEFAULT_OUTPUTS: dict[str, Callable[[AgentRequest], dict[str, Any]]] = {
         channel_code="banner",
         status="published",
     ),
-    "request_compensation": lambda r: _ok(
-        eligible_customer_ids=r.input.get("customer_ids", []), amount_per_customer=5_000
-    ),
-    "issue_coupon": lambda r: _ok(
-        issued=len(r.input.get("customer_ids", [])),
-        total_amount=len(r.input.get("customer_ids", [])) * 5_000,
-    ),
     # 실제 재무 `LossReport` 모양(받지 못한 값은 None = 확인할 수 없음)
     "loss_aggregation": lambda r: _ok(
         failed_orders=128,
@@ -158,12 +147,12 @@ class FakeDepartments:
         key = req.meta.idempotency_key
         script = self._scripts[(dept, req.skill)]
         behavior = script.popleft() if script else "ok"
-        if behavior == "ok" and key and req.skill in {"issue_coupon", "publish_notice"}:
+        if behavior == "ok" and key and req.skill == "publish_notice":
             cached = self._seen_keys.get(f"{dept}:{key}")
             if cached is not None:  # 멱등: 같은 키는 같은 결과
                 return cached
         result = self._respond(dept, req, behavior)
-        if behavior == "ok" and key and req.skill in {"issue_coupon", "publish_notice"}:
+        if behavior == "ok" and key and req.skill == "publish_notice":
             self._seen_keys[f"{dept}:{key}"] = result
         return result
 

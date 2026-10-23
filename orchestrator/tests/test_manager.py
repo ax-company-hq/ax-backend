@@ -68,15 +68,15 @@ def test_demo_api_runs_scenario_and_hold_decision(monkeypatch) -> None:
     monkeypatch.setattr(state, "hold_timeout", 5.0)
     monkeypatch.setattr(state, "manager", None)
     with TestClient(app) as client:
-        created = client.post("/api/demo/incidents", json={"hold_coupon": True}).json()["data"]
+        created = client.post("/api/demo/incidents", json={"hold_rollback": True}).json()["data"]
         ctx = created["context_id"]
         for _ in range(200):
             data = client.get(f"/api/incidents/{ctx}").json()["data"]
             if data["pending_holds"]:
                 break
             time.sleep(0.01)
-        assert data["pending_holds"][0]["step_id"] == "coupon"
-        ok = client.post(f"/api/incidents/{ctx}/holds/coupon", json={"approved": True})
+        assert data["pending_holds"][0]["step_id"] == "rollback"
+        ok = client.post(f"/api/incidents/{ctx}/holds/rollback", json={"approved": True})
         assert ok.status_code == 200
         for _ in range(200):
             data = client.get(f"/api/incidents/{ctx}").json()["data"]

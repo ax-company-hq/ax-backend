@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 async def test_skill_to_dept_map(harness) -> None:
     await harness.registry.load(DEPTS, harness.fakes.fetch_card)
     assert harness.registry.find("impact_analysis").dept == "data"
-    assert harness.registry.find("issue_coupon").verifier == "finance"
+    assert harness.registry.find("rollback_deployment").verifier == "planning"
     assert harness.registry.find("nope") is None
 
 

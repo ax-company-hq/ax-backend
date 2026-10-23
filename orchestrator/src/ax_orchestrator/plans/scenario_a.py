@@ -1,4 +1,8 @@
-"""시나리오 A: 결제 API 장애 (docs/planning.md 5장, 통합에이전트기획안 4장)."""
+"""시나리오 A: 결제 API 장애 (docs/planning.md 5장).
+
+보상·쿠폰 단계는 없다(#228 결정 A): 고객지원이 문의 접수 때 보상을 판정하고 마케팅 쿠폰을 직접
+요청한다. 총괄은 공지 게시와 재무 손실 리포트(재무 장부의 `coupon.issued`로 보상액 계산)만 부른다.
+"""
 
 from __future__ import annotations
 
@@ -56,24 +60,6 @@ def _notice(inc: Incident) -> dict[str, Any]:
 
 def _publish_notice(inc: Incident) -> dict[str, Any]:
     return {"draft_id": _out(inc, "notice").get("draft_id")}
-
-
-def _compensation(inc: Incident) -> dict[str, Any]:
-    impact = _out(inc, "impact")
-    return {
-        "customer_ids": impact.get("affected_customer_ids", []),
-        "notice_id": _out(inc, "publish_notice").get("notice_id"),
-        "reason": "payment_outage",
-    }
-
-
-def _coupon(inc: Incident) -> dict[str, Any]:
-    comp = _out(inc, "compensation")
-    return {
-        "customer_ids": comp.get("eligible_customer_ids", []),
-        "amount_per_customer": comp.get("amount_per_customer"),
-        "idempotency_scope": inc.context_id,
-    }
 
 
 def _loss(inc: Incident) -> dict[str, Any]:
@@ -144,26 +130,11 @@ def scenario_a() -> Plan:
                 build=_publish_notice,
             ),
             Step(
-                "compensation",
-                "request_compensation",
-                "보상 판정 (support)",
-                after=("publish_notice",),
-                build=_compensation,
-            ),
-            Step(
-                "coupon",
-                "issue_coupon",
-                "보상 쿠폰 지급 (B, finance 검증)",
-                after=("compensation",),
-                build=_coupon,
-                serial_group="coupon",
-            ),
-            Step(
                 "loss",
                 "loss_aggregation",
                 "손실 리포트 (finance)",
                 after=("impact",),
-                also_after=("coupon",),
+                also_after=("publish_notice",),
                 build=_loss,
             ),
             Step(
