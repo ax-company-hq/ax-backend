@@ -47,6 +47,10 @@ def unwrap(result: AgentResult) -> dict[str, Any]:
         findings = result.output.get("validation", {}).get("findings", [])
         message = findings[0]["message"] if findings else "답변 가드에 걸렸다"
         raise ApiError(422, "REPLY_BLOCKED", message)
+    if outcome == "invalid_state":
+        raise ApiError(
+            409, "INVALID_STATE", str(result.output.get("message", "현재 상태에서는 할 수 없다"))
+        )
     if outcome.startswith("not_executed_"):
         state = outcome.removeprefix("not_executed_")
         raise ApiError(409, "NOT_EXECUTED", f"실행되지 않았다 ({state}). 승인 대기 또는 거부 상태")

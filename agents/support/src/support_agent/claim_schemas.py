@@ -58,6 +58,29 @@ class ClaimAudit(AxModel):
     at: str
 
 
+class ClaimReceiptItem(AxModel):
+    id: int
+    title: str
+    qty: int
+    paid_amount: int
+    points_share: int = 0
+    refunded_qty: int = 0
+
+
+class ClaimReceipt(AxModel):
+    """판정에 쓴 주문 사실의 스냅샷. 나중에 주문이 바뀌어도 판정 근거를 그대로 보여 준다."""
+
+    order_no: str
+    status: str
+    items_total: int
+    shipping_fee: int
+    points_used: int
+    paid_amount: int
+    paid_at: str
+    delivered_at: str | None = None
+    items: list[ClaimReceiptItem] = Field(default_factory=list)
+
+
 class Claim(AxModel):
     id: int
     tenant_id: str = TENANT_ID_DEFAULT
@@ -89,6 +112,9 @@ class Claim(AxModel):
     refund_paid: int = 0
     processed_at: str | None = None
     decided_by: str | None = None
+    agent_note: str | None = None  # 상담원 결정 메모 (`untrusted.note`)
+    inspection_note: str | None = None  # 검수 메모 (`untrusted.note`)
+    receipt: ClaimReceipt | None = None
     audit: list[ClaimAudit] = Field(default_factory=list)
 
 
@@ -96,6 +122,15 @@ class ClaimStats(AxModel):
     total: int
     by_status: dict[str, int]
     rule_hits: dict[str, int]
+    agent_reviews: int = 0  # 상담원이 승인·거절을 결정한 클레임 수
+    # 상담원이 규칙 판정을 뒤집은 수. 사람 결정은 `needs_review`·`needs_info`에서만 받고
+    # 자동 판정(자동 거절·자동 승인)은 바꿀 수 없어서 지금은 항상 0이다.
+    agent_overrides: int = 0
+
+
+class QueueItemLine(AxModel):
+    title: str
+    qty: int
 
 
 class QueueEntry(AxModel):
@@ -105,10 +140,12 @@ class QueueEntry(AxModel):
     customer: str
     type: ClaimType
     reason: ClaimReason
+    received_at: str | None = None  # 반품 입고 시각 (반품 없는 승인은 승인 시각)
     inspection: Inspection | None = None
     amount: int
     ready: bool
     blockers: list[ClaimReasonHit] = Field(default_factory=list)
+    items: list[QueueItemLine] = Field(default_factory=list)
 
 
 class ClaimQueue(AxModel):
@@ -120,6 +157,7 @@ class QueueRunResult(AxModel):
     claim_id: int
     result: Literal["paid", "held", "skipped"]
     detail: str | None = None
+    blockers: list[ClaimReasonHit] = Field(default_factory=list)
     refund: int | None = None
 
 

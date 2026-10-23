@@ -23,7 +23,7 @@ from ax_agent_template.client import call_agent
 from ax_agent_template.execute import execute
 from ax_agent_template.server import error_result
 from ax_contracts.schemas import AgentRequest, AgentResult, Evidence, TaskStatus
-from support_agent import compensation, drafting, events, guard, notices
+from support_agent import compensation, drafting, events, guard, notices, persistence
 from support_agent.schemas import (
     AddCustomerMessageInput,
     CheckReplyInput,
@@ -37,12 +37,11 @@ from support_agent.schemas import (
     Source,
     SummarizeInquiryInput,
 )
-from support_agent.store import InquiryStore
 
 logger = logging.getLogger("ax.support.handlers")
 
-STORE = InquiryStore()
-LEDGER = compensation.SequenceLedger()
+STORE = persistence.build_inquiry_store()
+LEDGER = persistence.build_sequence_ledger()
 SEND = call_agent  # 테스트에서 바꿀 수 있다
 
 
@@ -257,6 +256,7 @@ async def send_reply(request: AgentRequest) -> AgentResult:
             edited = parsed.draft_text is not None and draft != text
             STORE.draft_events.append(
                 {
+                    "context_id": request.meta.context_id,
                     "inquiry_id": parsed.inquiry_id,
                     "style": parsed.draft_style,
                     "result": "edited" if edited else "accepted",
@@ -286,7 +286,12 @@ async def reject_draft(request: AgentRequest) -> AgentResult:
 
     async def apply() -> tuple[dict[str, Any], bool]:
         STORE.draft_events.append(
-            {"inquiry_id": parsed.inquiry_id, "style": parsed.draft_style, "result": "rejected"}
+            {
+                "context_id": request.meta.context_id,
+                "inquiry_id": parsed.inquiry_id,
+                "style": parsed.draft_style,
+                "result": "rejected",
+            }
         )
         return {"inquiry_id": parsed.inquiry_id, "draft_style": parsed.draft_style}, False
 

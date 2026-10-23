@@ -86,7 +86,7 @@ class Rule(_Strict):
     metric: Literal[
         "amount", "unit", "daily_total", "context_total", "customer_total", "param", "paths_within"
     ]
-    op: Literal[">=", ">"] = ">="
+    op: Literal[">=", ">", "<", "<="] = ">="
     value: int = Field(default=0, ge=0)
     field: str | None = None
     allowed: list[str] = Field(default_factory=list)
@@ -99,7 +99,15 @@ class Rule(_Strict):
         return self
 
     def hit(self, observed: int) -> bool:
-        return observed >= self.value if self.op == ">=" else observed > self.value
+        match self.op:
+            case ">=":
+                return observed >= self.value
+            case ">":
+                return observed > self.value
+            case "<=":
+                return observed <= self.value
+            case _:
+                return observed < self.value
 
     def paths_outside(self, paths: list[str]) -> list[str]:
         return [p for p in paths if not any(p.startswith(prefix) for prefix in self.allowed)]

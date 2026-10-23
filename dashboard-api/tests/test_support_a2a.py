@@ -143,6 +143,6 @@ def test_status_change_uses_execute_target_key(client: TestClient, fake: Fake) -
 
 
 def test_other_routes_still_require_mock(client: TestClient, fake: Fake) -> None:
-    response = client.get(BASE + "/claims")
+    response = client.get(BASE + "/reviews")  # 아직 support가 없는 경로
     assert response.status_code == 503
     assert fake.sent == []

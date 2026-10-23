@@ -4,7 +4,7 @@ skill과 등급(등급 신고는 안전 레이어 레지스트리가 원본이�
 
 | skill | 등급 | 하는 일 |
 | --- | --- | --- |
-| `record_case` | A | 사건·결정 기록 → 결정 카드 (입력은 `RecordCase`, 출력은 `RecordCaseOutput`) |
+| `record_case` | A | 사건·결정 기록 → 결정 카드 (입력 `RecordCase`, 출력 `RecordCaseOutput`) |
 | `start_handover` | A | 인수인계 초안·빈 자리·완성도, 빈 자리 질문 |
 | `answer_handover_question` | A | 인계자의 답변을 받아 초안을 이어서 보완 |
 | `confirm_handover` | B(검증자 planning), 완성도 미달이면 C | 인수인계 확정 |
@@ -15,9 +15,11 @@ skill과 등급(등급 신고는 안전 레이어 레지스트리가 원본이�
 | `check_plan` | 읽기 | 새 계획이 과거에 기각된 안인지 판정 |
 | `get_roster` | 읽기 | 담당·교대 명부 (개인정보 제외) |
 | `update_onboarding_step` | A | 온보딩 단계 완료 표시(진행률은 코드가 다시 계산) |
-| `decide_candidate_card` | A | 확신 낮은 후보 카드를 사람이 승인·거절 |
+| `decide_candidate_card` | A | 확신 낮은 후보 카드를 사람이 승인·폐기 |
 | `list_handovers`·`list_open_questions`·`list_onboardings` | 읽기 | 인수인계·질문·온보딩 현황 |
 | `list_changes`·`list_candidate_cards`·`get_audit_timeline` | 읽기 | 변경·후보 카드·감사 기록 |
+
+`RecordCaseOutput`은 모델만 추가했고, hr의 출력 전환은 hr 담당 PR에서 한다.
 
 인계자 질문은 `input-required`(+ `reason_code: human_input`) 결과의 `output`에 담는다.
 질문을 기다리는 동안은 hr이 상태를 저장하고, 답변은 새 요청(`answer_handover_question`)으로
@@ -163,7 +165,7 @@ class ConfirmReassignmentOutput(AxModel):
     """코드 규칙 검증 결과. 담당 공백·중복이 있으면 `rejected`다."""
 
     change_id: str
-    status: Literal["confirmed", "rejected", "held"]  # held: 안전 레이어가 C로 올린 경우
+    status: Literal["confirmed", "rejected"]
     gap_areas: list[str] = Field(default_factory=list)
     duplicate_areas: list[str] = Field(default_factory=list)
 
@@ -176,7 +178,7 @@ class ConfirmOffboardingOutput(AxModel):
     """퇴직 확정은 C 등급이라 `held`(안전 레이어 보류 큐)로 시작한다."""
 
     change_id: str
-    status: Literal["confirmed", "held", "rejected"]  # rejected: 사람이 거절·만료시켜 퇴직 취소
+    status: Literal["confirmed", "held"]
     hold_id: str | None = None
 
 

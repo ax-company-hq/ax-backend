@@ -2,12 +2,13 @@
 
 실행: python scripts/compat-check.py <base_dir> <head_dir>   (종료 코드 1 = 깨짐)
 
-분류 규칙 (계약 모델 클래스 이름 접미사):
-- 요청형: Request, Query, Input, Command, Params, Meta, Case  -> validation 스키마 + 요청 규칙
-                        (Case: hr `RecordCase`처럼 skill 입력으로만 쓰는 모델)
+분류 규칙 (계약 모델 클래스 이름 접미사, 예외는 REQUEST_ONLY_MODELS):
+- 요청형: Request, Query, Input, Command, Params, Meta  -> validation 스키마 + 요청 규칙
 - 응답형: Result, Response, Output, Event, Card, Record, Decision, Data
                                                       -> serialization 스키마 + 응답 규칙
 - 그 외: 둘 다 (요청 규칙과 응답 규칙을 모두 적용, 가장 엄격)
+- REQUEST_ONLY_MODELS: skill 입력으로만 쓰는 모델을 이름으로 하나씩 지정한다(요청형으로 취급).
+  접미사로 넓히지 않고 목록으로 두어, 새 모델이 응답 규칙을 빠뜨리는 일이 없게 한다.
 
 요청 규칙 (기존 클라이언트가 보내던 값을 계속 받아야 한다):
   필수 필드 추가 / 선택->필수 / 필드 삭제 / 타입 좁힘(허용 타입 감소, null 불가로 변경) /
@@ -26,7 +27,10 @@ import json
 import sys
 from pathlib import Path
 
-REQUEST_SUFFIXES = ("Request", "Query", "Input", "Command", "Params", "Meta", "Case")
+REQUEST_SUFFIXES = ("Request", "Query", "Input", "Command", "Params", "Meta")
+# 요청형으로만 취급할 모델 (접미사 규칙에 안 걸리는 skill 입력 모델). 추가할 때 PR에 이유를 적는다.
+# - RecordCase: hr `record_case`의 입력. 응답으로 쓰는 소비자가 없다(출력은 `RecordCaseOutput`).
+REQUEST_ONLY_MODELS = frozenset({"RecordCase"})
 RESPONSE_SUFFIXES = (
     "Result", "Response", "Output", "Event", "Card", "Record", "Decision", "Data",
 )  # fmt: skip
@@ -35,7 +39,7 @@ METHODS = ("get", "put", "post", "delete", "options", "head", "patch", "trace")
 
 
 def classify(class_name: str) -> tuple[str, ...]:
-    if class_name.endswith(REQUEST_SUFFIXES):
+    if class_name in REQUEST_ONLY_MODELS or class_name.endswith(REQUEST_SUFFIXES):
         return (REQ,)
     if class_name.endswith(RESPONSE_SUFFIXES):
         return (RES,)

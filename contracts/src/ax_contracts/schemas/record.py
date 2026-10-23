@@ -45,16 +45,17 @@ class RecordCase(AxModel):
     alternatives_considered: list[str] = Field(default_factory=list)
     source_refs: list[str] = Field(default_factory=list)
     author: str
-    area: str | None = None  # 담당 영역(`RosterEntry.area`와 같은 값 집합). 없으면 영역 미지정
+    area: str | None = None  # 담당 영역(`RosterEntry.area`와 같은 값 집합). 없으면 미지정
 
 
 class Card(AxModel):
     """회사 기억에 저장하는 카드.
 
-    - `status`: 확신이 낮아 사람 확인을 기다리는 카드는 `candidate`, 사람이 승인하면 `active`다.
-      새 결정이 기존 결정을 바꾸면 기존 카드는 `superseded`가 되고
+    - `status`: 새 결정이 기존 결정을 바꾸면 기존 카드는 `superseded`가 되고
       `superseded_by`에 새 카드 ID를 적는다.
     - `confidence`: 자동 추출의 확신도. 낮으면 확정하지 않고 후보로 둔다.
+    - `candidate`: 사람 확인을 기다리는 후보 카드면 true, 사람이 승인하면 false가 된다.
+      후보 카드는 판정 근거로 쓰지 않는다(`status`는 그대로 `active`다).
     """
 
     card_id: str
@@ -64,12 +65,13 @@ class Card(AxModel):
     title: str
     body: str
     tags: list[str] = Field(default_factory=list)
-    status: Literal["active", "candidate", "superseded", "retired"] = "active"
+    status: Literal["active", "superseded", "retired"] = "active"
     superseded_by: str | None = None
     source_refs: list[str] = Field(default_factory=list)
     author: str
     confidence: Literal["low", "mid", "high"]
     created_at: UtcDatetime
+    candidate: bool = False
     extra: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")

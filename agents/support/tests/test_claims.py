@@ -288,6 +288,9 @@ def test_refund_request_not_executed_is_held_and_unpaid(
         "claim_id": 1,
         "result": "held",
         "detail": "verifying",
+        "blockers": [
+            {"code": "ON_HOLD", "level": "block", "message": "재무 교차검증 중", "rule": None}
+        ],
         "refund": None,
     }
     assert call(client, "get_claim", {"claim_id": 1})["output"]["status"] == "approved"
@@ -348,3 +351,97 @@ def test_held_refund_is_paid_when_retried_after_approval_even_from_a_new_request
     assert second["paid"] == 1 and second["held"] == 0
     assert keys[0] == keys[1]  # 처리를 요청한 사건이 달라도 같은 키
     assert call(client, "get_claim", {"claim_id": 1})["output"]["status"] == "completed"
+
+
+# ---------------------------------------------------------------- 화면용 필드 (영수증·메모·큐)
+def test_claim_carries_receipt_snapshot_computed_from_order(client: TestClient) -> None:
+    receipt = create(client)["output"]["receipt"]
+    assert receipt["order_no"] == "ORD-2026-0101"
+    assert (receipt["items_total"], receipt["shipping_fee"], receipt["paid_amount"]) == (
+        30000,
+        3000,
+        33000,
+    )
+    assert receipt["delivered_at"] == "2026-10-14T00:00:00Z"
+    points = create(client, key="k-2", order_id=102, user_id=2, type="cancel", reason="other")
+    p = points["output"]["receipt"]
+    assert (p["items_total"], p["points_used"], p["paid_amount"]) == (10000, 1000, 12000)
+
+
+def test_notes_are_stored_from_untrusted_only(client: TestClient) -> None:
+    claim_id = create(client)["output"]["id"]
+    decided = call(
+        client,
+        "decide_claim",
+        {"claim_id": claim_id, "decision": "approve"},
+        {"note": "  사진 확인함  "},
+        key="k-d",
+    )["output"]
+    assert decided["agent_note"] == "사진 확인함"
+    approve = [a for a in decided["audit"] if a["action"] == "approve"][0]["detail"]
+    assert approve["system_outcome"] == "needs_review" and approve["agent_action"] == "approve"
+    received = call(
+        client,
+        "receive_return",
+        {"claim_id": claim_id, "inspection": "fail"},
+        {"note": "상품 상태 다름"},
+        key="k-r",
+    )["output"]
+    assert received["inspection_note"] == "상품 상태 다름"
+
+
+def test_queue_entry_has_screen_fields_and_screen_blocker_codes(client: TestClient) -> None:
+    claim_id = create(client)["output"]["id"]
+    call(client, "decide_claim", {"claim_id": claim_id, "decision": "approve"}, key="k-d")
+    call(client, "receive_return", {"claim_id": claim_id}, key="k-r")
+    entry = call(client, "claim_queue")["output"]["queue"][0]
+    assert entry["blockers"][0]["code"] == "NOT_INSPECTED"
+    assert entry["received_at"]
+    assert entry["items"] == [
+        {"title": "고양이의 하루", "qty": 1},
+        {"title": "탁상 달력", "qty": 1},
+    ]
+    call(client, "inspect_return", {"claim_id": claim_id, "inspection": "partial"}, key="k-i")
+    entry = call(client, "claim_queue")["output"]["queue"][0]
+    assert entry["blockers"][0]["code"] == "ON_HOLD"
+
+
+def test_pay_and_decide_audit_details_match_screen(client: TestClient) -> None:
+    result = create(client, order_id=102, user_id=2, type="cancel", reason="change_of_mind")
+    assert result["output"]["audit"][0]["detail"]["abuse_score"] == 0
+    call(client, "process_claim_queue", {}, key="k-p")
+    audit = call(client, "get_claim", {"claim_id": 1})["output"]["audit"]
+    pay = [a for a in audit if a["action"] == "pay"][0]["detail"]
+    assert pay["refund_cash"] == 12000 and pay["compensation"] == 0
+
+
+def test_stats_count_agent_reviews(client: TestClient) -> None:
+    claim_id = create(client)["output"]["id"]
+    call(client, "decide_claim", {"claim_id": claim_id, "decision": "reject"}, key="k-d")
+    stats = call(client, "claim_stats")["output"]
+    assert stats["agent_reviews"] == 1 and stats["agent_overrides"] == 0
+
+
+def test_inspection_without_note_keeps_the_note_left_at_receive(client: TestClient) -> None:
+    claim_id = create(client)["output"]["id"]
+    call(client, "decide_claim", {"claim_id": claim_id, "decision": "approve"}, key="k-d")
+    call(
+        client,
+        "receive_return",
+        {"claim_id": claim_id, "inspection": "fail"},
+        {"note": "상품 상태 다름"},
+        key="k-r",
+    )
+    after = call(client, "inspect_return", {"claim_id": claim_id, "inspection": "pass"}, key="k-i")[
+        "output"
+    ]
+    assert after["inspection"] == "pass"
+    assert after["inspection_note"] == "상품 상태 다름"  # 메모 없이 결과만 바꿔도 지워지지 않는다
+    newer = call(
+        client,
+        "inspect_return",
+        {"claim_id": claim_id, "inspection": "partial"},
+        {"note": "일부만 정상"},
+        key="k-i2",
+    )["output"]
+    assert newer["inspection_note"] == "일부만 정상"  # 새 메모가 있으면 바뀐다
