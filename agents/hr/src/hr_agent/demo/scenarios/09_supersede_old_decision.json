@@ -1,0 +1,55 @@
+{
+  "title": "새 결정이 옛 결정을 대체",
+  "description": "같은 영역(payment)의 새 결정이 옛 결정을 바꾸면 옛 카드는 superseded가 되고 새 카드와 연결된다.",
+  "steps": [
+    {
+      "label": "옛 결정",
+      "skill": "record_case",
+      "requester": "planning",
+      "input": {
+        "context_id": "ctx_req_0200",
+        "kind": "spec_confirmed",
+        "summary": "결제 재시도를 최대 2회로 확정했다",
+        "decision_reason": "중복 결제 위험을 줄이기 위해",
+        "alternatives_considered": [
+          "재시도 없음",
+          "무제한 재시도"
+        ],
+        "source_refs": [
+          "pr:412",
+          "area:payment"
+        ],
+        "author": "planning"
+      },
+      "expect": {
+        "status": "completed",
+        "outcome": "card_created"
+      }
+    },
+    {
+      "label": "새 결정",
+      "skill": "record_case",
+      "requester": "planning",
+      "input": {
+        "context_id": "ctx_req_0201",
+        "kind": "spec_confirmed",
+        "summary": "결제 재시도를 최대 3회로 확정했다",
+        "decision_reason": "중복 결제 위험을 줄이기 위해",
+        "alternatives_considered": [
+          "재시도 없음",
+          "무제한 재시도"
+        ],
+        "source_refs": [
+          "pr:430",
+          "area:payment"
+        ],
+        "author": "planning"
+      },
+      "expect": {
+        "status": "completed",
+        "outcome": "card_created",
+        "card_count": 2
+      }
+    }
+  ]
+}

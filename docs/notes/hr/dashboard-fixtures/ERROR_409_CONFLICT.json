@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "CONFLICT",
+    "message": "같은 사건에서 이미 다른 후임으로 요청했다"
+  }
+}
