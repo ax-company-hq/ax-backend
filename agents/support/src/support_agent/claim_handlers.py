@@ -261,6 +261,12 @@ async def process_claim_queue(request: AgentRequest) -> AgentResult:
                 "idempotency_key": f"{claim.context_id}:refund_request:claim:{claim.id}",
             }
         )
+        # 보류되면 담당자가 이 요약을 본다 (safety가 앞 200자를 보류 기록에 담는다). 고객 이름·메모
+        # 같은 외부 입력은 넣지 않고 코드가 아는 사실(금액·ID·유형·사유 코드)만 쓴다.
+        summary = (
+            f"환불 {claim.expected_refund:,}원 · 클레임 {claim.id} · 주문 {claim.order_id}"
+            f" · {claim.type}/{claim.reason}"
+        )
         decision = await execute(
             "refund_request",
             {
@@ -268,6 +274,7 @@ async def process_claim_queue(request: AgentRequest) -> AgentResult:
                 "order_id": claim.order_id,
                 "buyer_id": claim.buyer_id,
                 "refund_amount": claim.expected_refund,
+                "summary": summary,
             },
             meta,
             Evidence(
