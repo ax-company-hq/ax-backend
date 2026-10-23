@@ -368,6 +368,11 @@ class AdminReview(BaseModel):
 
 
 # ---------------------------------------------------------------- 집계
+class KeywordCount(BaseModel):
+    keyword: str
+    count: int
+
+
 class Kpi(BaseModel):
     conversations: int
     by_status: dict[str, int]
@@ -380,6 +385,9 @@ class Kpi(BaseModel):
     avg_first_draft_ms: int | None = None
     drafts_generated: int
     drafts_blocked_by_guard: int
+    by_sentiment: dict[str, int] = Field(default_factory=dict)
+    by_language: dict[str, int] = Field(default_factory=dict)
+    top_keywords: list[KeywordCount] = Field(default_factory=list)
 
 
 class DailyPoint(BaseModel):

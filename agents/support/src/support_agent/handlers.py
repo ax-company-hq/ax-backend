@@ -128,7 +128,7 @@ async def list_inquiries(request: AgentRequest) -> AgentResult:
     parsed = _parse(request, ListInquiriesInput)
     if isinstance(parsed, AgentResult):
         return parsed
-    items = STORE.list(parsed.status)
+    items = STORE.list(parsed.status, parsed.user_id)
     return _done(request, {"items": [i.model_dump(mode="json") for i in items]})
 
 
@@ -137,7 +137,7 @@ async def get_inquiry(request: AgentRequest) -> AgentResult:
     if isinstance(parsed, AgentResult):
         return parsed
     conversation = STORE.get(parsed.inquiry_id)
-    if conversation is None:
+    if conversation is None or _not_owned(conversation, parsed.user_id):
         return _not_found(request, parsed.inquiry_id)
     return _done(request, conversation.model_dump(mode="json"))
 
@@ -213,7 +213,7 @@ async def add_customer_message(request: AgentRequest) -> AgentResult:
     if message is None:
         return _missing_text(request, "message")
     conversation = STORE.get(parsed.inquiry_id)
-    if conversation is None:
+    if conversation is None or _not_owned(conversation, parsed.user_id):
         return _not_found(request, parsed.inquiry_id)
 
     extra = await _notice_sources(request, parsed.notice_id)
@@ -424,13 +424,66 @@ async def _request_coupon(
     return _done(request, output, outcome=reply.outcome, evidence=evidence)
 
 
+def _not_owned(conversation: Any, user_id: int | None) -> bool:
+    """`user_id`가 주어졌는데 그 고객의 문의가 아니면 True (남의 문의는 있는지도 숨긴다)."""
+    return user_id is not None and conversation.user_id != user_id
+
+
+# ---------------------------------------------------------------- 고객 화면 대리 호출(shop-api)
+# shop-api는 로그인한 고객을 대신해 문의를 부른다. 그래서 (1) 고객 본인의 문의만 다루게 `user_id`를
+# 필수로 하고, (2) 내부 분석·초안·상담원 메모가 새지 않게 응답을 고객용 모양으로 줄인다.
+CUSTOMER_GATEWAYS = frozenset({"shop-api"})
+Handler = Callable[[AgentRequest], Awaitable[AgentResult]]
+
+
+def customer_message(message: dict[str, Any]) -> dict[str, Any]:
+    return {k: message.get(k) for k in ("id", "role", "text", "created_at")}
+
+
+def customer_inquiry(data: dict[str, Any]) -> dict[str, Any]:
+    """문의 한 건의 고객용 모양: 제목·상태·주문·메시지 글만 (분석·초안·분류·고객 이름 제외)."""
+    view = {k: data.get(k) for k in ("id", "subject", "status", "order_id", "updated_at")}
+    if "messages" in data:
+        view["messages"] = [customer_message(m) for m in data["messages"]]
+    else:
+        view["preview"] = data.get("preview")
+    return view
+
+
+def _customer_output(output: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(output.get("items"), list):
+        return {"items": [customer_inquiry(i) for i in output["items"]]}
+    if "id" in output and "subject" in output:
+        return customer_inquiry(output)
+    return output  # 실행되지 않음(보류·거부) 같은 결과는 내부 분석이 없다
+
+
+def for_customer_gateway(handler: Handler, *, needs_user: bool) -> Handler:
+    """요청자가 고객 화면 대리 호출(shop-api)이면 본인 범위로 좁히고 응답을 고객용으로 줄인다."""
+
+    async def run(request: AgentRequest) -> AgentResult:
+        if request.meta.requester not in CUSTOMER_GATEWAYS:
+            return await handler(request)
+        user_id = request.input.get("user_id")
+        if needs_user and (not isinstance(user_id, int) or isinstance(user_id, bool)):
+            return error_result(
+                request.meta, TaskStatus.FAILED, "invalid_input", "고객 요청에는 user_id가 필요하다"
+            )
+        result = await handler(request)
+        if result.status != TaskStatus.COMPLETED or result.outcome:
+            return result
+        return result.model_copy(update={"output": _customer_output(result.output)})
+
+    return run
+
+
 HANDLERS = {
-    "list_inquiries": list_inquiries,
-    "get_inquiry": get_inquiry,
+    "list_inquiries": for_customer_gateway(list_inquiries, needs_user=True),
+    "get_inquiry": for_customer_gateway(get_inquiry, needs_user=True),
     "check_reply": check_reply,
     "summarize_inquiry": summarize_inquiry,
-    "create_inquiry": create_inquiry,
-    "add_customer_message": add_customer_message,
+    "create_inquiry": for_customer_gateway(create_inquiry, needs_user=False),
+    "add_customer_message": for_customer_gateway(add_customer_message, needs_user=True),
     "send_reply": send_reply,
     "reject_draft": reject_draft,
     "set_inquiry_status": set_inquiry_status,

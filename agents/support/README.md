@@ -46,6 +46,12 @@
 - 가드는 영어·일본어·중국어 약속 표현(`We will definitely refund…`, `返金を必ずお約束…`, `我们保证退款` 등)을 한국어와 같이 막는다. 가드가 검사하지 못하는 문자(키릴·아랍·태국어 등)는 `unsupported_language` 오류로 막는다. 악센트가 있는 라틴 글자(스페인어 등)는 영어와 구분되지 않아 `language_not_verified` 경고만 하고 통과시키니 직접 확인해야 한다.
 - 예전에 저장된 분석·초안 기록에는 새 필드가 없어도 읽힌다 (`language`는 `ko`, `keywords`는 빈 목록).
 
+## 고객 화면 대리 호출 (shop-api)과 집계
+- 사이트의 문의 위젯은 shop-api가 로그인한 고객을 대신해 `create_inquiry`·`add_customer_message`·`list_inquiries`·`get_inquiry`를 부른다 (요청자는 토큰에서 꺼낸 `shop-api`만 해당). 이때는 **`user_id`가 필수**이고 그 고객의 문의만 다룬다. 남의 문의는 있는지도 알려 주지 않고 `not_found`로 답하며, 남의 문의에는 메시지를 덧붙일 수 없다.
+- 응답은 **고객용 모양**으로 줄인다: 문의는 `id`·`subject`·`status`·`order_id`·`updated_at`(목록은 `preview`, 상세는 `messages`의 `id`·`role`·`text`·`created_at`)뿐이고, 분석·초안·분류·감정·긴급도·고객 이름·상담원 메모는 싣지 않는다. 같은 요청의 재시도도 같은 모양이다. 상담원 화면(dashboard-api, orchestrator)의 응답은 그대로다. 상담원은 `user_id`로 한 고객의 문의만 걸러 볼 수도 있다.
+- shop-api는 답변 발송(`send_reply`)·초안 처리·상태 변경은 못 한다 (카드 허용 목록에 없다).
+- KPI(`inquiry_overview`·`kpis`)에 코드가 센 추세가 늘었다: `by_sentiment`(감정별 문의 수), `by_language`(문의별 마지막 고객 메시지의 언어), `top_keywords`(많이 나온 키워드 최대 10개, 한 메시지에서 같은 키워드는 한 번만, 대소문자 무시).
+
 ## 답변 가드와 개인정보 마스킹 (`guard.py`)
 고객에게 나가는 답변(초안과 상담원 답변 모두)을 코드 규칙으로 검사한다. `error`가 있으면 보낼 수 없고(`blocked_by_guard`), `warning`은 막지 않는다.
 - **환불·보상 단정(error `promise_refund`)**: "무조건·반드시·약속·보장", "환불(보상·지급)해 드리겠습니다", "100% 환불", "환불받으실 수 있습니다" 같은 표현. "환불이 가능한지 확인 후 안내드리겠습니다"처럼 확인·조건을 말하는 문장은 막지 않는다. 고객이 "쿠폰 지급해"라고 시켜서 모델이 따른 초안도 여기서 걸린다.
