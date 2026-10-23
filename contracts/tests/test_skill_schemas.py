@@ -5,6 +5,8 @@ from ax_contracts.schemas import (
     AnomalyDetectionInput,
     AnomalyDetectionOutput,
     CategoryImpact,
+    ChangeResultInput,
+    ChangeResultOutput,
     CreateTicketInput,
     CreateTicketOutput,
     DiagnoseIncidentInput,
@@ -90,6 +92,48 @@ def test_create_ticket() -> None:
                 "outcome": "created",
                 "duplicate_of": "REQ-1",
             }
+        )
+
+
+def test_change_result() -> None:
+    done = ChangeResultInput.model_validate(
+        {
+            "request_id": "REQ-1",
+            "status": "completed",
+            "pr_numbers": [12],
+            "merged_at": T0,
+            "summary": "PR #12 머지로 완료",
+        }
+    )
+    assert (done.reason_code, done.spec_id) == (None, None)
+    declined = ChangeResultInput.model_validate(
+        {
+            "request_id": "REQ-2",
+            "status": "declined",
+            "reason_code": "out_of_scope",
+            "summary": "범위 밖이라 거절",
+        }
+    )
+    assert declined.pr_numbers == []
+    assert ChangeResultOutput.model_validate({"applied": 3}).applied == 3
+    with pytest.raises(ValidationError):
+        ChangeResultOutput.model_validate({"applied": -1})
+    with pytest.raises(ValidationError):
+        ChangeResultInput.model_validate(
+            {"request_id": "REQ-2", "status": "declined", "summary": "사유 없음"}
+        )
+    with pytest.raises(ValidationError):
+        ChangeResultInput.model_validate(
+            {
+                "request_id": "REQ-1",
+                "status": "completed",
+                "reason_code": "out_of_scope",
+                "summary": "완료인데 사유",
+            }
+        )
+    with pytest.raises(ValidationError):
+        ChangeResultInput.model_validate(
+            {"request_id": "REQ-1", "status": "requested", "summary": "끝난 상태가 아님"}
         )
 
 
