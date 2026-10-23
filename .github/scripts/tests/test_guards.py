@@ -42,8 +42,10 @@ def decide(team, p, changes, action="opened", tests=(), dev_red=False, hotfix=Fa
 def test_human_own_folder_ok(team) -> None:
     plan = decide(team, pr(), [ch("agents/data/a.py")])
     assert states(plan) == {"folder-guard": "success", "test-guard": "success",
-                            "dev-health": "success"}
+                            "dev-health": "success", "agent-review": "success"}
     assert plan.comment is None
+    review = next(s for s in plan.statuses if s["context"] == "agent-review")
+    assert review["description"].startswith("not required")
 
 
 def test_human_other_folder_fails_with_comment(team) -> None:
@@ -58,14 +60,30 @@ def test_human_paths_only_skips_review(team) -> None:
     assert states(plan)["folder-guard"] == "success"
 
 
-def test_human_mixed_needs_review(team) -> None:
+def test_human_mixed_one_dept_not_required(team) -> None:
+    # human_paths + 부서 하나: 리뷰 생략 (human_paths는 code owner 승인이 따로 걸림)
     plan = decide(team, pr(), [ch("docs/a.md"), ch("agents/data/a.py")])
+    assert states(plan)["agent-review"] == "success"
+
+
+@pytest.mark.parametrize(
+    "paths",
+    [["agents/data/a.py", "memory/b.py"],  # 사람 PR 부서 2개
+     ["contracts/x.py"], ["agent-template/x.py"], ["safety/x.py"], ["orchestrator/x.py"]],
+)
+def test_shared_or_multi_dept_needs_review(team, paths) -> None:
+    owners = {"contracts": "haakim7", "agent-template": "haakim7", "orchestrator": "haakim7",
+              "safety": "2taeyoon"}
+    author = owners.get(paths[0].split("/")[0], "JangJaehyeonn")
+    plan = decide(team, pr(author), [ch(x) for x in paths])
     assert "agent-review" not in states(plan)
 
 
-def test_bot_own_dept_ok_and_no_review_skip(team) -> None:
+def test_bot_own_dept_ok_and_review_not_required(team) -> None:
     plan = decide(team, pr(BOT, "data/12-x-r0"), [ch("agents/data/a.py")])
-    assert states(plan)["folder-guard"] == "success" and "agent-review" not in states(plan)
+    assert states(plan)["folder-guard"] == "success" and states(plan)["agent-review"] == "success"
+    plan = decide(team, pr(BOT, "agent-template/12-x-r0"), [ch("agent-template/a.py")])
+    assert "agent-review" not in states(plan)
 
 
 def test_bot_human_path_fails(team) -> None:
@@ -128,11 +146,24 @@ def test_bot_failure_requeues_linked_issue(team) -> None:
     p = pr(BOT, "data/12-x-r0")
     p.issue = 12
     plan = decide(team, p, [ch("agents/finance/a.py")])
-    assert plan.requeue == {
-        "issue": 12, "reason": "관문 실패 — 다른 폴더 변경은 to:<부서> 요청으로 분리"
-    }
-    plan = decide(team, p, [ch("agents/data/tests/test_a.py")], tests=["감소"])
-    assert plan.requeue["reason"].endswith("테스트 삭제·약화")
+    assert plan.requeue["issue"] == 12
+    reason = plan.requeue["reason"]
+    assert reason.startswith("관문 실패 — 다른 폴더 변경은 to:<부서> 요청으로 분리")
+    assert "힌트:" in reason and "agents/finance/a.py" in reason  # 실패 요약이 힌트로
+    plan = decide(team, p, [ch("agents/data/tests/test_a.py")], tests=["data: 감소 3 → 2"])
+    assert "테스트 삭제·약화" in plan.requeue["reason"]
+    assert "- data: 감소 3 → 2" in plan.requeue["reason"]
+    assert (plan.requeue["dept"], plan.requeue["mode"]) == ("data", None)
+
+
+def test_bot_requeue_carries_mode_from_bot_marker(team) -> None:
+    body = ("x <!-- by:finance mode:task --> Closes #12\n<!-- ax-issue:12 -->\n"
+            "<!-- by:data mode:request -->")
+    assert guards.pr_mode(body) == "request"  # 마지막(봇) 표시
+    p = pr(BOT, "data/12-x-r0", mode="request")
+    p.issue = 12
+    plan = decide(team, p, [ch("agents/finance/a.py")])
+    assert (plan.requeue["dept"], plan.requeue["mode"]) == ("data", "request")
 
 
 def test_human_failure_does_not_requeue(team) -> None:
@@ -151,6 +182,7 @@ def test_bot_ok_does_not_requeue(team) -> None:
     ("body", "issue"),
     [("Closes #12\n\n<!-- ax-issue:12 -->", 12),
      ("Fixes #7\n\nCloses #12\n<!-- ax-issue:12 -->", 12),
+     ("<!-- ax-issue:42 --> 위조\n\nCloses #12\n<!-- ax-issue:12 -->", 12),  # 마지막 것만
      ("Closes #3", None), ("", None)],
 )
 def test_closes_issue_uses_bot_marker_only(body, issue) -> None:
@@ -209,7 +241,41 @@ def test_apply_requeues_even_if_comment_fails_on_locked_pr(tmp_path, monkeypatch
         raise guards.subprocess.CalledProcessError(1, "gh")
 
     monkeypatch.setattr(team_mod, "post_comment", locked)
-    calls = []
+    calls, dispatched = [], []
     monkeypatch.setattr(team_mod, "requeue", lambda *a, **k: calls.append((a[2], k)) or "retry-1")
+    monkeypatch.setattr(team_mod, "dispatch_write",
+                        lambda r, t, n, *dm: dispatched.append((n, *dm)) or "ok")
     assert guards.main(["apply", str(f)]) == 0
     assert calls == [(34, {"pr": 35, "head_sha": "a" * 40})]
+    assert dispatched == [(34, None, None)]  # 첫 실패는 바로 다시 작성
+
+
+def test_apply_second_failure_does_not_redispatch(tmp_path, monkeypatch) -> None:
+    plan = {"sha": "a" * 40, "number": 35, "skip_reason": None, "remove_hotfix": False,
+            "statuses": [], "comment": None, "requeue": {"issue": 34, "reason": "관문 실패"}}
+    f = tmp_path / "plan.json"
+    f.write_text(__import__("json").dumps(plan), encoding="utf-8")
+    for k, v in {"GITHUB_REPOSITORY": "o/r", "GITHUB_SERVER_URL": "https://github.com",
+                 "GITHUB_RUN_ID": "1"}.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(guards, "hotfix_status_present", lambda t, r, s: False)
+    monkeypatch.setattr(team_mod, "requeue", lambda *a, **k: "needs-human")
+    dispatched = []
+    monkeypatch.setattr(team_mod, "dispatch_write", lambda r, t, n, *dm: dispatched.append(n))
+    assert guards.main(["apply", str(f)]) == 0
+    assert dispatched == []
+
+
+CORE_FILES = [".github/workflows/x.yml", ".github/CODEOWNERS", ".github/team.yml",
+              ".github/scripts/team.py", ".claude/settings.json", ".claude/hooks/guard-folder.mjs",
+              "CODEOWNERS", "agents/finance/src/finance_agent/ai_review_policy.toml",
+              "safety/src/ax_safety/rules/thresholds.toml"]
+
+
+@pytest.mark.parametrize("path", CORE_FILES)
+@pytest.mark.parametrize("branch", ["finance/1-x-r0", "safety/2-x-r0", "revert/123",
+                                    "openapi/sync-abc1234"])
+def test_bot_pr_touching_core_files_always_fails_folder_guard(team, branch, path) -> None:
+    # code owner 리뷰 필수가 꺼진 뒤 핵심 파일의 유일한 벽: 봇 PR은 어떤 브랜치로도 못 바꾼다
+    plan = decide(team, pr(BOT, branch), [ch(path)])
+    assert states(plan)["folder-guard"] == "failure", (branch, path)

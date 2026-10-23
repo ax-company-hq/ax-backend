@@ -18,7 +18,8 @@ class RecordKind(StrEnum):
     """`record_case`로 보내는 기록의 종류.
 
     `rollback_executed`는 infra가, `spec_confirmed`·`pr_merged`·`decision_extracted`·
-    `request_closed`는 planning이 보낸다.
+    `request_closed`·`decision_rejected`는 planning이 보낸다. `decision_rejected`(기각한 안)는
+    hr `check_plan`이 "과거에 기각된 안"을 판정하는 재료라서 기각 이유와 검토한 대안을 함께 보낸다.
     """
 
     INCIDENT = "incident"
@@ -30,6 +31,7 @@ class RecordKind(StrEnum):
     PR_MERGED = "pr_merged"
     DECISION_EXTRACTED = "decision_extracted"
     REQUEST_CLOSED = "request_closed"
+    DECISION_REJECTED = "decision_rejected"
 
 
 class RecordCase(AxModel):
@@ -43,6 +45,7 @@ class RecordCase(AxModel):
     alternatives_considered: list[str] = Field(default_factory=list)
     source_refs: list[str] = Field(default_factory=list)
     author: str
+    area: str | None = None  # 담당 영역(`RosterEntry.area`와 같은 값 집합). 없으면 미지정
 
 
 class Card(AxModel):
@@ -51,6 +54,8 @@ class Card(AxModel):
     - `status`: 새 결정이 기존 결정을 바꾸면 기존 카드는 `superseded`가 되고
       `superseded_by`에 새 카드 ID를 적는다.
     - `confidence`: 자동 추출의 확신도. 낮으면 확정하지 않고 후보로 둔다.
+    - `candidate`: 사람 확인을 기다리는 후보 카드면 true, 사람이 승인하면 false가 된다.
+      후보 카드는 판정 근거로 쓰지 않는다(`status`는 그대로 `active`다).
     """
 
     card_id: str
@@ -66,6 +71,7 @@ class Card(AxModel):
     author: str
     confidence: Literal["low", "mid", "high"]
     created_at: UtcDatetime
+    candidate: bool = False
     extra: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")

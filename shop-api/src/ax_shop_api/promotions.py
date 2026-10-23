@@ -30,6 +30,7 @@ class Promotions:
         text: str,
         valid_from: datetime | None,
         valid_to: datetime | None,
+        context_id: str | None = None,
     ) -> dict[str, Any]:
         """공지를 배너로 게시한다. 같은 `notice_id`를 다시 게시하면 이전 배너를 그대로 돌려준다."""
         with self.db.tx() as conn:
@@ -38,13 +39,14 @@ class Promotions:
             ).fetchone()
             if existing is None:
                 conn.execute(
-                    "INSERT INTO banners VALUES (?, ?, 'active', ?, ?, ?, NULL, ?, NULL)",
+                    "INSERT INTO banners VALUES (?, ?, 'active', ?, ?, ?, ?, ?, NULL)",
                     (
                         notice_id,
                         text,
                         _iso(valid_from) if valid_from else None,
                         _iso(valid_to) if valid_to else None,
                         TENANT_ID,
+                        context_id,
                         _iso(self.now()),
                     ),
                 )
@@ -79,7 +81,16 @@ class Promotions:
 
     @staticmethod
     def _banner(row: Any) -> dict[str, Any]:
-        keys = ("notice_id", "text", "status", "valid_from", "valid_to", "created_at", "ended_at")
+        keys = (
+            "notice_id",
+            "text",
+            "status",
+            "valid_from",
+            "valid_to",
+            "context_id",
+            "created_at",
+            "ended_at",
+        )
         return {key: row[key] for key in keys}
 
     # --- 쿠폰 ---------------------------------------------------------------
@@ -91,6 +102,7 @@ class Promotions:
         count: int,
         unit_value: int,
         campaign_id: str | None,
+        context_id: str | None = None,
     ) -> tuple[dict[str, Any], bool]:
         """쿠폰을 발급한다. 총액은 건수×단가로 코드가 계산한다.
 
@@ -123,7 +135,7 @@ class Promotions:
                 raise ShopError("BUYER_NOT_FOUND", "구매자를 찾을 수 없다", 404)
             coupon_id = self.db.next_id(conn, "coupon", "cpn_")
             conn.execute(
-                "INSERT INTO coupons VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)",
+                "INSERT INTO coupons VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     coupon_id,
                     buyer_id,
@@ -134,6 +146,7 @@ class Promotions:
                     total,
                     idempotency_key,
                     TENANT_ID,
+                    context_id,
                     _iso(self.now()),
                 ),
             )
@@ -169,6 +182,7 @@ class Promotions:
             "count",
             "unit_value",
             "total_value",
+            "context_id",
             "created_at",
         )
         return {key: row[key] for key in keys}

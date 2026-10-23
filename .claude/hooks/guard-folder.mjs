@@ -158,6 +158,18 @@ function main() {
     }
   }
 
+  // 부서 폴더 안의 사람 전용 파일 (team.json human_files: 기준표·AI 재량 한도)
+  if (hit.forbid) {
+    const rel = relInside(root, abs);
+    if (rel) {
+      const norm = (p) => p.split('/').map((s) => s.replace(/[. ]+$/, '').split(':')[0]).join('/').toLowerCase();
+      const relPath = norm(rel.join('/'));
+      if ((team.human_files || []).some((f) => norm(f) === relPath)) {
+        return block(`${target}: 부서 폴더 안이지만 사람만 바꾸는 파일입니다 (team.yml human_files). 사람 PR로 code owner 승인을 받으세요.`);
+      }
+    }
+  }
+
   // 심볼릭 링크/정션 차단
   try {
     if (hasLink(hit.linkBase, abs)) return block(`${target}: 심볼릭 링크/정션이 개입된 경로라 차단합니다.`);

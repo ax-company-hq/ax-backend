@@ -60,7 +60,7 @@ def test_list_calls_list_inquiries(client: TestClient, fake: Fake) -> None:
     assert body["meta"]["total"] == 1
     sent = fake.sent[0]
     assert sent.skill == "list_inquiries"
-    assert sent.meta.context_id.startswith("ctx_req_")
+    assert sent.meta.context_id.startswith(support_client.UI_CONTEXT_PREFIX)
     assert sent.meta.token == "test-token"
     assert sent.meta.idempotency_key is None
 
@@ -143,6 +143,22 @@ def test_status_change_uses_execute_target_key(client: TestClient, fake: Fake) -
 
 
 def test_other_routes_still_require_mock(client: TestClient, fake: Fake) -> None:
-    response = client.get(BASE + "/claims")
+    response = client.get(BASE + "/reviews")  # 아직 support가 없는 경로
     assert response.status_code == 503
     assert fake.sent == []
+
+
+def test_ui_contexts_never_use_a_prefix_owned_by_another_department(
+    client: TestClient, fake: Fake
+) -> None:
+    """`ctx_req_`는 기획개발이 발급하는 변경 요청 사건이다. 화면 호출이 이를 흉내 내면 안 된다."""
+    from ax_contracts.schemas.ids import ContextPrefix
+
+    fake.output = {"items": []}
+    for _ in range(3):
+        client.get(BASE + "/conversations")
+    contexts = [req.meta.context_id for req in fake.sent]
+    assert len(set(contexts)) == 3  # 호출마다 새 사건
+    for context in contexts:
+        assert context.startswith(support_client.UI_CONTEXT_PREFIX)
+        assert not any(context.startswith(reserved.value) for reserved in ContextPrefix)

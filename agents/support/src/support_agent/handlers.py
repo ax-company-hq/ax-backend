@@ -23,7 +23,7 @@ from ax_agent_template.client import call_agent
 from ax_agent_template.execute import execute
 from ax_agent_template.server import error_result
 from ax_contracts.schemas import AgentRequest, AgentResult, Evidence, TaskStatus
-from support_agent import compensation, drafting, guard, notices
+from support_agent import compensation, drafting, events, guard, notices, persistence
 from support_agent.schemas import (
     AddCustomerMessageInput,
     CheckReplyInput,
@@ -37,12 +37,13 @@ from support_agent.schemas import (
     Source,
     SummarizeInquiryInput,
 )
-from support_agent.store import InquiryStore
 
 logger = logging.getLogger("ax.support.handlers")
 
-STORE = InquiryStore()
-LEDGER = compensation.SequenceLedger()
+STORE = persistence.build_inquiry_store()
+LEDGER = persistence.build_sequence_ledger()
+# 문의와 기획개발 변경 요청의 연결. 요청·결과 skill은 계약이 정해진 뒤 붙인다 (change_requests.py)
+CHANGES = persistence.build_change_request_store()
 SEND = call_agent  # 테스트에서 바꿀 수 있다
 
 
@@ -196,6 +197,7 @@ async def create_inquiry(request: AgentRequest) -> AgentResult:
             first_message=message,
             analysis=analysis,
         )
+        await events.emit_inquiry_received(request, conversation)
         return conversation.model_dump(mode="json"), fallback
 
     return await _write(
@@ -218,9 +220,9 @@ async def add_customer_message(request: AgentRequest) -> AgentResult:
 
     async def apply() -> tuple[dict[str, Any], bool]:
         analysis, fallback = await drafting.analyze(message, conversation.subject, extra)
-        return STORE.add_customer_message(parsed.inquiry_id, message, analysis).model_dump(
-            mode="json"
-        ), fallback
+        updated = STORE.add_customer_message(parsed.inquiry_id, message, analysis)
+        await events.emit_inquiry_received(request, updated)
+        return updated.model_dump(mode="json"), fallback
 
     return await _write(
         request,
@@ -256,6 +258,7 @@ async def send_reply(request: AgentRequest) -> AgentResult:
             edited = parsed.draft_text is not None and draft != text
             STORE.draft_events.append(
                 {
+                    "context_id": request.meta.context_id,
                     "inquiry_id": parsed.inquiry_id,
                     "style": parsed.draft_style,
                     "result": "edited" if edited else "accepted",
@@ -285,7 +288,12 @@ async def reject_draft(request: AgentRequest) -> AgentResult:
 
     async def apply() -> tuple[dict[str, Any], bool]:
         STORE.draft_events.append(
-            {"inquiry_id": parsed.inquiry_id, "style": parsed.draft_style, "result": "rejected"}
+            {
+                "context_id": request.meta.context_id,
+                "inquiry_id": parsed.inquiry_id,
+                "style": parsed.draft_style,
+                "result": "rejected",
+            }
         )
         return {"inquiry_id": parsed.inquiry_id, "draft_style": parsed.draft_style}, False
 
