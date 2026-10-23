@@ -1,0 +1,7 @@
+# 공통 로그(COM-08, #249)를 safety에 연결한다. infra/compose.yml의 include가 서비스 compose 뒤에 합친다.
+services:
+  safety:
+    environment:
+      AX_COMMON_LOG_DB: /common-log/common_log.db
+    volumes:
+      - common-log:/common-log
