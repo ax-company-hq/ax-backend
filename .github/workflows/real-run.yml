@@ -7,7 +7,7 @@ name: real-run
 #  - 트리거는 schedule, workflow_dispatch뿐이다. pull_request 계열·issue 계열 트리거를 쓰지 않는다
 #  - 수동 실행은 code owner만 (guard job이 CODEOWNERS로 확인, 실패하면 서버 PC job이 시작되지 않는다)
 #  - checkout은 항상 dev 하나. 외부 코드는 서버 PC에 닿지 않는다
-#  - 키는 서버 PC의 .env에만 있다. 워크플로에 secrets를 넣지 않고 환경변수를 출력하지 않는다
+#  - 키는 서버 PC의 .env에만 있다 (위치는 runner 환경변수 AX_REAL_ENV_FILE, 작업 폴더 밖만 허용; 실행 중에만 작업 폴더로 복사하고 항상 지운다). 워크플로에 secrets를 넣지 않고 환경변수를 출력하지 않는다
 #  - 이 라벨을 다른 워크플로가 쓰면 automation-tests가 실패한다 (real_guard.py check-runner-label)
 # 설치·끄는 법: docs/automation/self-hosted-runner.md
 on:
@@ -70,7 +70,7 @@ jobs:
           EVENT: ${{ github.event_name }}
         run: python .github/scripts/real_guard.py check-actor --actor "$ACTOR" --event "$EVENT"
       - name: 의존성
-        run: uv sync --all-packages
+        run: uv sync --all-packages --locked
       - name: 실서버 실행 (up -> 헬스 -> 결제 장애 -> e2e real -> down -v)
         id: real
         env:
@@ -103,7 +103,10 @@ jobs:
       - name: 정리 (항상 ax-real 프로젝트만 down -v, 상시 스택은 건드리지 않음)
         if: always()
         continue-on-error: true
-        run: docker compose -p ax-real -f infra/compose.yml down -v --remove-orphans
+        run: python .github/scripts/real_run.py cleanup
+      - name: 작업 폴더 .env 삭제 (항상)
+        if: always()
+        run: python -c "import pathlib; pathlib.Path('.env').unlink(missing_ok=True)"
 
   follow:
     # mock pass / real fail 단계 -> 담당 부서 이슈 (real_follow.py, AX_REAL_RUN=on일 때만)

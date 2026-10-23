@@ -8,8 +8,14 @@
   real_run.py record [--out DIR]
       Playwright로 `/`와 `/admin/`을 오가며 녹화한다. 게이트웨이가 없으면 조용히 건너뛴다.
 
+  real_run.py cleanup
+      워크플로 마지막 정리 (ax-real 프로젝트 down -v, 복사한 작업 폴더 .env 삭제).
+
 규칙
-- 키는 서버 PC `.env`에만 있다. 이 스크립트는 `.env`에서 `*_TOKEN`과 AX_ZABBIX_URL 이름만 골라 읽어
+- 키는 서버 PC `.env`에만 있다. 위치는 환경변수 AX_REAL_ENV_FILE (작업 폴더 밖 파일만 허용).
+  run은 compose up 직전에 그 파일을 작업 폴더 `.env`로 복사하고(compose가 읽는다), 성공·실패·예외와
+  상관없이 끝에서 복사본을 지운다. 이 스크립트는 `.env`에서
+  `*_TOKEN`과 AX_ZABBIX_URL 이름만 골라 읽어
   e2e 프로세스·Zabbix 확인에만 넘긴다. 값은 출력하지 않고, 환경 전체를 찍지 않는다.
 - compose 프로젝트는 `-p ax-real`로 상시 스택(ax-backend)과 분리한다. 상시 스택이 떠 있으면
   실행하지 않고 실패로 끝낸다. `down -v`는 ax-real 프로젝트(공통 로그 볼륨 포함)만 지운다.
@@ -35,7 +41,9 @@ ROOT = Path(__file__).resolve().parents[2]
 # -p로 분리해야 up --build가 상시 컨테이너를 덮어쓰지 않고 down -v가 상시 볼륨을 지우지 않는다
 PROJECT = "ax-real"
 STANDING_PROJECT = "ax-backend"
-COMPOSE = ["docker", "compose", "-p", PROJECT, "-f", "infra/compose.yml"]
+LOOPBACK = ".github/real-run/compose.loopback.yml"  # 포트를 127.0.0.1에만 여는 override
+COMPOSE = ["docker", "compose", "-p", PROJECT, "-f", "infra/compose.yml", "-f", LOOPBACK]
+ENV_FILE_VAR = "AX_REAL_ENV_FILE"
 STANDING_PS = ["docker", "compose", "-p", STANDING_PROJECT, "-f", "infra/compose.yml", "ps", "-q"]
 # CLAUDE.md 포트 표 (헬스: GET /health)
 HEALTH_PORTS: dict[str, int] = {
@@ -114,6 +122,64 @@ def read_env_file(path: Path) -> dict[str, str]:
             wanted[key] = value
             mask(value)
     return wanted
+
+
+class EnvFileError(Exception):
+    """AX_REAL_ENV_FILE 문제. 메시지에는 경로·내용을 넣지 않는다."""
+
+
+def _inside(path: Path, base: Path) -> bool:
+    try:
+        path.relative_to(base)
+    except ValueError:
+        return False
+    return True
+
+
+def resolve_env_source(raw: str | None, root: Path | None = None) -> Path:
+    """AX_REAL_ENV_FILE 검사 후 실제 경로를 돌려준다. 작업 폴더 안·링크·없는 파일은 거부."""
+    root = (root or ROOT).resolve()
+    if not raw or not raw.strip():
+        raise EnvFileError(f"{ENV_FILE_VAR} 미설정 - self-hosted-runner.md 확인")
+    given = Path(raw.strip())
+    if not given.is_absolute():
+        raise EnvFileError(f"{ENV_FILE_VAR}는 절대 경로여야 함")
+    bases = [root]
+    workspace = os.getenv("GITHUB_WORKSPACE")
+    if workspace:
+        bases.append(Path(workspace).resolve())
+    try:
+        resolved = given.resolve(strict=True)
+        link = given.is_symlink()
+    except (OSError, RuntimeError):
+        raise EnvFileError("env 파일이 없거나 읽을 수 없음") from None
+    if link or resolved != Path(os.path.realpath(given)):
+        raise EnvFileError("env 파일이 심볼릭 링크임 - 실제 파일 경로를 지정할 것")
+    for base in bases:
+        if _inside(given, base) or _inside(resolved, base):
+            raise EnvFileError("env 파일이 작업 폴더 안에 있음 - 작업 폴더 밖 경로만 허용")
+    if not resolved.is_file():
+        raise EnvFileError("env 파일이 일반 파일이 아님")
+    return resolved
+
+
+def install_env_copy(source: Path, root: Path | None = None) -> Path:
+    """검증된 서버 PC .env를 작업 폴더 .env로 복사한다 (compose env_file이 읽는다)."""
+    dest = (root or ROOT) / ".env"
+    remove_env_copy(root)  # 남은 파일·링크는 따라가지 않고 먼저 지운다
+    shutil.copyfile(source, dest)
+    return dest
+
+
+def remove_env_copy(root: Path | None = None) -> None:
+    """작업 폴더 .env를 지운다 (없으면 조용히 넘어감)."""
+    dest = (root or ROOT) / ".env"
+    try:
+        dest.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        log("작업 폴더 .env 삭제 실패 - 서버 PC에서 직접 지울 것")
 
 
 def zabbix_reachable(url: str | None, timeout: float = ZABBIX_TIMEOUT) -> tuple[bool, str]:
@@ -252,7 +318,27 @@ def cmd_run(args: argparse.Namespace) -> int:
             encoding="utf-8",
         )
         return 1
-    env_file = read_env_file(ROOT / ".env")
+    try:
+        source = resolve_env_source(os.getenv(ENV_FILE_VAR))
+        install_env_copy(source)
+    except (EnvFileError, OSError) as exc:
+        remove_env_copy()
+        log(f"env 파일 사용 불가: {exc if isinstance(exc, EnvFileError) else type(exc).__name__}")
+        (out / "real-detail.json").write_text(
+            json.dumps({"notes": ["env 파일 사용 불가 (자세한 이유는 로그)"], "runs": []},
+                       ensure_ascii=False, indent=1),
+            encoding="utf-8",
+        )
+        return 1
+    log("env 파일: 작업 폴더 밖, 확인됨")
+    try:
+        return run_with_env(args, out, runs, sha, source)
+    finally:
+        remove_env_copy()  # 성공·실패·예외 모두 복사본을 남기지 않는다
+
+
+def run_with_env(args: argparse.Namespace, out: Path, runs: int, sha: str, source: Path) -> int:
+    env_file = read_env_file(source)
     ok, zabbix = zabbix_reachable(os.getenv("AX_ZABBIX_URL") or env_file.get("AX_ZABBIX_URL"))
     detect = "real" if ok else "mock"
     log(f"Zabbix: {zabbix} -> 감지: " + ("실서버" if ok else "목"))
@@ -359,6 +445,19 @@ def cmd_record(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_cleanup(args: argparse.Namespace) -> int:
+    """워크플로 마지막 정리: .env 복사 후 ax-real만 down -v, 복사본은 항상 삭제."""
+    try:
+        try:
+            install_env_copy(resolve_env_source(os.getenv(ENV_FILE_VAR)))
+        except (EnvFileError, OSError):
+            log("정리: env 파일을 쓸 수 없어 복사 없이 down -v를 시도")
+        run_cmd([*COMPOSE, "down", "-v", "--remove-orphans"], timeout=DOWN_TIMEOUT)
+    finally:
+        remove_env_copy()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="real_run.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -366,10 +465,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--runs", default="auto", help="auto(금요일 3회, 그 밖 1회) 또는 1~3")
     p.add_argument("--out", default="real-out")
     p.add_argument("--sha")
+    sub.add_parser("cleanup")
     p = sub.add_parser("record")
     p.add_argument("--out", default="recording")
     args = ap.parse_args(argv)
-    return cmd_run(args) if args.cmd == "run" else cmd_record(args)
+    handlers = {"run": cmd_run, "record": cmd_record, "cleanup": cmd_cleanup}
+    return handlers[args.cmd](args)
 
 
 if __name__ == "__main__":

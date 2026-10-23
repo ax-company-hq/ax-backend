@@ -1,0 +1,47 @@
+# real-run 전용 override: 서비스 포트를 서버 PC의 루프백(127.0.0.1)에만 연다.
+# 기본 infra/compose.yml은 모든 인터페이스에 여는데, 실서버 실행 중 같은 네트워크의 다른 PC가 닿지 않게 한다.
+# 사용: docker compose -p ax-real -f infra/compose.yml -f .github/real-run/compose.loopback.yml ...
+# infra/는 고치지 않는다. 새 서비스·포트가 생기면 여기도 추가한다 (테스트가 빠진 포트를 잡는다).
+services:
+  redis:
+    ports: !override
+      - "127.0.0.1:6379:6379"
+  postgres:
+    ports: !override
+      - "127.0.0.1:5432:5432"
+  orchestrator:
+    ports: !override
+      - "127.0.0.1:8000:8000"
+  safety:
+    ports: !override
+      - "127.0.0.1:8001:8001"
+  memory:
+    ports: !override
+      - "127.0.0.1:8002:8002"
+  shop-api:
+    ports: !override
+      - "127.0.0.1:8010:8010"
+  dashboard-api:
+    ports: !override
+      - "127.0.0.1:8020:8020"
+  planning:
+    ports: !override
+      - "127.0.0.1:8101:8101"
+  support:
+    ports: !override
+      - "127.0.0.1:8102:8102"
+  marketing:
+    ports: !override
+      - "127.0.0.1:8103:8103"
+  hr:
+    ports: !override
+      - "127.0.0.1:8104:8104"
+  finance:
+    ports: !override
+      - "127.0.0.1:8105:8105"
+  data:
+    ports: !override
+      - "127.0.0.1:8106:8106"
+  infra-dejafix:
+    ports: !override
+      - "127.0.0.1:8107:8107"

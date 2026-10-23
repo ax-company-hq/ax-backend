@@ -333,9 +333,231 @@ def test_workflow_hardening_flags() -> None:
     assert text.count("github.triggering_actor") >= 2  # guard + 서버 PC job
     assert text.count("github.ref == ") >= 2  # guard·run 모두 dev ref만
     assert "github.sha" not in text.split("  follow:")[0]  # 서버 PC 쪽은 checkout HEAD를 쓴다
-    assert "always()" in text and "-p ax-real" in text
+    assert "always()" in text
+    assert "real_run.py cleanup" in text  # down -v는 스크립트(COMPOSE)가 한다
     for line in text.splitlines():
         if "uses: actions/" in line:
             ref = line.split("@", 1)[1].split()[0]
             assert len(ref) == 40, line  # 커밋 SHA로 고정
     assert text.count("timeout-minutes:") == 3
+
+
+# ── AX_REAL_ENV_FILE: 서버 PC .env를 작업 폴더로 잠깐 복사 ─────────────
+SENT_TOKEN = "SENTINEL_TOKEN_abc123"
+SENT_LLM = "SENTINEL_LLM_KEY_xyz789"
+SENT_ZBX = "http://SENTINEL-zabbix-host.invalid:9"
+SENTINELS = (SENT_TOKEN, SENT_LLM, "SENTINEL-zabbix-host")
+ENV_BODY = f"SUPPORT_TOKEN={SENT_TOKEN}\nLLM_API_KEY={SENT_LLM}\nAX_ZABBIX_URL={SENT_ZBX}\n"
+
+
+@pytest.fixture
+def space(monkeypatch, tmp_path: Path):
+    """workspace(작업 폴더)와 그 밖의 서버 PC 폴더를 만들고 ROOT를 workspace로 바꾼다."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    outside = tmp_path / "server"
+    outside.mkdir()
+    (outside / ".env").write_text(ENV_BODY, encoding="utf-8")
+    monkeypatch.setattr(run_mod, "ROOT", ws)
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(ws))
+    monkeypatch.setenv("AX_REAL_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setenv("AX_REAL_ENV_FILE", str(outside / ".env"))
+    return ws, outside
+
+
+def test_env_file_outside_workspace_is_accepted(space) -> None:
+    _ws, outside = space
+    assert run_mod.resolve_env_source(str(outside / ".env")) == (outside / ".env").resolve()
+
+
+def test_env_file_inside_workspace_is_rejected(space) -> None:
+    ws, _ = space
+    inner = ws / "sub" / ".env"
+    inner.parent.mkdir()
+    inner.write_text(ENV_BODY, encoding="utf-8")
+    with pytest.raises(run_mod.EnvFileError) as err:
+        run_mod.resolve_env_source(str(inner))
+    assert "작업 폴더 안" in str(err.value) and str(inner) not in str(err.value)
+
+
+def test_env_file_missing_unset_relative_and_directory_are_rejected(space) -> None:
+    _ws, outside = space
+    for raw in (None, "", ".env", str(outside / "nope.env"), str(outside)):
+        with pytest.raises(run_mod.EnvFileError):
+            run_mod.resolve_env_source(raw)
+
+
+def test_env_file_symlink_is_rejected(space) -> None:
+    ws, outside = space
+    (ws / "real.env").write_text(ENV_BODY, encoding="utf-8")
+    link = outside / "link.env"
+    try:
+        link.symlink_to(ws / "real.env")
+    except OSError:
+        pytest.skip("symlink 권한 없음")
+    with pytest.raises(run_mod.EnvFileError):
+        run_mod.resolve_env_source(str(link))
+    other = outside / "target.env"
+    other.write_text(ENV_BODY, encoding="utf-8")
+    link2 = outside / "link2.env"
+    link2.symlink_to(other)
+    with pytest.raises(run_mod.EnvFileError):
+        run_mod.resolve_env_source(str(link2))
+
+
+def fake_run(monkeypatch, calls: list | None = None, boom: bool = False) -> None:
+    """docker, uv, 네트워크 없이 cmd_run을 돌린다. one_run은 결과 파일만 만든다."""
+    monkeypatch.setattr(run_mod.shutil, "which", lambda name: name)
+    monkeypatch.setattr(run_mod, "standing_stack_running", lambda: False)
+    monkeypatch.setattr(
+        run_mod, "zabbix_reachable", lambda url, timeout=10.0: (False, "접속 실패: X")
+    )
+    monkeypatch.setattr(run_mod, "git_head", lambda: "abc")
+
+    def one_run(n, out, sha, env, prev, notes):
+        if calls is not None:
+            calls.append(((run_mod.ROOT / ".env").exists(), dict(env)))
+        if boom:
+            raise RuntimeError("의도된 예외")
+        out.mkdir(parents=True, exist_ok=True)
+        totals = {"real_pass": 1, "total": 1, "real_runs_consecutive": 1}
+        (out / "real-result.json").write_text(json.dumps({"totals": totals}), encoding="utf-8")
+        return {"run": n, "up": True, "unhealthy": [], "e2e_code": 0}
+
+    monkeypatch.setattr(run_mod, "one_run", one_run)
+
+
+def test_copy_exists_during_run_and_is_deleted_after_success(space, monkeypatch, tmp_path) -> None:
+    ws, _ = space
+    calls: list = []
+    fake_run(monkeypatch, calls)
+    args = run_mod.argparse.Namespace(runs="1", out=str(tmp_path / "o"), sha="x")
+    assert run_mod.cmd_run(args) == 0
+    assert calls[0][0] is True  # compose up 시점에는 .env가 있다
+    assert calls[0][1]["SUPPORT_TOKEN"] == SENT_TOKEN  # e2e에는 *_TOKEN만 넘어간다
+    assert "LLM_API_KEY" not in calls[0][1]
+    assert not (ws / ".env").exists()
+
+
+def test_copy_is_deleted_after_exception(space, monkeypatch, tmp_path) -> None:
+    ws, _ = space
+    fake_run(monkeypatch, boom=True)
+    args = run_mod.argparse.Namespace(runs="1", out=str(tmp_path / "o"), sha="x")
+    with pytest.raises(RuntimeError):
+        run_mod.cmd_run(args)
+    assert not (ws / ".env").exists()
+
+
+def test_bad_env_path_fails_without_running_compose(space, monkeypatch, tmp_path, capsys) -> None:
+    ws, _ = space
+    calls: list = []
+    fake_run(monkeypatch, calls)
+    inner = ws / "x.env"
+    inner.write_text(ENV_BODY, encoding="utf-8")
+    monkeypatch.setenv("AX_REAL_ENV_FILE", str(inner))
+    args = run_mod.argparse.Namespace(runs="1", out=str(tmp_path / "o"), sha="x")
+    assert run_mod.cmd_run(args) == 1
+    assert calls == []
+    shown = capsys.readouterr()
+    assert "작업 폴더 안" in shown.out and str(inner) not in shown.out + shown.err
+    assert not (ws / ".env").exists()
+
+
+def test_cleanup_command_removes_copy_even_if_compose_fails(space, monkeypatch) -> None:
+    ws, _ = space
+    seen: list = []
+
+    def run_cmd(cmd, **kw):
+        seen.append(((ws / ".env").exists(), cmd))
+        raise RuntimeError("compose 실패")
+
+    monkeypatch.setattr(run_mod, "run_cmd", run_cmd)
+    with pytest.raises(RuntimeError):
+        run_mod.cmd_cleanup(run_mod.argparse.Namespace())
+    assert seen[0][0] is True and "down" in seen[0][1] and "ax-real" in seen[0][1]
+    assert not (ws / ".env").exists()
+
+
+def test_env_values_never_reach_logs_or_result_files(space, monkeypatch, tmp_path, capsys) -> None:
+    _ws, outside = space
+    fake_run(monkeypatch)
+    out = tmp_path / "o"
+    assert run_mod.cmd_run(run_mod.argparse.Namespace(runs="1", out=str(out), sha="x")) == 0
+    # 녹화 단계 (게이트웨이 없음): 출력 파일과 로그
+    gh_out = tmp_path / "gh_out.txt"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(gh_out))
+    monkeypatch.setattr(run_mod, "http_ok", lambda url, timeout=3.0: False)
+    assert run_mod.cmd_record(run_mod.argparse.Namespace(out=str(tmp_path / "rec"))) == 0
+    shown = capsys.readouterr()
+    texts = [shown.out, shown.err, gh_out.read_text(encoding="utf-8")]
+    for name in ("real-result.json", "real-detail.json"):
+        texts.append((out / name).read_text(encoding="utf-8"))
+    texts.extend(p.read_text(encoding="utf-8") for p in (tmp_path / "state").glob("*.json"))
+    blob = "\n".join(texts)
+    for secret in SENTINELS:
+        assert secret not in blob
+    assert str(outside) not in blob  # 절대 경로도 남기지 않는다
+    assert "env 파일: 작업 폴더 밖, 확인됨" in shown.out
+    # 개발실 status.json 생성기는 이 레포에 없다. 이 실행이 쓰는 산출물만 확인한다
+
+
+def test_masks_values_only_inside_actions(space, monkeypatch, capsys) -> None:
+    _, outside = space
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    run_mod.read_env_file(outside / ".env")
+    out = capsys.readouterr().out
+    assert f"::add-mask::{SENT_TOKEN}" in out and SENT_LLM not in out
+
+
+def test_workflow_cleans_env_and_locks_deps() -> None:
+    yaml = pytest.importorskip("yaml")
+    wf = yaml.safe_load((ROOT / ".github" / "workflows" / "real-run.yml").read_text("utf-8"))
+    steps = wf["jobs"]["run"]["steps"]
+    cleanup = [s for s in steps if "unlink" in s.get("run", "") and ".env" in s["run"]]
+    assert len(cleanup) == 1 and cleanup[0]["if"] == "always()"
+    assert "continue-on-error" not in cleanup[0]
+    assert steps.index(cleanup[0]) == len(steps) - 1  # compose 정리 뒤 마지막
+    down = [s for s in steps if "real_run.py cleanup" in s.get("run", "")]
+    assert len(down) == 1 and down[0]["if"] == "always()"
+    sync = [s["run"] for s in steps if s.get("run", "").startswith("uv sync")]
+    assert sync == ["uv sync --all-packages --locked"]
+    assert "AX_REAL_ENV_FILE" not in json.dumps(wf)  # 경로는 runner 환경에서만 온다
+
+
+# ── 루프백 포트 override ───────────────────────────────────
+LOOPBACK = ROOT / ".github" / "real-run" / "compose.loopback.yml"
+
+
+def test_loopback_override_covers_all_ports_with_127() -> None:
+    yaml = pytest.importorskip("yaml")
+    text = LOOPBACK.read_text(encoding="utf-8")
+    assert "!override" in text
+    services = yaml.load(text.replace("!override", ""), Loader=yaml.BaseLoader)["services"]
+    ports = {k: v for k, v in run_mod.HEALTH_PORTS.items() if k != "infra"}
+    ports.update({"infra-dejafix": 8107, "redis": 6379, "postgres": 5432})
+    assert set(services) == set(ports)
+    for name, svc in services.items():
+        assert svc["ports"] == [f"127.0.0.1:{ports[name]}:{ports[name]}"], name
+    assert LOOPBACK.as_posix().endswith(run_mod.LOOPBACK)
+    assert run_mod.COMPOSE[-2:] == ["-f", run_mod.LOOPBACK]
+
+
+def test_compose_config_publishes_only_on_loopback() -> None:
+    import shutil
+    import subprocess
+
+    if not shutil.which("docker"):
+        pytest.skip("docker 없음")
+    cmd = [*run_mod.COMPOSE, "config", "--format", "json"]
+    try:
+        proc = subprocess.run(
+            cmd, cwd=ROOT, capture_output=True, text=True, timeout=120, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pytest.skip("docker compose 실행 불가")
+    if proc.returncode != 0:
+        pytest.skip("compose config 실패 (docker compose 미지원 환경)")
+    services = json.loads(proc.stdout)["services"].values()
+    ports = [p for svc in services for p in svc.get("ports", [])]
+    assert ports and all(p.get("host_ip") == "127.0.0.1" for p in ports)
