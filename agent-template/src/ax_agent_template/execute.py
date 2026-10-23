@@ -35,6 +35,13 @@ from ax_contracts.schemas import (
 
 _mock_counter = itertools.count(1)
 
+
+def reset_mock_counter() -> None:
+    """목 실행 번호를 1부터 다시 센다 (테스트 초기화용)."""
+    global _mock_counter
+    _mock_counter = itertools.count(1)
+
+
 # B 교차검증은 동기이고 safety의 verify_timeout_seconds(30초)보다 길게 기다린다.
 SAFETY_TIMEOUT_SECONDS = 35.0
 

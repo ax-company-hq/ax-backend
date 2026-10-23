@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 
-from ax_dashboard_api import mock_actions, mock_data, support_client
+from ax_dashboard_api import claim_mapping, mock_actions, mock_data, support_client
 from ax_dashboard_api.envelope import ApiError, is_mock, ok, require_mock
 from ax_dashboard_api.schemas import (
     AgentMessageBody,
@@ -17,6 +17,7 @@ from ax_dashboard_api.schemas import (
     ConversationListItem,
     DraftStyleBody,
     InspectionBody,
+    Kpi,
     NoteBody,
     QueueProcessBody,
     ReviewStatusBody,
@@ -46,11 +47,6 @@ def metrics(days: int = Query(14, ge=1, le=90)) -> dict:
     return ok(mock_data.dashboard(days))
 
 
-@mock_only.get("/kpis")
-def kpis() -> dict:
-    return ok(mock_data.KPI)
-
-
 @mock_only.get("/kb-chunks")
 def kb_chunks() -> dict:
     return ok(mock_data.KB_CHUNKS, total=len(mock_data.KB_CHUNKS))
@@ -62,35 +58,120 @@ def orders(user_id: int) -> dict:
     return ok(items, total=len(items))
 
 
-@mock_only.get("/claims")
-def claims(status: str | None = None) -> dict:
-    items = mock_data.list_claims(status)
+@mock_only.get("/reviews")
+def reviews() -> dict:
+    return ok(mock_data.REVIEWS, total=len(mock_data.REVIEWS))
+
+
+# ---------------------------------------- 클레임·보상 큐·KPI (목 모드 또는 support A2A)
+# 목 모드는 메모리 데이터, 아니면 support skill을 부르고 `claim_mapping`으로 화면 모델에 맞춘다.
+@router.get("/kpis")
+async def kpis() -> dict:
+    if is_mock():
+        return ok(mock_data.KPI)
+    out = await support_client.call("inquiry_overview")
+    return ok(Kpi.model_validate(out["kpis"]))
+
+
+@router.get("/claims")
+async def claims(status: str | None = None) -> dict:
+    if is_mock():
+        items = mock_data.list_claims(status)
+    else:
+        out = await support_client.call("list_claims")
+        items = claim_mapping.filter_by_status(
+            [claim_mapping.to_claim(c) for c in out["items"]], status
+        )
     return ok(items, total=len(items))
 
 
 # 고정 경로가 `{claim_id}`보다 먼저 와야 한다
-@mock_only.get("/claims/stats")
-def claim_stats() -> dict:
-    return ok(mock_data.claim_stats())
+@router.get("/claims/stats")
+async def claim_stats() -> dict:
+    if is_mock():
+        return ok(mock_data.claim_stats())
+    return ok(claim_mapping.to_stats(await support_client.call("claim_stats")))
 
 
-@mock_only.get("/claims/{claim_id}")
-def claim(claim_id: int) -> dict:
-    found = mock_data.get_claim(claim_id)
-    if found is None:
-        raise ApiError(404, "NOT_FOUND", f"클레임 {claim_id}를 찾을 수 없다")
-    return ok(found)
+@router.get("/claims/{claim_id}")
+async def claim(claim_id: int) -> dict:
+    if is_mock():
+        found = mock_data.get_claim(claim_id)
+        if found is None:
+            raise ApiError(404, "NOT_FOUND", f"클레임 {claim_id}를 찾을 수 없다")
+        return ok(found)
+    out = await support_client.call("get_claim", {"claim_id": claim_id})
+    return ok(claim_mapping.to_detail(out))
 
 
-@mock_only.get("/queue-entries")
-def queue_entries() -> dict:
-    view = mock_data.queue_view()
+@router.get("/queue-entries")
+async def queue_entries() -> dict:
+    if is_mock():
+        view = mock_data.queue_view()
+    else:
+        view = claim_mapping.to_queue(await support_client.call("claim_queue"))
     return ok(view, total=len(view.queue))
 
 
-@mock_only.get("/reviews")
-def reviews() -> dict:
-    return ok(mock_data.REVIEWS, total=len(mock_data.REVIEWS))
+@router.post("/claims/{claim_id}/approve")
+async def approve_claim(claim_id: int, body: NoteBody) -> dict:
+    return await _decide(claim_id, "approve", body.note)
+
+
+@router.post("/claims/{claim_id}/reject")
+async def reject_claim(claim_id: int, body: NoteBody) -> dict:
+    return await _decide(claim_id, "reject", body.note)
+
+
+async def _decide(claim_id: int, decision: str, note: str) -> dict:
+    if is_mock():
+        action = mock_actions.approve_claim if decision == "approve" else mock_actions.reject_claim
+        return ok(action(claim_id, note))
+    out = await support_client.call(
+        "decide_claim",
+        {"claim_id": claim_id, "decision": decision},
+        {"note": note},
+        target=f"claim:{claim_id}:{decision}",
+    )
+    return ok(claim_mapping.to_detail(out))
+
+
+@router.post("/claims/{claim_id}/receive")
+async def receive_claim(claim_id: int, body: InspectionBody) -> dict:
+    if is_mock():
+        return ok(mock_actions.receive_claim(claim_id, body.inspection, body.note))
+    out = await support_client.call(
+        "receive_return",
+        {"claim_id": claim_id, "inspection": claim_mapping.inspection_in(body.inspection)},
+        {"note": body.note or ""},
+        target=f"claim:{claim_id}",
+    )
+    return ok(claim_mapping.to_detail(out))
+
+
+@router.post("/claims/{claim_id}/inspection")
+async def inspect_claim(claim_id: int, body: InspectionBody) -> dict:
+    if is_mock():
+        return ok(mock_actions.inspect_claim(claim_id, body.inspection, body.note))
+    inspection = claim_mapping.inspection_in(body.inspection)
+    out = await support_client.call(
+        "inspect_return",
+        {"claim_id": claim_id, "inspection": inspection},
+        {"note": body.note or ""},
+        target=f"claim:{claim_id}:{inspection}",
+    )
+    return ok(claim_mapping.to_detail(out))
+
+
+@router.post("/queue-entries/process")
+async def process_queue(body: QueueProcessBody | None = None) -> dict:
+    body = body or QueueProcessBody()
+    if is_mock():
+        return ok(mock_actions.process_queue(body.limit, body.claim_ids))
+    out = await support_client.call(
+        "process_claim_queue", {"limit": body.limit, "claim_ids": body.claim_ids}
+    )
+    return ok(claim_mapping.to_run(out))
 
 
 # ---------------------------------------------------------------- 문의 (목 모드 또는 support A2A)
@@ -213,32 +294,6 @@ async def conversation_status(conversation_id: int, body: StatusBody) -> dict:
 # ---------------------------------------------------------------- 쓰기 (목 모드)
 # 승인·지급 계열(claims approve·reject·receive·inspection, queue-entries/process)은
 # 실제 연결 때 support `execute()` 관문으로 넘긴다. 지금은 목 데이터만 바꾼다.
-@mock_only.post("/claims/{claim_id}/approve")
-def approve_claim(claim_id: int, body: NoteBody) -> dict:
-    return ok(mock_actions.approve_claim(claim_id, body.note))
-
-
-@mock_only.post("/claims/{claim_id}/reject")
-def reject_claim(claim_id: int, body: NoteBody) -> dict:
-    return ok(mock_actions.reject_claim(claim_id, body.note))
-
-
-@mock_only.post("/claims/{claim_id}/receive")
-def receive_claim(claim_id: int, body: InspectionBody) -> dict:
-    return ok(mock_actions.receive_claim(claim_id, body.inspection, body.note))
-
-
-@mock_only.post("/claims/{claim_id}/inspection")
-def inspect_claim(claim_id: int, body: InspectionBody) -> dict:
-    return ok(mock_actions.inspect_claim(claim_id, body.inspection, body.note))
-
-
-@mock_only.post("/queue-entries/process")
-def process_queue(body: QueueProcessBody | None = None) -> dict:
-    body = body or QueueProcessBody()
-    return ok(mock_actions.process_queue(body.limit, body.claim_ids))
-
-
 @mock_only.post("/reviews/{review_id}/status")
 def review_status(review_id: int, body: ReviewStatusBody) -> dict:
     return ok(mock_actions.set_review_status(review_id, body.status))

@@ -46,6 +46,12 @@ def set_agent_name(name: str) -> None:
     _agent_name = name
 
 
+def clear_agent_name() -> None:
+    """프로세스 기본 이름을 지운다 (테스트 초기화용)."""
+    global _agent_name
+    _agent_name = None
+
+
 @contextmanager
 def agent_name_scope(name: str) -> Iterator[None]:
     """이 범위 안에서는 전역 이름 대신 `name`을 쓴다 (앱의 요청 처리용)."""

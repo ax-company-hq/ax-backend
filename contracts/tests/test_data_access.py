@@ -1,6 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
+from ax_contracts.data_access.shop_failed_orders import ShopFailedOrdersQuery
 from ax_contracts.data_access.shop_metric_series import (
     ShopMetricSeriesQuery,
     ShopMetricSeriesResult,
@@ -81,3 +82,24 @@ def test_seller_prices() -> None:
         SellerProductPrice.model_validate({**PRICE, "price": 100.5})
     with pytest.raises(ValidationError):
         SellerProductPrice.model_validate({**PRICE, "unknown": 1})
+
+
+def test_metric_series_result_evidence_fields_are_optional() -> None:
+    plain = ShopMetricSeriesResult.model_validate({"metric": "order_count"})
+    assert (plain.collected_at, plain.truncated, plain.tenant_id) == (None, False, "shop-demo")
+    stamped = ShopMetricSeriesResult.model_validate(
+        {"metric": "order_count", "collected_at": "2026-10-22T06:00:00Z", "truncated": True}
+    )
+    assert stamped.truncated is True and stamped.collected_at is not None
+    with pytest.raises(ValidationError):  # 시간대 없는 조회 시각
+        ShopMetricSeriesResult.model_validate(
+            {"metric": "order_count", "collected_at": "2026-10-22T06:00:00"}
+        )
+
+
+def test_failed_orders_limit_range() -> None:
+    base = {"from": "2026-10-22T05:00:00Z", "to": "2026-10-22T06:00:00Z"}
+    assert ShopFailedOrdersQuery.model_validate(base).limit == 1000
+    assert ShopFailedOrdersQuery.model_validate({**base, "limit": 50}).limit == 50
+    with pytest.raises(ValidationError):
+        ShopFailedOrdersQuery.model_validate({**base, "limit": 0})

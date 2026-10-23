@@ -15,8 +15,11 @@ from support_agent.claim_schemas import (
     ClaimLine,
     ClaimQueue,
     ClaimReasonHit,
+    ClaimReceipt,
+    ClaimReceiptItem,
     ClaimStats,
     QueueEntry,
+    QueueItemLine,
 )
 from support_agent.orders import Order
 
@@ -66,6 +69,7 @@ class ClaimStore:
             total=len(claims),
             by_status=dict(Counter(c.status for c in claims)),
             rule_hits=dict(hits),
+            agent_reviews=sum(1 for c in claims if c.decided_by),
         )
 
     def queue(self) -> ClaimQueue:
@@ -76,10 +80,21 @@ class ClaimStore:
                 continue
             blockers: list[ClaimReasonHit] = []
             if claim.status == "return_received" and claim.inspection != "pass":
-                label = "검수 전" if claim.inspection is None else f"검수 {claim.inspection}"
-                blockers.append(
-                    ClaimReasonHit(code="INSPECTION", level="block", message=f"{label}이라 보류")
-                )
+                # 화면(BLOCKER_KO)과 같은 코드: NOT_INSPECTED 검수 대기, ON_HOLD 상담원 확인
+                if claim.inspection is None:
+                    blockers.append(
+                        ClaimReasonHit(
+                            code="NOT_INSPECTED", level="block", message="검수 전이라 보류"
+                        )
+                    )
+                else:
+                    blockers.append(
+                        ClaimReasonHit(
+                            code="ON_HOLD",
+                            level="block",
+                            message=f"검수 {claim.inspection}이라 보류",
+                        )
+                    )
             entries.append(
                 QueueEntry(
                     position=len(entries) + 1,
@@ -88,10 +103,12 @@ class ClaimStore:
                     customer=claim.customer,
                     type=claim.type,
                     reason=claim.reason,
+                    received_at=claim.return_received_at or claim.updated_at,
                     inspection=claim.inspection,
                     amount=claim.expected_refund,
                     ready=not blockers,
                     blockers=blockers,
+                    items=[QueueItemLine(title=line.title, qty=line.qty) for line in claim.lines],
                 )
             )
         return ClaimQueue(queue=entries, awaiting_return=self.list("awaiting_return"))
@@ -140,8 +157,9 @@ class ClaimStore:
             expected_refund=decision.expected_refund,
             points_back=decision.points_back,
             abuse_score=decision.abuse_score,
+            receipt=_receipt(order),
         )
-        self._audit(claim, "decide", outcome=decision.outcome)
+        self._audit(claim, "decide", outcome=decision.outcome, abuse_score=decision.abuse_score)
         self._claims[claim.id] = claim
         return claim
 
@@ -154,6 +172,34 @@ class ClaimStore:
     @staticmethod
     def _audit(claim: Claim, action: str, **detail: Any) -> None:
         claim.audit.append(ClaimAudit(actor=ACTOR, action=action, detail=detail, at=now_iso()))
+
+
+def _receipt(order: Order) -> ClaimReceipt:
+    """판정에 쓴 주문 사실을 그대로 적어 둔다. 금액은 주문 값에서 코드가 계산한다."""
+    items_total = sum(i.paid_amount + i.points_share for i in order.items)
+    return ClaimReceipt(
+        order_no=order.order_no,
+        status=order.status,
+        items_total=items_total,
+        shipping_fee=order.shipping_fee,
+        points_used=order.points_used,
+        paid_amount=items_total + order.shipping_fee - order.points_used,
+        paid_at=order.paid_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        delivered_at=order.delivered_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+        if order.delivered_at
+        else None,
+        items=[
+            ClaimReceiptItem(
+                id=i.id,
+                title=i.title,
+                qty=i.qty,
+                paid_amount=i.paid_amount,
+                points_share=i.points_share,
+                refunded_qty=i.refunded_qty,
+            )
+            for i in order.items
+        ],
+    )
 
 
 def _fields(obj: Any) -> dict[str, Any]:

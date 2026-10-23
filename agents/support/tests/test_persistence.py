@@ -188,11 +188,15 @@ def test_claim_lifecycle_survives_restart(monkeypatch: pytest.MonkeyPatch) -> No
     boot(monkeypatch, repo)
     client = TestClient(app)
     claim_id = create_claim(client)["output"]["id"]
-    call(client, "decide_claim", {"claim_id": claim_id, "decision": "approve"}, {}, "c-2")
-    call(client, "receive_return", {"claim_id": claim_id}, {}, "c-3")
+    approve = {"claim_id": claim_id, "decision": "approve"}
+    call(client, "decide_claim", approve, {"note": "사진 확인함"}, "c-2")
+    call(client, "receive_return", {"claim_id": claim_id}, {"note": "상자 훼손"}, "c-3")
     call(client, "inspect_return", {"claim_id": claim_id, "inspection": "pass"}, {}, "c-4")
     before = call(client, "get_claim", {"claim_id": claim_id})["output"]
     assert before["decided_by"] and before["inspection"] == "pass"
+    # 호출 쪽이 set_status 전에 바꿔 둔 필드(메모·영수증 스냅샷)도 함께 저장된다
+    assert before["agent_note"] == "사진 확인함" and before["inspection_note"] == "상자 훼손"
+    assert before["receipt"]["paid_amount"] == 33000
     assert [a["action"] for a in before["audit"]] == ["decide", "approve", "receive", "inspection"]
 
     boot(monkeypatch, repo)  # 재시작 — 큐도 DB 기록에서 다시 만들어진다
