@@ -99,3 +99,70 @@ def test_escalated_records_are_read_and_shown_as_needs_human(monkeypatch):
     assert "escalated" in seen[0].kinds
     (line,) = res.json()["data"]
     assert line["outcome"] == "needs_human"
+
+
+def _record(n: int, **fields):
+    from datetime import UTC, datetime
+
+    from ax_contracts.data_access.common_log import LogRecord
+
+    return LogRecord.model_validate(
+        {
+            "log_id": f"log_t{n}",
+            "context_id": "ctx_inc_1",
+            "occurred_at": datetime(2026, 10, 22, 9, n, tzinfo=UTC),
+            "source": "support",
+            "requester": "orchestrator",
+            **fields,
+        }
+    )
+
+
+def test_failed_and_canceled_results_are_not_shown_as_rejected(monkeypatch):
+    """정책 거절(rejected)과 실행 오류·시간 초과(failed)는 다른 결과로 보인다."""
+    monkeypatch.delenv("DASHBOARD_MOCK", raising=False)
+    monkeypatch.delenv("AGENT_TEMPLATE_MOCK", raising=False)
+    records = [
+        _record(1, kind="result_sent", skill="a", task_status="failed"),
+        _record(2, kind="result_sent", skill="b", task_status="canceled"),
+        _record(3, kind="result_sent", skill="c", task_status="rejected"),
+        _record(4, kind="rejected", skill="d"),
+    ]
+    communications.set_reader(lambda q: CommonLogResult(records=records))
+    outcomes = [x["outcome"] for x in TestClient(app).get(URL).json()["data"]]
+    assert outcomes == ["failed", "failed", "rejected", "rejected"]
+
+
+def test_it_reads_the_real_common_log_file(monkeypatch, tmp_path):
+    """`AX_COMMON_LOG_DB`가 있으면 reader를 꽂지 않아도 그 파일의 기록을 한 줄로 보여 준다."""
+    from ax_agent_template import common_log
+
+    monkeypatch.delenv("DASHBOARD_MOCK", raising=False)
+    monkeypatch.delenv("AGENT_TEMPLATE_MOCK", raising=False)
+    monkeypatch.setenv("AX_COMMON_LOG_DB", str(tmp_path / "common.db"))
+    common_log.reset_store()
+    try:
+        store = common_log.get_store()
+        assert store is not None
+        store.write(_record(1, kind="request_received", skill="get_claim", task_status="working"))
+        store.write(
+            _record(
+                2,
+                kind="result_sent",
+                skill="get_claim",
+                task_status="completed",
+                payload={"execution_id": "exe_9", "output": "고객 원문"},
+            )
+        )
+        store.write(_record(3, kind="event_published", skill="x"))  # 대화가 아니라서 뺀다
+        res = TestClient(app).get(URL, params={"context_id": "ctx_inc_1"})
+        assert res.status_code == 200
+        lines = res.json()["data"]
+        assert [(x["from_agent"], x["to_agent"], x["outcome"]) for x in lines] == [
+            ("orchestrator", "support", "in_progress"),
+            ("support", "orchestrator", "completed"),
+        ]
+        assert lines[1]["execution_id"] == "exe_9" and "고객 원문" not in str(lines)
+        assert TestClient(app).get(URL, params={"dept": "finance"}).json()["data"] == []
+    finally:
+        common_log.reset_store()

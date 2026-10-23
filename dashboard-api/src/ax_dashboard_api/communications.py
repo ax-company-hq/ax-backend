@@ -1,8 +1,8 @@
 """부서별 소통 탭: 공통 로그(`CommonLogQuery`/`CommonLogResult`)의 A2A 요청·응답을 한 줄로 만든다.
 
 목록에는 코드가 만든 필드(누가·누구에게·skill·결과·시각·context_id·execution_id)만 담는다.
-`payload`와 고객 원문은 한 줄에 넣지 않는다. 공통 로그 저장소의 읽기 구현이 아직 없어
-`set_reader`로 읽기 함수를 꽂기 전에는(목 모드 제외) 503을 돌려준다.
+`payload`와 고객 원문은 한 줄에 넣지 않는다. 읽기는 `set_reader`로 꽂은 함수, 아니면 공통 로그
+저장소(`AX_COMMON_LOG_DB`)를 쓰고, 둘 다 없으면(목 모드 제외) 503을 돌려준다.
 """
 
 from __future__ import annotations
@@ -13,10 +13,13 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from ax_agent_template import common_log
 from ax_contracts.data_access.common_log import CommonLogQuery, CommonLogResult, LogRecord
 from ax_dashboard_api.envelope import ApiError, is_mock
 
-CommunicationOutcome = Literal["completed", "rejected", "held", "needs_human", "in_progress"]
+CommunicationOutcome = Literal[
+    "completed", "rejected", "failed", "held", "needs_human", "in_progress"
+]
 
 # 소통으로 보는 로그 종류. 이벤트 발행·기억 참조는 부서 간 대화가 아니다
 COMM_KINDS = [
@@ -114,17 +117,22 @@ def _read(query: CommonLogQuery) -> CommonLogResult:
         return _reader(query)
     if is_mock():
         return _mock_records()
-    raise ApiError(
-        503,
-        "UPSTREAM_NOT_CONNECTED",
-        "공통 로그 저장소 읽기가 아직 연결되지 않았다 (DASHBOARD_MOCK=1로 목 모드 사용)",
-    )
+    store = common_log.get_store()  # `AX_COMMON_LOG_DB` 파일 (compose의 공유 볼륨)
+    if store is None:
+        raise ApiError(
+            503,
+            "UPSTREAM_NOT_CONNECTED",
+            "공통 로그 저장소가 연결되지 않았다 (AX_COMMON_LOG_DB, 목 모드는 DASHBOARD_MOCK=1)",
+        )
+    return store.query(query)
 
 
 def _outcome(r: LogRecord) -> CommunicationOutcome:
     decision = r.payload.get("decision")
-    if r.kind == "rejected" or r.task_status in ("rejected", "failed", "canceled"):
+    if r.kind == "rejected" or r.task_status == "rejected":
         return "rejected"
+    if r.task_status in ("failed", "canceled"):  # 거절(정책)과 달리 실행 오류·시간 초과
+        return "failed"
     if r.kind == "execute_decided" and decision in ("hold", "held", "reject", "rejected"):
         return "held" if decision in ("hold", "held") else "rejected"
     if r.kind == "escalated" or r.task_status == "input-required":
