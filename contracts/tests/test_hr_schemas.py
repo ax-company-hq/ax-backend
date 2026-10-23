@@ -254,3 +254,108 @@ def test_plan_draft_kind_is_fixed_and_ref_is_optional() -> None:
         assert PlanDraft.model_validate({**draft, "kind": kind}).kind == kind
     with pytest.raises(ValidationError):
         PlanDraft.model_validate({**draft, "kind": "memo"})
+
+
+# ---- 대시보드 인사 화면용 후속 변경 -------------------------------------------------------------
+def test_card_candidate_flag_defaults_to_false_and_keeps_status_values() -> None:
+    from ax_contracts.schemas import Card
+
+    base = {
+        "card_id": "card_x",
+        "kind": "decision",
+        "context_id": "ctx_x_0001",
+        "title": "t",
+        "body": "b",
+        "author": "planning",
+        "confidence": "low",
+        "created_at": T0,
+    }
+    assert Card.model_validate(base).candidate is False
+    card = Card.model_validate({**base, "candidate": True})
+    assert (card.candidate, card.status) == (True, "active")
+    with pytest.raises(ValidationError):  # 상태 값은 늘리지 않았다
+        Card.model_validate({**base, "status": "candidate"})
+
+
+def test_record_case_area_is_optional() -> None:
+    base = {"context_id": "ctx_x_0001", "kind": "decision", "summary": "s", "author": "planning"}
+    assert RecordCase.model_validate(base).area is None
+    assert RecordCase.model_validate({**base, "area": "payment"}).area == "payment"
+
+
+def test_invalid_input_is_an_error_code() -> None:
+    from ax_contracts.schemas import ErrorCode
+
+    assert ErrorCode("INVALID_INPUT") is ErrorCode.INVALID_INPUT
+
+
+def test_dashboard_view_models_parse_and_reject_bad_values() -> None:
+    from ax_contracts.schemas import (
+        AuditEntry,
+        ChangeView,
+        DecideCandidateCardInput,
+        DecideCandidateCardOutput,
+        GetAuditTimelineOutput,
+        HandoverView,
+        ListHandoversInput,
+        ListOnboardingsOutput,
+        OnboardingView,
+        UpdateOnboardingStepInput,
+    )
+
+    handover = HandoverView.model_validate(
+        {
+            "handover_id": "hnd_1",
+            "context_id": "ctx_hnd_0001",
+            "owner_id": "emp_1",
+            "status": "input_required",
+            "completeness": 40,
+            "created_at": T0,
+            "updated_at": T0,
+        }
+    )
+    assert handover.open_questions == [] and handover.reason == "other"
+    with pytest.raises(ValidationError):  # 완성도는 0~100
+        HandoverView.model_validate({**handover.model_dump(mode="json"), "completeness": 120})
+    with pytest.raises(ValidationError):  # 정해진 상태만
+        HandoverView.model_validate({**handover.model_dump(mode="json"), "status": "done"})
+    assert ListHandoversInput().limit == 50
+    with pytest.raises(ValidationError):
+        ListHandoversInput(limit=500)
+
+    onboarding = OnboardingView.model_validate(
+        {
+            "onboarding_id": "onb_1",
+            "context_id": "ctx_onb_0001",
+            "member_id": "emp_10",
+            "area": "payment",
+            "progress": 25,
+            "created_at": T0,
+        }
+    )
+    assert ListOnboardingsOutput(onboardings=[onboarding], collected_at=T0).onboardings
+    assert UpdateOnboardingStepInput(onboarding_id="onb_1", step_id="stp_1").done is True
+
+    change = ChangeView.model_validate(
+        {
+            "change_id": "chg_1",
+            "context_id": "ctx_asg_0001",
+            "change_kind": "offboarding",
+            "member_id": "emp_1",
+            "area": "payment",
+            "status": "cancelled",
+            "created_at": T0,
+            "updated_at": T0,
+        }
+    )
+    assert change.checklist == []
+    with pytest.raises(ValidationError):
+        ChangeView.model_validate({**change.model_dump(mode="json"), "status": "unknown"})
+
+    with pytest.raises(ValidationError):
+        DecideCandidateCardInput(card_id="card_x", decision="maybe")
+    assert DecideCandidateCardOutput(card_id="card_x", status="retired").status == "retired"
+    entry = AuditEntry(seq=1, at=T0, kind="start_handover")
+    assert GetAuditTimelineOutput(context_id="c", entries=[entry], collected_at=T0).entries
+    with pytest.raises(ValidationError):  # seq는 1부터
+        AuditEntry(seq=0, at=T0, kind="x")

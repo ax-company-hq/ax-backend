@@ -14,6 +14,10 @@ skill과 등급(등급 신고는 안전 레이어 레지스트리가 원본이�
 | `start_onboarding` | A | 읽기 순서·입문 체크리스트 |
 | `check_plan` | 읽기 | 새 계획이 과거에 기각된 안인지 판정 |
 | `get_roster` | 읽기 | 담당·교대 명부 (개인정보 제외) |
+| `update_onboarding_step` | A | 온보딩 단계 완료 표시(진행률은 코드가 다시 계산) |
+| `decide_candidate_card` | A | 확신 낮은 후보 카드를 사람이 승인·폐기 |
+| `list_handovers`·`list_open_questions`·`list_onboardings` | 읽기 | 인수인계·질문·온보딩 현황 |
+| `list_changes`·`list_candidate_cards`·`get_audit_timeline` | 읽기 | 변경·후보 카드·감사 기록 |
 
 `RecordCaseOutput`은 모델만 추가했고, hr의 출력 전환은 hr 담당 PR에서 한다.
 
@@ -24,11 +28,12 @@ skill과 등급(등급 신고는 안전 레이어 레지스트리가 원본이�
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field
 
 from ax_contracts.schemas.common import AxModel, UtcDatetime
+from ax_contracts.schemas.record import Card
 
 # ---- record_case ------------------------------------------------------------
 
@@ -269,4 +274,147 @@ class GetRosterInput(AxModel):
 class GetRosterOutput(AxModel):
     entries: list[RosterEntry] = Field(default_factory=list)
     gap_areas: list[str] = Field(default_factory=list)  # 담당 공백 영역
+    collected_at: UtcDatetime
+
+
+# ---- 온보딩 단계 완료 표시 --------------------------------------------------------------
+
+
+class UpdateOnboardingStepInput(AxModel):
+    onboarding_id: str
+    step_id: str
+    done: bool = True
+
+
+# 출력은 `StartOnboardingOutput`(갱신된 단계 목록과 코드가 다시 센 진행률)을 쓴다.
+
+
+# ---- 후보 카드 승인·거절 ----------------------------------------------------------------
+
+
+class DecideCandidateCardInput(AxModel):
+    """확신이 낮아 후보로 둔 카드를 사람이 승인(`approve`)하거나 폐기(`reject`)한다."""
+
+    card_id: str
+    decision: Literal["approve", "reject"]
+    note: str | None = None
+
+
+class DecideCandidateCardOutput(AxModel):
+    card_id: str
+    status: Literal["active", "retired"]
+
+
+# ---- 대시보드 인사 화면용 조회 ------------------------------------------------------------
+# 모두 상태를 바꾸지 않는다. 시각은 조회한 시각(`collected_at`)이고, 값은 저장된 그대로다.
+
+ChangeStatus = Literal["requested", "confirmed", "offboarded", "cancelled", "expired"]
+
+
+class HandoverView(AxModel):
+    handover_id: str
+    context_id: str
+    owner_id: str
+    successor_id: str | None = None
+    area: str | None = None
+    reason: Literal["shift", "transfer", "offboarding", "other"] = "other"
+    status: HandoverStatus
+    completeness: int = Field(ge=0, le=100)
+    items: list[HandoverItem] = Field(default_factory=list)
+    open_questions: list[HandoverQuestion] = Field(default_factory=list)
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
+
+
+class ListHandoversInput(AxModel):
+    status: HandoverStatus | None = None
+    area: str | None = None
+    limit: int = Field(default=50, ge=1, le=200)
+
+
+class ListHandoversOutput(AxModel):
+    handovers: list[HandoverView] = Field(default_factory=list)
+    collected_at: UtcDatetime
+
+
+class ListOpenQuestionsInput(AxModel):
+    assignee_id: str | None = None
+    handover_id: str | None = None
+
+
+class ListOpenQuestionsOutput(AxModel):
+    questions: list[HandoverQuestion] = Field(default_factory=list)
+    collected_at: UtcDatetime
+
+
+class OnboardingView(AxModel):
+    onboarding_id: str
+    context_id: str
+    member_id: str
+    area: str
+    handover_id: str | None = None
+    steps: list[OnboardingStep] = Field(default_factory=list)
+    progress: int = Field(ge=0, le=100)
+    created_at: UtcDatetime
+
+
+class ListOnboardingsInput(AxModel):
+    member_id: str | None = None
+    area: str | None = None
+
+
+class ListOnboardingsOutput(AxModel):
+    onboardings: list[OnboardingView] = Field(default_factory=list)
+    collected_at: UtcDatetime
+
+
+class ChangeView(AxModel):
+    change_id: str
+    context_id: str
+    change_kind: Literal["shift", "transfer", "offboarding", "join"]
+    member_id: str
+    area: str
+    successor_id: str | None = None
+    status: ChangeStatus
+    handover_id: str | None = None
+    onboarding_id: str | None = None
+    checklist: list[ChecklistItem] = Field(default_factory=list)
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
+
+
+class ListChangesInput(AxModel):
+    status: ChangeStatus | None = None
+    area: str | None = None
+    member_id: str | None = None
+
+
+class ListChangesOutput(AxModel):
+    changes: list[ChangeView] = Field(default_factory=list)
+    collected_at: UtcDatetime
+
+
+class ListCandidateCardsInput(AxModel):
+    area: str | None = None
+
+
+class ListCandidateCardsOutput(AxModel):
+    cards: list[Card] = Field(default_factory=list)  # `status == "candidate"`인 카드
+    collected_at: UtcDatetime
+
+
+class AuditEntry(AxModel):
+    seq: int = Field(ge=1)
+    at: UtcDatetime
+    kind: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class GetAuditTimelineInput(AxModel):
+    context_id: str
+
+
+class GetAuditTimelineOutput(AxModel):
+    context_id: str
+    entries: list[AuditEntry] = Field(default_factory=list)
     collected_at: UtcDatetime

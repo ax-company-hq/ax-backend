@@ -74,6 +74,7 @@ def test_error_code_and_input_reason_members() -> None:
         "INVALID_OUTPUT",
         "MISSING_CONTEXT",
         "SEQUENCE_GAP",
+        "INVALID_INPUT",
     }
     assert {r.value for r in InputReason} == {"dept_input", "customer_input", "human_input"}
 
