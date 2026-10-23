@@ -102,8 +102,12 @@ def _example(value: object) -> str:
 async def render() -> str:
     import ax_orchestrator.plans.scenario_a as scenario
 
+    original_now = scenario.now
     scenario.now = lambda: FIXED_AT  # 정상화 공지의 resolved_at을 고정
-    inc, fakes, steps = await _run()
+    try:
+        inc, fakes, steps = await _run()
+    finally:
+        scenario.now = original_now
     key_to_step = {s.id: s for s in steps}
     sections: dict[str, list[str]] = defaultdict(list)
     for step_id, run in inc.steps.items():

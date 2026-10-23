@@ -50,3 +50,20 @@ async def test_unreachable_dept_becomes_unavailable_in_registry() -> None:
     async with _client(refuse) as client:
         await registry.load(["data"], http_card_fetcher(client))
     assert "data" in registry.unavailable
+
+
+@pytest.mark.asyncio
+async def test_registry_real_endpoint_reports_unreachable_depts(monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    from ax_orchestrator import real
+    from ax_orchestrator.main import app
+
+    async def fetch_none(dept):
+        return None
+
+    monkeypatch.setattr(real, "http_card_fetcher", lambda client=None: fetch_none)
+    with TestClient(app) as client:
+        data = client.get("/api/registry/real").json()
+    assert data["meta"]["mock"] is False
+    assert set(data["data"]["unavailable"]) >= {"data", "hr"}

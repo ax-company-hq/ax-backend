@@ -193,6 +193,19 @@ async def test_dept_input_is_relayed(harness) -> None:
 
 
 @pytest.mark.asyncio
+async def test_coupon_is_sent_once_with_sequence(harness) -> None:
+    """쿠폰은 총괄이 보내지 않는다(#228 결정 A): 총괄이 보낸 쿠폰 요청은 0번이다.
+
+    예전에는 총괄이 `issue_coupon`을 한 번 보내며 `sequence`를 붙였다. 지금은 고객지원이
+    사건별 `sequence`를 붙여 마케팅에 직접 요청한다. 총괄의 직렬 번호는 serial_group 테스트가 본다.
+    """
+    inc = await run(harness)
+    coupons = [r for _, r in harness.fakes.calls if r.skill == "issue_coupon"]
+    assert coupons == []
+    assert "coupon" not in inc.steps
+
+
+@pytest.mark.asyncio
 async def test_plan_has_no_compensation_or_coupon_steps(harness) -> None:
     await run(harness)
     skills = {r.skill for _, r in harness.fakes.calls}
