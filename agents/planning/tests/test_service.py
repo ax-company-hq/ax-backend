@@ -201,10 +201,10 @@ def test_req12_main_flow(service) -> None:
     run(service.review_pr("PR #32"))
     pr32 = service.state.prs[-1]
     assert pr32.reviews == ["불일치", "통과"]
-    # 재검수 통과지만 shop-web/ 경로가 허용 경로 밖 → 자동 머지 안 함, 교차검증 대기
+    # 재검수 통과지만 결제 화면(shop-web/checkout/)은 머지 위험 경로 → 자동 머지 안 함, 사람 확인
     assert not pr32.merged and pr32.auto_review is not None
-    assert pr32.auto_review.state == "교차검증 대기"
-    assert pr32.auto_review.rules == ["pr_allowed_paths"]
+    assert pr32.auto_review.state == "사람 확인"
+    assert pr32.auto_review.rules == ["irreversible"]
 
     run(service.merge_pr("PR #31"))  # 이미 자동 머지 → 변화 없음
     assert req(service, "REQ-12").state == "작업 중"

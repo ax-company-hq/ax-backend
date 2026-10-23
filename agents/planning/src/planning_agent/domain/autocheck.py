@@ -22,16 +22,40 @@ from planning_agent.domain.models import PR, Para, Spec, State
 from planning_agent.domain.trace import changed_paths_for
 
 # ---- 되돌릴 수 없는 영역 (경로 접두사 → 이유). 제안 목록, 확정은 safety·사람 (#166 노트)
+# 기획서 확정(confirm_spec)과 PR 머지(merge_pr) 둘 다 irreversible_count로 센다.
 IRREVERSIBLE_PREFIXES: dict[str, str] = {
     "shop-api/payment/migrations/": "결제 데이터 삭제·변경 마이그레이션",
     "shop-api/accounts/pii/": "개인정보 필드",
     "shop-api/settlement/payout/": "실제 송금·정산 연동",
 }
 
+# ---- 머지 위험 경로 (#200). shop-web/이 허용 경로에 들어가면서(safety #201) 결제·개인정보
+# 화면은 자동 머지하지 않는다. merge_pr의 irreversible_count에만 더해서 safety
+# merge_irreversible로 항상 C가 된다. 기획서 확정은 코드를 바꾸지 않으므로 세지 않는다.
+# 아래쪽은 safety 보호 경로(#203 `merge_protected_paths`)와 같은 값이다. safety가 어차피 C로
+# 막으므로 planning도 자동 머지를 시도하지 않고 바로 사람 확인으로 둔다.
+MERGE_RISK_PREFIXES: dict[str, str] = {
+    "shop-web/checkout/": "결제 화면 (결제 요청·금액·실패 안내)",
+    "shop-web/payment/": "결제 수단 입력 화면",
+    "shop-web/account/": "회원·개인정보 화면",
+    "shop-web/src/pages/Checkout.tsx": "결제 화면 (safety 보호 경로)",
+    "shop-web/src/lib/auth.tsx": "로그인·인증 (safety 보호 경로)",
+    "shop-web/src/lib/api.ts": "API 클라이언트 (safety 보호 경로)",
+    "shop-web/src/lib/env.ts": "환경값 (safety 보호 경로)",
+    "shop-api/src/ax_shop_api/db.py": "DB 스키마 (safety 보호 경로)",
+    "shop-api/src/ax_shop_api/service.py": "주문·결제 로직 (safety 보호 경로)",
+    "shop-api/src/ax_shop_api/promotions.py": "쿠폰 지급 로직 (safety 보호 경로)",
+    "shop-api/src/ax_shop_api/seed.py": "시드 데이터 (safety 보호 경로)",
+    ".github/": "CI (safety 보호 경로)",
+    "safety/": "관문 규칙 (safety 보호 경로)",
+    "contracts/": "부서 간 계약 (safety 보호 경로)",
+}
+
 # ---- #171 thresholds.toml merge_pr 규칙 (제안값, generate_pr와 같은 크기·경로 기준)
 PR_MAX_LINES = 300  # pr_changed_lines: changed_lines > 300
 PR_MAX_FILES = 20  # pr_changed_files: changed_files > 20
-PR_ALLOWED_PATHS: tuple[str, ...] = ("shop-api/", "docs/")  # pr_allowed_paths
+# pr_allowed_paths·merge_allowed_paths (safety #201과 같은 값)
+PR_ALLOWED_PATHS: tuple[str, ...] = ("shop-api/", "shop-web/", "docs/")
 REVIEW_MISMATCH_LIMIT = 2  # pr_review_mismatch: review_mismatch_count >= 2
 
 WAIT_ANSWER = "답 대기"
@@ -54,6 +78,12 @@ class Check:
 def irreversible_paths(paths: list[str]) -> list[str]:
     """되돌릴 수 없는 영역에 닿는 경로."""
     return [p for p in paths if any(p.startswith(prefix) for prefix in IRREVERSIBLE_PREFIXES)]
+
+
+def merge_risk_paths(paths: list[str]) -> list[str]:
+    """머지하면 사람이 봐야 하는 경로: 되돌릴 수 없는 영역 + 머지 위험 경로(#200)."""
+    prefixes = (*IRREVERSIBLE_PREFIXES, *MERGE_RISK_PREFIXES)
+    return [p for p in paths if any(p.startswith(prefix) for prefix in prefixes)]
 
 
 def planned_area(index: int) -> str:
@@ -143,7 +173,7 @@ def pr_params(state: State, pr: PR) -> dict[str, Any]:
         "changed_paths": paths,
         "review_mismatch_count": sum(1 for r in pr.reviews if r == "불일치"),
         "linked_incident_count": linked_incident_count(state, pr),
-        "irreversible_count": len(irreversible_paths(paths)),
+        "irreversible_count": len(merge_risk_paths(paths)),
     }
 
 

@@ -15,6 +15,8 @@ from ax_contracts.schemas import ExecuteDecision
 from ax_contracts.schemas.record import RecordCase, RecordKind
 from planning_agent.domain.autocheck import (
     IRREVERSIBLE_PREFIXES,
+    PR_ALLOWED_PATHS,
+    merge_risk_paths,
     pr_check,
     pr_params,
     spec_check,
@@ -133,7 +135,7 @@ def test_pr_params_each_key(service) -> None:
             "task": "T-none",
             "reviews": ["불일치", "불일치", "통과"],
             "gate": pr28.gate.model_copy(update={"lines": 301, "files": 21}),
-            "changed_paths": ["shop-web/x.tsx", PAYMENT_MIGRATION, "shop-api/payment/config.py"],
+            "changed_paths": ["infra/x.yml", PAYMENT_MIGRATION, "shop-api/payment/config.py"],
         }
     )
     service.state.prs.append(other)
@@ -360,6 +362,7 @@ def test_auto_merge_and_close_request(gate) -> None:
 
 def test_rule_hit_waits_for_cross_check(gate) -> None:
     svc = _svc()
+    _spec(svc).paras[1].paths = ["infra/ci/deploy.yml"]  # 허용 경로(shop-api·shop-web·docs) 밖
     run(svc.confirm_spec("SPEC-7"))
     run(svc.generate_prs("SPEC-7"))
     run(svc.review_pr("PR #32"))
@@ -369,8 +372,58 @@ def test_rule_hit_waits_for_cross_check(gate) -> None:
         "교차검증 대기",
         ["pr_allowed_paths"],
     )
-    assert pr32.auto_review.params["changed_paths"] == ["shop-web/checkout/FailNotice.tsx"]
+    assert pr32.auto_review.params["changed_paths"] == ["infra/ci/deploy.yml"]
     assert [m["auto"] for m in gate.params("merge_pr")] == [True]  # PR #31만, #32는 안 부름
+
+
+def test_shop_web_is_allowed_but_checkout_needs_human(gate) -> None:
+    """#200: shop-web/은 허용 경로지만 결제 화면(shop-web/checkout/)은 irreversible_count로 센다."""
+    assert "shop-web/" in PR_ALLOWED_PATHS
+    svc = _svc()
+    run(svc.confirm_spec("SPEC-7"))
+    run(svc.generate_prs("SPEC-7"))
+    run(svc.review_pr("PR #32"))
+    pr32 = _pr(svc, "PR #32")
+    assert not pr32.merged
+    assert (pr32.auto_review.state, pr32.auto_review.rules) == ("사람 확인", ["irreversible"])
+    assert pr32.auto_review.params["changed_paths"] == ["shop-web/checkout/FailNotice.tsx"]
+    assert pr32.auto_review.params["irreversible_count"] == 1
+    assert [m["auto"] for m in gate.params("merge_pr")] == [
+        True
+    ]  # 위험 경로는 자동 머지 시도 안 함
+    # 기획서 확정은 코드를 바꾸지 않으므로 화면 위험 경로를 세지 않는다
+    assert gate.params("confirm_spec")[0]["irreversible_count"] == 0
+    run(svc.merge_pr("PR #32"))  # 판단은 사람 머지 버튼
+    merge = gate.params("merge_pr")[-1]
+    assert merge["irreversible_count"] == 1 and merge["auto"] is False
+    assert _pr(svc, "PR #32").merged
+
+
+def test_safety_protected_paths_count_as_merge_risk() -> None:
+    """safety #203 보호 경로는 planning도 머지 위험으로 센다 (자동 머지를 시도하지 않는다)."""
+    protected = [
+        "shop-web/src/pages/Checkout.tsx",
+        "shop-web/src/lib/auth.tsx",
+        "shop-api/src/ax_shop_api/service.py",
+        ".github/workflows/ci.yml",
+        "contracts/src/ax_contracts/schemas/planning.py",
+    ]
+    assert merge_risk_paths(protected) == protected
+    assert merge_risk_paths(["shop-web/src/pages/Notice.tsx", "docs/a.md"]) == []
+
+
+def test_plain_shop_web_path_passes_allowed_paths(service) -> None:
+    pr = _pr(service, "PR #28").model_copy(
+        update={
+            "id": "PR #98",
+            "number": 98,
+            "task": "T-none",
+            "changed_paths": ["shop-web/pages/notice.tsx"],
+        }
+    )
+    service.state.prs.append(pr)
+    check = pr_check(service.state, pr)
+    assert "pr_allowed_paths" not in check.rules and check.params["irreversible_count"] == 0
 
 
 def test_linked_incident_and_review_mismatch_wait(gate) -> None:
@@ -420,7 +473,8 @@ def test_review_queue_rest(service) -> None:
     rows = body["data"]
     assert body["meta"]["count"] == 1
     assert rows[0]["kind"] == "pr" and rows[0]["id"] == "PR #32"
-    assert rows[0]["state"] == "교차검증 대기" and rows[0]["rules"] == ["pr_allowed_paths"]
+    # 결제 화면(shop-web/checkout/)이라 사람 확인 (#200)
+    assert rows[0]["state"] == "사람 확인" and rows[0]["rules"] == ["irreversible"]
     assert rows[0]["action"] == "merge_pr"
     assert rows[0]["decide_with"] == {"type": "mergePr", "pr": "PR #32"}
     assert PR_KEYS <= set(rows[0]["params"])

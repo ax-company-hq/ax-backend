@@ -828,11 +828,25 @@ class PlanningService:
         return ActionResult(outcome=None if ok else "rejected_by_review", output={"approved": ok})
 
     async def _register_ticket(
-        self, s: State, frm: str, title: str, ctx_req: str, t: datetime, seq: int
+        self,
+        s: State,
+        frm: str,
+        title: str,
+        ctx_req: str,
+        t: datetime,
+        seq: int,
+        *,
+        evidence: str | None = None,
+        source_ref: str | None = None,
+        evidence_ids: list[str] | None = None,
+        req_id: str | None = None,
     ) -> ActionResult:
-        """create_ticket: 같은 제목이면 중복 연결, 아니면 등록 후 간단 요청 판정."""
+        """create_ticket: 같은 제목이면 중복 연결, 아니면 등록 후 간단 요청 판정.
+
+        `source_ref`·`evidence_ids`는 저장만 한다 (중복·간단 요청 판정에 쓰지 않는다).
+        """
         dup_id = find_duplicate(s.requests, title)
-        req_id = f"REQ-{20 + seq}"
+        req_id = req_id or f"REQ-{20 + seq}"
         auto = None if dup_id else check_simple(title, s.auto_policy)
         text = (
             f'"{title}" → 같은 요청 {dup_id}에 연결 (linked_duplicate)'
@@ -849,10 +863,12 @@ class PlanningService:
             from_=frm,
             via="create_ticket",
             title=title,
-            evidence=f"{DEPT_NAME[frm]} 시뮬레이터에서 보냄",
+            evidence=evidence or f"{DEPT_NAME[frm]} 시뮬레이터에서 보냄",
             state="중복 연결" if dup_id else "접수",
             duplicate_of=dup_id,
             auto=auto,
+            source_ref=source_ref,
+            evidence_ids=list(evidence_ids or []),
         )
         s.requests.append(req)
         s.activity.append(
@@ -1410,6 +1426,75 @@ class PlanningService:
 
         await self._apply(log)
         return check, t
+
+    async def create_ticket(
+        self,
+        *,
+        context_id: str,
+        requester: str,
+        title: str,
+        evidence: str,
+        source_ref: str | None,
+        evidence_ids: list[str],
+        idempotency_key: str,
+    ) -> ActionResult:
+        """변경 요청 접수 (A, #174). 같은 요청이 있으면 묶고(linked_duplicate), 없으면 새 REQ와
+        `ctx_req_`를 발급한다(created). 같은 idempotency_key의 두 번째 요청은 이전 결과를 돌려준다.
+
+        - 중복 판정은 기존 도메인 규칙(`find_duplicate`, 같은 제목)만 쓴다. `source_ref`·
+          `evidence_ids`는 저장만 한다.
+        - 묶이면 원래 요청의 `context_id`를 돌려준다 (요청 부서는 그 사건에 문의를 잇는다).
+        - 결과 통지는 같은 `context_id`에 `path`를 비운 새 요청으로 보낸다(합의). 요청 부서의 수신
+          skill이 아직 없어 지금은 활동 기록(get_request_status)까지만 남긴다.
+        - 요청을 보낸 A2A `context_id`는 활동 근거로만 남기고 사건 ID로 쓰지 않는다.
+        """
+        cached = self._idempotent.get(idempotency_key)
+        if cached is not None:
+            return ActionResult(changed=False, outcome=cached.outcome, output=dict(cached.output))
+
+        async def run(s: State) -> ActionResult:
+            seq = s.seq + 1
+            s.seq = seq
+            t = self.clock()
+            dup_id = find_duplicate(s.requests, title)
+            original = next((r for r in s.requests if r.id == dup_id), None) if dup_id else None
+            used_ctx = {r.context_id for r in s.requests}
+            n = 20 + seq
+            while f"ctx_req_{n:04d}" in used_ctx:
+                n += 1
+            ctx_req = original.context_id if original else f"ctx_req_{n:04d}"
+            used_ids = {r.id for r in s.requests}
+            m = 20 + seq
+            while f"REQ-{m}" in used_ids:
+                m += 1
+            frm = requester if requester in DEPT_NAME else "orchestrator"
+            result = await self._register_ticket(
+                s,
+                frm,
+                title,
+                ctx_req,
+                t,
+                seq,
+                evidence=evidence,
+                source_ref=source_ref,
+                evidence_ids=evidence_ids,
+                req_id=f"REQ-{m}",
+            )
+            req_id = result.output["request_id"]
+            return ActionResult(
+                outcome="linked_duplicate" if dup_id else "created",
+                output={
+                    "request_id": req_id,
+                    "context_id": ctx_req,
+                    "duplicate_of": dup_id,
+                    "auto": result.output.get("auto"),
+                    "via_context_id": context_id,
+                },
+            )
+
+        result = await self._apply(run)
+        self._idempotent[idempotency_key] = result
+        return result
 
     async def link_incident(
         self,
