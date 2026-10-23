@@ -187,6 +187,7 @@ def initial_state() -> State:
                 merged=True,
                 merged_at=kst("10-21 14:02"),
                 changed_paths=["shop-api/payment/config.py"],
+                deployed_version="shop-api v2.4.1",
             ),
         ],
         threads=[
