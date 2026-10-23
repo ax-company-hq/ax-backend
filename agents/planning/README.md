@@ -47,11 +47,12 @@
 
 | skill | 등급 | 요청 가능 | 입력 → 출력 |
 | --- | --- | --- | --- |
+| `create_ticket` | A | support, marketing, hr, data, orchestrator | `CreateTicketInput` → `CreateTicketOutput` (#174). 같은 제목 요청이 있으면 새 요청을 원래 요청에 묶고 outcome `linked_duplicate` + `duplicate_of`(원래 REQ), `context_id`는 원래 요청의 `ctx_req_`. 없으면 outcome `created` + 새 `REQ-n`·`ctx_req_`(planning 발급). `source_ref`(예: `inq_42`)·`evidence_ids`는 저장만 하고 판정에 안 쓴다. `untrusted`(고객 원문)는 읽지 않는다. 간단 요청이면 자동 처리 흐름을 탄다. 결과 통지는 같은 `context_id`에 `path`를 비운 새 요청으로 보낸다(요청 부서 수신 skill 전까지는 활동 기록만). `idempotency_key` 필수 |
 | `find_related_prs` | read | orchestrator, infra, data | `FindRelatedPrsInput` → `FindRelatedPrsOutput`. 구간 안 머지 PR(component는 `changed_paths` 접두사), 최근 머지 순, `spec_id`·`para_id` 포함. 원인 판정 없음 |
 | `link_incident` | A | orchestrator, infra | `LinkIncidentInput` → `LinkIncidentOutput`. `linked_paras`는 `"SPEC-5:R3"` 형식. 같은 제목 요청이 있으면 그 ID + outcome `linked_duplicate`. `idempotency_key` 필수, 같은 키 두 번째는 이전 결과 |
 | `verify_rollback_target` | read | safety | `VerifyRollbackTargetInput` → `VerifyRollbackTargetOutput`. 배포가 사건 뒤 → `deploy_after_incident`, 배포 전 30분(시연값, AS-B 미결) 안 머지 PR 있음 → 승인 `deploy_before_incident`, 없음 → `no_deploy_in_window`. 거절도 `completed` + outcome `rejected_by_review` |
 | `list_in_progress` | read | hr, orchestrator | `ListInProgressInput` → `ListInProgressOutput`. 담당자(`owner_id` = 명부 `member_id`)·영역(`area`)의 `deployment`·`ticket`·`pr` 항목. 다른 담당자·영역 항목은 넣지 않는다. 우선순위 recommended |
-| `verify_handover` | read | safety | `VerifyHandoverInput` → `VerifyHandoverOutput`. hr `confirm_handover`(B)의 교차검증. 빠진 진행 중 항목 0건 → 승인 `complete`, 있으면 거절 `missing_items` + `missing`. 이미 끝난 항목은 `stale_item_ids`(판정에 안 씀). 거절도 `completed` + outcome `rejected_by_review` |
+| `verify_handover` | read | safety | `VerifyHandoverInput` 또는 safety 교차검증 형식(`execution_id`·`action`=`confirm_handover`·`requester`·`params{handover_id·owner_id·area·item_ids·completeness_percent…}`, #187) → `VerifyHandoverOutput`. hr `confirm_handover`(B)의 교차검증. 담당자·영역을 모르면 승인하지 않고 `failed` + `invalid_input`(safety는 보류). 빠진 진행 중 항목 0건 → 승인 `complete`, 있으면 거절 `missing_items` + `missing`. 이미 끝난 항목은 `stale_item_ids`(판정에 안 씀). 거절도 `completed` + outcome `rejected_by_review` |
 
 hr 연동 항목 규칙 (`domain/handover.py`, 시연값):
 
@@ -62,7 +63,7 @@ hr 연동 항목 규칙 (`domain/handover.py`, 시연값):
 | `deployment` | dev에 머지됐지만 확인이 끝나지 않은 PR | `dep_pr_<번호>` (`dep_pr_28`) | `incident_follow_up_open`(연결된 사건의 재발 방지 요청이 열림) · `merged_unconfirmed`(걸린 요청이 아직 완료 아님) |
 
 - 담당자: 작업 `owner` 라벨 → `member_id` (`백엔드` → `emp_01`, `프론트` → `emp_02`). 대응이 없는 작업(에이전트가 혼자 끝낸 자동 처리)은 사람 인계 대상이 아니라 넣지 않는다.
-- 영역: PR 바뀐 경로 접두사(`shop-api/payment/`·`shop-api/cart/`·`shop-web/checkout/` → `payment` 등) → 없으면 기획서 문단·제목 낱말(`결제`·`장바구니` → `payment` 등).
+- 영역: 값은 명부 `area`(`payment`·`search`·`catalog`·`support-desk`·`infra-ops`·`inventory`)만 쓴다(#179). PR 바뀐 경로 디렉터리(`shop-api/payment`·`shop-api/cart`·`shop-web/checkout` → `payment`, `shop-web/support` → `support-desk`, `infra` → `infra-ops` 등, 경로 단위 비교) → 없으면 기획서 문단·제목 낱말(`결제`·`장바구니` → `payment` 등). 둘 다 안 맞으면 `area` 없음. 입력 `area`가 명부 값이 아니면 지어내지 않고 빈 목록 + `collected_at`.
 - `verify_handover`는 `tkt_`·`pr_`·`dep_pr_`로 시작하는 ID만 비교한다. 결정 카드(`card_`)·문서 ID는 보지 않는다. planning에 없는 planning 형식 ID는 `evidence.data_summary`에 "확인할 수 없음"으로만 적는다.
 
 `evidence.ref_ids`는 `pr:28`, `para:SPEC-5:R3`, `req:REQ-102` 형식이다. 근거가 없으면 `data_summary`가 "확인할 수 없음"으로 시작한다.
@@ -92,7 +93,7 @@ execute params (safety #171 `thresholds.toml` 규칙 키, 모두 도메인 상�
 | `confirm_spec` | `open_questions`·`warnings`·`basis_count`·`irreversible_count` (+ `auto`, 경고가 있으면 `warn_ignored`) | 남은 질문 수, 인사 경고가 붙은 문단 수, 근거 수, 바꿀 경로가 되돌릴 수 없는 영역에 닿는 요구사항 문단 수 |
 | `merge_pr` | `changed_lines`·`changed_files`·`changed_paths`·`review_mismatch_count`·`linked_incident_count`·`irreversible_count` (+ `auto`) | PR 크기·경로, 검수 불일치 횟수, 이 PR 문단 또는 같은 파일을 바꾼 PR 문단 중 장애 표시 수, 되돌릴 수 없는 영역 경로 수 |
 
-되돌릴 수 없는 영역(제안 목록, 확정은 safety·사람): `shop-api/payment/migrations/`(결제 데이터 삭제·변경), `shop-api/accounts/pii/`(개인정보 필드), `shop-api/settlement/payout/`(실제 송금·정산 연동). 문단에 `paths`가 있으면 그 경로로, 없으면 역추적 규칙으로 정한다.
+되돌릴 수 없는 영역(제안 목록, 확정은 safety·사람): `shop-api/payment/migrations/`(결제 데이터 삭제·변경), `shop-api/accounts/pii/`(개인정보 필드), `shop-api/settlement/payout/`(실제 송금·정산 연동). 허용 경로는 safety와 같은 `shop-api/`·`shop-web/`·`docs/`(#200). 머지 위험 경로 `shop-web/checkout/`·`shop-web/payment/`·`shop-web/account/`는 `merge_pr`의 `irreversible_count`에만 더해 항상 사람 확인(C)으로 보낸다(기획서 확정에는 안 셈). 문단에 `paths`가 있으면 그 경로로, 없으면 역추적 규칙으로 정한다.
 
 경고 무시 확정 (FR-SPEC-006): 인사 경고(`warn`)가 남은 문단을 둔 채 `confirmSpec`을 하면 "warn 무시 진행"을 세 곳에 남긴다. `execute(confirm_spec)` params `warn_ignored`, `record_case`(kind `spec_confirmed`) params의 `record_case.summary`·`source_refs`와 `warn_ignored`, 활동 로그(point `audit.warn_ignored`, hr로 가는 `record_case` 활동).
 

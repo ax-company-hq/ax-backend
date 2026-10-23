@@ -1,10 +1,10 @@
-"""planning A2A skill 핸들러 (시나리오 A 필수 3개 + hr 연동 2개).
+"""planning A2A skill 핸들러 (시나리오 A 필수 3개 + hr 연동 2개 + 변경 요청 접수).
 
 - 입력은 계약 모델(`contracts/src/ax_contracts/schemas/planning.py`)로 검증하고, 출력도 계약 모델로
   만든 뒤 `output`에 넣는다. 형식을 새로 정의하지 않는다.
 - `request.untrusted`는 읽지 않는다 (지시로 해석하지 않는다).
 - 원인 판정 문장을 만들지 않는다 (원인 판정은 infra 몫). 근거는 `evidence`에 붙인다.
-- 상태를 바꾸는 `link_incident`는 서비스 안에서 `execute()`를 거친다. 관문이 거부하면 실행하지
+- 상태를 바꾸는 `link_incident`·`create_ticket`은 서비스 안에서 `execute()`를 거친다. 관문이 거부하면 실행하지
   않고 `failed`(outcome `gate_rejected`)로 돌려준다.
 - 사람 버튼(기획서 확정·PR 머지·승급 승인)은 A2A로 받지 않는다. REST(`api.py`)로만 받는다.
 - hr 연동(`list_in_progress`·`verify_handover`, 계약 #103)은 읽기다. 담당자·영역 대응과 비교는
@@ -19,6 +19,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ax_contracts.schemas import AgentRequest, AgentResult, Evidence, TaskStatus
 from ax_contracts.schemas.planning import (
+    CreateTicketInput,
+    CreateTicketOutput,
     FindRelatedPrsInput,
     FindRelatedPrsOutput,
     InProgressItem,
@@ -162,6 +164,73 @@ async def link_incident(request: AgentRequest) -> AgentResult:
             ref_ids=[f"pr:{n}" for n in inp.pr_numbers if n not in missing]
             + [f"para:{p}" for p in out.linked_paras]
             + ([f"req:{out.follow_up_request_id}"] if out.follow_up_request_id else []),
+        ),
+    )
+
+
+async def create_ticket(request: AgentRequest) -> AgentResult:
+    """변경 요청 접수 (A, execute 경유, #174). 같은 요청이면 linked_duplicate, 아니면 created.
+
+    `request.untrusted`(고객 원문)는 읽지 않는다. `evidence` 요약만 저장한다.
+    """
+    try:
+        inp = CreateTicketInput.model_validate(request.input)
+    except ValidationError as exc:
+        return _invalid(request, exc)
+    if not request.meta.idempotency_key:
+        return AgentResult(
+            meta=request.meta,
+            status=TaskStatus.FAILED,
+            outcome="missing_idempotency_key",
+            output={"message": "상태 변경 skill에는 idempotency_key가 필요하다"},
+        )
+    try:
+        result = await get_service().create_ticket(
+            context_id=request.meta.context_id,
+            requester=_requester(request),
+            title=inp.title,
+            evidence=inp.evidence,
+            source_ref=inp.source_ref,
+            evidence_ids=inp.evidence_ids,
+            idempotency_key=request.meta.idempotency_key,
+        )
+    except GateRefused as exc:
+        return AgentResult(
+            meta=request.meta,
+            status=TaskStatus.FAILED,
+            outcome="gate_rejected",
+            output={"message": f"실행 관문이 {exc.action}을 허락하지 않아 접수하지 않았다"},
+            evidence=Evidence(
+                data_summary=f"execute({exc.action}) → {exc.decision.status}",
+                ref_ids=[exc.decision.execution_id],
+            ),
+        )
+    o = result.output
+    out = CreateTicketOutput(
+        request_id=o["request_id"],
+        context_id=o["context_id"],
+        outcome=result.outcome,  # type: ignore[arg-type]
+        duplicate_of=o["duplicate_of"],
+    )
+    if out.outcome == "linked_duplicate":
+        summary = f"같은 요청 {out.duplicate_of}에 연결 ({out.request_id}, 사건 {out.context_id})"
+    else:
+        summary = f"변경 요청 {out.request_id} 접수 (사건 {out.context_id})"
+    refs = [f"req:{out.request_id}", f"ctx:{out.context_id}"]
+    if out.duplicate_of:
+        refs.append(f"req:{out.duplicate_of}")
+    if inp.source_ref:
+        refs.append(f"source:{inp.source_ref}")
+    refs.extend(f"evidence:{e}" for e in inp.evidence_ids)
+    return AgentResult(
+        meta=request.meta,
+        status=TaskStatus.COMPLETED,
+        outcome=out.outcome,
+        output=out.model_dump(mode="json"),
+        evidence=Evidence(
+            queries=["requests WHERE title = :title (같은 요청 판정, source_ref는 쓰지 않음)"],
+            data_summary=summary,
+            ref_ids=refs,
         ),
     )
 
@@ -375,6 +444,7 @@ async def verify_handover(request: AgentRequest) -> AgentResult:
 
 
 HANDLERS = {
+    "create_ticket": create_ticket,
     "find_related_prs": find_related_prs,
     "link_incident": link_incident,
     "verify_rollback_target": verify_rollback_target,

@@ -79,6 +79,9 @@ class Request(DomainModel):
     spec: str | None = None
     duplicate_of: str | None = None
     auto: AutoCheck | None = None  # 간단 요청 판정 결과 (create_ticket으로 들어온 것만)
+    # 요청 부서 쪽 참조 ID (예: 고객지원 문의 inq_12). 저장만 하고 판정(중복·간단 요청)에 안 쓴다
+    source_ref: str | None = None
+    evidence_ids: list[str] = Field(default_factory=list)  # 요청 부서가 보낸 근거 ID
 
 
 class ParaWarn(DomainModel):

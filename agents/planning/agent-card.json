@@ -1,7 +1,7 @@
 {
   "name": "planning",
   "owner": "예진",
-  "description": "기획개발 — 변경 요청을 기획서·작업·PR로 잇고, 장애 사건에 관련 PR·기획 문단 후보를 회신하고 연결한다. 인사 인수인계에 진행 중 항목을 알려 주고 인계 목록 누락을 교차검증한다. 원인 판정은 하지 않는다",
+  "description": "기획개발 — 부서의 변경 요청을 접수(중복이면 묶음)해 기획서·작업·PR로 잇고, 장애 사건에 관련 PR·기획 문단 후보를 회신하고 연결한다. 인사 인수인계에 진행 중 항목을 알려 주고 인계 목록 누락을 교차검증한다. 원인 판정은 하지 않는다",
   "url": "http://planning:8101/a2a",
   "version": "0.1.0",
   "capabilities": {
@@ -9,6 +9,16 @@
     "push_notifications": false
   },
   "skills": [
+    {
+      "id": "create_ticket",
+      "description": "변경 요청 접수. 같은 요청(같은 제목, 기존 중복 규칙)이 있으면 새 요청을 원래 요청에 묶고 outcome linked_duplicate + duplicate_of(원래 REQ), context_id는 원래 요청의 ctx_req_. 없으면 outcome created + 새 REQ와 planning이 발급한 ctx_req_. source_ref·evidence_ids는 저장만 하고 판정에 안 쓴다. 고객 원문(untrusted)은 읽지 않는다. 결과 통지는 같은 context_id에 path를 비운 새 요청으로 보낸다(요청 부서 수신 skill이 생기기 전까지는 활동 기록만). execute()를 거친다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/planning.py#CreateTicketInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/planning.py#CreateTicketOutput",
+      "grade": "A",
+      "allowed_requesters": ["support", "marketing", "hr", "data", "orchestrator"],
+      "verifier": null,
+      "priority": "required"
+    },
     {
       "id": "find_related_prs",
       "description": "window_from~window_to 안에 머지된 PR 후보를 최근 머지 순으로 돌려준다(component가 있으면 바뀐 경로 접두사로 거른다). 각 후보에 근거 기획서·문단 id를 붙인다. 후보만 주고 원인은 판정하지 않는다. 상태를 바꾸지 않는다.",

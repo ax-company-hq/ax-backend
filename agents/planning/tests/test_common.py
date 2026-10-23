@@ -34,7 +34,16 @@ def test_agent_card_format_and_served() -> None:
     skills = {s.id: s for s in card.skills}
     required = {"find_related_prs", "link_incident", "verify_rollback_target"}
     hr_links = {"list_in_progress", "verify_handover"}
-    assert set(skills) == required | hr_links
+    intake = {"create_ticket"}  # 부서 변경 요청 접수 (#174)
+    assert set(skills) == required | hr_links | intake
+    assert skills["create_ticket"].grade == "A"
+    assert skills["create_ticket"].allowed_requesters == [
+        "support",
+        "marketing",
+        "hr",
+        "data",
+        "orchestrator",
+    ]
     assert skills["find_related_prs"].grade == "read"
     assert skills["link_incident"].grade == "A"
     assert skills["verify_rollback_target"].grade == "read"
@@ -46,7 +55,7 @@ def test_agent_card_format_and_served() -> None:
     assert skills["list_in_progress"].allowed_requesters == ["hr", "orchestrator"]
     assert skills["verify_handover"].allowed_requesters == ["safety"]
     for skill in card.skills:
-        assert skill.priority == ("required" if skill.id in required else "recommended")
+        assert skill.priority == ("required" if skill.id in required | intake else "recommended")
         assert skill.verifier is None
         for ref in (skill.input_schema, skill.output_schema):
             path, name = ref.split("#")
