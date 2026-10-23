@@ -281,6 +281,8 @@ class Draft(BaseModel):
     reply: str
     source_ids: list[str] = Field(default_factory=list)
     validation: Validation
+    language: str = "ko"
+    reply_ko: str | None = None
 
 
 class Classification(BaseModel):
@@ -290,6 +292,8 @@ class Classification(BaseModel):
     urgency: Urgency
     search_query: str
     pii_masked: list[str] = Field(default_factory=list)
+    language: str = "ko"
+    keywords: list[str] = Field(default_factory=list)
 
 
 class Analysis(BaseModel):

@@ -41,6 +41,14 @@
 - `request_compensation`은 단가를 코드 정책표(`compensation.py`)로 판정하고, 사건(`context_id`)별로 `sequence` 1부터 한 건씩 마케팅에 보낸다. 지급·`execute()`·재무 교차검증은 마케팅 쪽이라 support는 자기 상태를 바꾸지 않고 safety 등록도 필요 없다. 표에 없는 사유는 `not_eligible`. 번호는 마케팅이 소비한 경우(지급·재무 거절·보류·실행 실패)에만 올리고, 재무 검증 중(`working`)·번호/입력 오류·타임아웃·연결 실패는 같은 번호로 다시 보낸다. 같은 사건의 요청은 락으로 한 건씩 처리한다.
 - `suggest_compensation`(읽기)은 보상 후보만 제안한다 (`suggest_handlers.py`). 고객 문장은 읽지 않고, 문의의 주문(shop-api, 목 모드는 시드)의 약속 배송일·배송 완료 시각으로 코드가 지연 일수(채운 일수, 배송 전이면 지금까지)를 세어 `LATE_MIN_DAYS`(1일) 이상이면 `late_delivery` 후보를 돌려준다. 약속일이 없으면 `확인할 수 없음`으로 돌려주고 지어내지 않는다. 문의의 구매자(`buy_<번호>`)와 주문의 구매자가 다르면 not_found다. 응답의 `request`를 담당자가 승인하면 그대로 `request_compensation`에 보낸다 (자동 발급 없음: 마케팅 `issue_coupon`은 B 등급이라 재무 검증을 거치고 기준 금액 이상은 안전 레이어가 보류한다).
 
+## 다국어와 키워드 (`languages.py`, `drafting.py`, `guard.py`)
+- 고객 메시지의 언어는 LLM이 아니라 **코드가 문자 종류로 판별**한다 (`languages.detect`): 한글 `ko`, 가나(한자 포함) `ja`, 한자만 `zh`, 라틴 문자 `en`, 그 밖(키릴·아랍·태국어 등) `other`. 분류 결과 `classification.language`에 담긴다.
+- 답변은 **한국어·영어·일본어·중국어**로만 쓴다. 가드가 이 네 언어의 약속 표현을 검사할 수 있기 때문이다. 그 밖의 언어로 온 문의에는 영어로 답한다. 한국어가 아닌 초안에는 상담원이 읽을 한국어 번역 `reply_ko`와 초안 언어 `language`가 붙는다. LLM을 쓸 수 없을 때는 언어별 대체 템플릿(환불·보상을 약속하지 않는 문장)을 쓴다.
+- 정책 문서는 한국어라서 근거 검색 질의(`search_query`)는 고객 언어와 관계없이 한국어로 만든다 (LLM 대체 경로는 분류별 한국어 검색어).
+- 키워드(`classification.keywords`)는 LLM이 고른 핵심 단어를 **코드가 걸러서** 최대 5개만 남긴다: 개인정보가 든 것(전화번호 등)은 버리고, 빈 값·긴 문장·중복(대소문자 무시)을 뺀다. LLM이 못 주면 분류 규칙 단어(환불·refund·返金 등)로 채운다.
+- 가드는 영어·일본어·중국어 약속 표현(`We will definitely refund…`, `返金を必ずお約束…`, `我们保证退款` 등)을 한국어와 같이 막는다. 가드가 검사하지 못하는 문자(키릴·아랍·태국어 등)는 `unsupported_language` 오류로 막는다. 악센트가 있는 라틴 글자(스페인어 등)는 영어와 구분되지 않아 `language_not_verified` 경고만 하고 통과시키니 직접 확인해야 한다.
+- 예전에 저장된 분석·초안 기록에는 새 필드가 없어도 읽힌다 (`language`는 `ko`, `keywords`는 빈 목록).
+
 ## DejaFix로 보내는 고객 개인정보 (`secure_transfer.py`)
 고객 개인정보는 캣북스 쪽에만 두고, DejaFix(에이전트 이름 `infra`, 팀 이름 `dejafix`·`infra-dejafix`)로 나가는 요청은 **필드 단위로 암호화**한다. 다른 에이전트로 나가는 요청도 모두 `handlers.SEND` 한 곳을 지나가고, 그곳에서 DejaFix 대상만 아래 규칙을 적용한다.
 - 고객 개인정보 필드(`customer_name`·`name`·`email`·`phone`·`address`·`message`·`text`·`subject`·`description`·`receipt_text`·`images`)와 `untrusted`(고객이 쓴 글) 전체를 AES-256-GCM으로 암호화한다. 주문·구매자 가명 ID(`buy_…`)·금액·건수 같은 사실은 그대로 둔다.

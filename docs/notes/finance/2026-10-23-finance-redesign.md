@@ -1,0 +1,178 @@
+# 재무 AI 재설계: 캣북스 재무팀 (2026-10-23)
+
+담당: 태윤 (finance·safety·contracts). 상태: **확정 (태윤 결정, 2026-10-23)**. 기준 문서 개정안은 `docs-change-finance-redesign.md`.
+
+## 1. 한 줄 요약
+
+재무 AI는 **캣북스의 재무팀**이다. 실제 회사 재무팀이 하는 일(결산, 대사, 판매자 정산, 예산·한도 정책, 사후 감사)을
+시중 재무 솔루션을 벤치마킹해 캣북스에 제공한다. **건별 금액 승인(예: 10만 원 환불 하나를 재무가 승인)은 재무의 일이 아니다.**
+건별 검사는 안전 관문의 코드 규칙이 하고, 재무는 그 규칙이 쓰는 한도(정책)를 정하고 나중에 전수로 점검한다.
+
+## 2. 원칙
+
+1. **자동 수집 → 규칙으로 맞추고 분류 → 예외만 사람에게 → 결산·리포트** (Stripe·BlackLine·포트원·Ramp 공통 패턴).
+2. **정책은 재무가 정하고, 집행은 시스템이 한다.** 한도 값은 사람만 바꾸는 기준표(`thresholds.toml`, #202)에 있고,
+   재무 AI는 바꿀 값을 *제안*만 한다. 안전 관문이 그 값으로 건별 검사를 한다.
+3. **숫자는 코드가 계산한다.** LLM은 리포트의 설명 문장만 쓴다. 목 모드·LLM 실패 때는 코드 템플릿 문장으로 대신한다.
+4. **돈을 실제로 움직이지 않는다.** 판매자 정산 지급은 `confirm_settlement`(C, 사람 승인)로만, 그것도 데모에서는 기록만 한다.
+5. **원천 데이터는 API로만 읽는다.** 판매 사이트 DB에 붙지 않는다(CLAUDE.md 4번). 실제 모드는 shop-api, 목 모드는 패키지 시드.
+
+## 3. 모듈 (1차 범위 5개)
+
+| 모듈 | 재무 AI가 하는 일 | 사람이 하는 일 | 참고 |
+|---|---|---|---|
+| ① 결산·리포트 | 일·월 손익 요약(총거래액 GMV, 수수료 매출, 쿠폰 비용, 환불, PG 수수료, 영업 결과), 자동 분개 미리보기, 쉬운 말 설명, 장애 손실 리포트(`loss_aggregation`, 기존 유지) | 결산 확정 | Stripe RevRec, BlackLine |
+| ② 매출·PG 대사 | 주문 ↔ 결제·환불 ↔ PG 정산을 건별로 맞춤. 상태 `matched`(일치)·`mismatch`(금액 다름)·`missing_in_pg`(PG에 없음)·`pending`(아직 정산 전)·`fee_anomaly`(수수료율 이상) | 불일치 건 처리 메모 | 포트원 거래대사, 토스 정산 API |
+| ③ 판매자 정산 | 판매자별 정산금 = 판매액 − 판매 수수료 − 판매자 부담 쿠폰 − 환불. 보류 사유 자동 표시(진행 중 클레임, 구매 미확정, 위험 판매자). 정산 내역서 | 정산 묶음 지급 승인(C, 안전 관문 보류 큐) | 포트원 파트너 정산, 쿠팡·스마트스토어 |
+| ⑤ 예산·한도 정책 | 정책표 보기(쿠폰 한도, 환불 한도, 보상 한도, 판매자 위험), 오늘·이번 달 소진율과 경보, 데이터 근거로 한도 변경 *제안* | 정책 변경(기준표 PR) | Ramp, Pigment |
+| ⑦ 내부통제·이상 탐지 | 사후 감사 리포트: 한도 바로 아래로 쪼개기, 같은 고객 반복 환불, 같은 고객 쿠폰 중복, 환불률 급변, 실행 관문 보류·거절 추이 | 조사 결론 메모 | 비즈플레이 모니터링, Ramp |
+
+나중에: ④ 비용·영수증(영수증 읽기, AI 사용비), ⑥ 세무(부가세·세금계산서), ⑧ 현금흐름 예측.
+
+## 4. 없애는 것 / 바뀌는 것
+
+| 대상 | 지금 | 바뀜 |
+|---|---|---|
+| `verify_amount` (재무 skill) | 쿠폰·환불 B 건마다 안전 관문이 재무에 재계산 요청 | **삭제.** 건별 검사는 안전 관문 코드 규칙(금액 계산·`claimed_fields` 불일치·기준표 한도) |
+| `issue_coupon`, `refund_request` (registry) | B, verifier finance | **A**, verifier 없음. 금액이 기준표 한도를 넘거나 계산이 안 맞으면 지금처럼 C |
+| `review_hold` (재무 skill, #110) | C 보류 건 AI 1차 판단 | **삭제.** #110·#266은 닫는다. ⑦ 사후 감사로 대신 |
+| `review_threshold_change` (#124·#276) | AI가 기준 변경 판단 | 유지하되 ⑤의 한도 제안과 같은 방향. 이번 범위에서는 #124를 머지하지 않고, ⑤는 *제안 기록*만 한다(적용은 기준표 PR) |
+| `loss_aggregation` | 손실 리포트 | **유지**(① 결산·리포트의 일부). 총괄 입력 그대로 |
+| `seller_review`, `settlement_hold` | 판매자 심사, 정산 보류 | **유지**(③의 일부). 보류된 판매자는 정산 묶음에서 빠진다 |
+| 캣북스 연동(#146) | 환불·교환 신청 읽기 | 유지(읽기 전용). ⑦ 감사 자료로도 쓴다 |
+| 장부(`coupon.issued`, `payment.refunded` 구독) | 쿠폰·환불 합계 | 유지. ①·⑤의 자료 |
+
+## 5. 데이터
+
+| 자료 | 실제 모드 | 목 모드 |
+|---|---|---|
+| 주문·결제·환불 | shop-api `GET /api/shop/orders` (`items[].seller_id`, `payments[]`, `refunded_amount`, `shipping_fee`, `points_used`) | `finance_books_seed.json` (2주치 주문, 판매자 3곳) |
+| 쿠폰 | shop-api `GET /api/shop/coupons` + 장부 이벤트 | 시드 |
+| 판매자 | shop-api `GET /api/shop/sellers` | 시드(`sel_0001` 책마루, `sel_0002` 종이나라, `sel_0003` 북앤펜) |
+| PG 정산 | 실제 PG 없음 → **토스 정산 형식 목**(`amount`, `fee`, `pay_out_amount`, `sold_date`, `paid_out_date`)을 결제에서 만든다. 데모용 불일치 몇 건을 일부러 넣는다 | 같음 |
+| 정책(한도) | 안전 관문 `GET /api/safety/thresholds` | 같은 기준표 파일 기본값 |
+| 판매 수수료율·정산 주기 | 재무 설정 `finance_policy.toml`(기본 수수료 10%, 문구 8%, 주 정산) | 같음 |
+| 실행 관문 기록 | 안전 관문 `GET /api/safety/executions` | 시드 |
+
+못 받은 값은 "확인할 수 없음"이고 추정값을 만들지 않는다(fail-closed).
+
+## 6. 재무 API (대시보드용, 읽기 + 사람 결정)
+
+모두 `{data, meta}` 봉투. `meta.mock`, `meta.collected_at`.
+
+- `GET /api/finance/overview` → 오늘 요약: `gmv`, `net_revenue`, `refund_total`, `coupon_cost`, `recon_exceptions`, `settlement_pending`, `audit_findings`, `policy_alerts`, `todo[]`(사람이 할 일)
+- `GET /api/finance/closing?period=day|month&date=YYYY-MM-DD` → `ClosingReport`: 기간, 손익 줄(`lines[]` = {code, label, amount}), 분개 미리보기(`journal[]` = {account, debit, credit, memo}), `commentary`(설명 문장), `status`(`draft`|`confirmed`), `confirmed_by`
+- `POST /api/finance/closing/confirm` (사람 토큰) `{period, date}` → 확정 기록
+- `GET /api/finance/reconciliation?date=` → `ReconciliationResult`: `counts`(상태별), `items[]` = {order_id, payment_id, order_amount, pg_amount, fee, expected_fee, status, note}
+- `POST /api/finance/reconciliation/{payment_id}/note` (사람 토큰) `{note}`
+- `GET /api/finance/settlements?period=` → 판매자별 `SellerStatement[]` = {seller_id, name, gross, commission_rate, commission, seller_coupon, refunds, payout, hold_reasons[], status(`ready`|`held`|`requested`|`approved`|`rejected`)}
+- `POST /api/finance/settlements/batch` → 보류 아닌 판매자들을 묶어 `confirm_settlement`를 `execute()`로 요청(C → 안전 관문 보류 큐). 응답에 `review_id`
+- `GET /api/finance/policy` → 정책표(`rules[]` = {key, label, limit, used_today, used_month, ratio, alert}), 한도 *제안* `proposals[]` = {key, current, proposed, reason}
+- `GET /api/finance/audit?days=7` → `AuditReport`: `findings[]` = {code, severity, title, detail, refs[]}, `stats`(환불 건수·금액, 환불률 지난주 대비, 쿠폰 건수, 관문 보류·거절 수)
+- 유지: `GET /api/finance/ledger`, `/loss-reports`, `/self-test`, `/self-test/last`, `/catbooks/sync`, `/catbooks/items`, `/market-ops`
+- 삭제: `/api/finance/verifications`, `/api/finance/ai-reviews`
+
+사람 토큰: 안전 관문과 같은 형식(`Authorization: Bearer human:<이름>`). 재무 화면은 `VITE_SAFETY_HUMAN_TOKEN`을 쓴다.
+
+## 7. A2A skill (Agent Card)
+
+| skill | 등급 | 요청 가능 | 비고 |
+|---|---|---|---|
+| `loss_aggregation` | read | orchestrator | 유지 |
+| `seller_review` | B | orchestrator | 유지 |
+| `settlement_hold` | B | orchestrator | 유지 |
+| `closing_report` | read | orchestrator, data | 새로. 기간 손익 요약 |
+| `audit_report` | read | orchestrator, data | 새로. 사후 감사 결과 |
+| `review_threshold_change` | read | safety | #124용으로 남겨 둠(코드 유지) |
+| ~~`verify_amount`~~, ~~`review_hold`~~ | | | 삭제 |
+
+## 8. 대시보드 재무 화면 (`/finance`)
+
+위에서 아래로:
+1. 머리말 + 재무 AI 테스트 버튼(유지) + "처음이라면: 관리자가 할 일"(새 흐름으로 고침)
+2. **지금 사람이 할 일**: 정산 묶음 승인 대기, 결산 확정 대기, 대사 불일치, 감사 의심 건
+3. **오늘의 재무** 카드: 총거래액, 순매출(수수료), 환불, 쿠폰 비용, PG 수수료
+4. 탭 또는 섹션 5개: ① 결산·리포트 ② 매출·PG 대사 ③ 판매자 정산 ⑤ 예산·한도 정책 ⑦ 내부통제·감사
+5. 장애 손실 리포트, 캣북스에서 들어온 일(유지)
+
+없애는 화면: 거래별 검증 목록, AI가 결정한 건 목록, 네 갈래 처리 흐름 막대(건별 승인 중심이라).
+
+## 9. 영향받는 다른 부서
+
+- 마케팅·고객지원: 쿠폰·환불이 B → A. 한도 안이면 바로 실행되고, 넘으면 지금처럼 C 보류. 응답 상태 `verifying`이 더 이상 오지 않는다.
+- 총괄: `loss_aggregation` 그대로. 새 `closing_report`·`audit_report`는 선택.
+- 대시보드(병환): 재무 화면은 재무가 고친다. 보류 큐에 `confirm_settlement`가 나타난다.
+
+## 10. 테스트
+
+- 재무: 모듈별 단위 테스트(계산식, 대사 상태 분류, 정산 공식, 소진율, 감사 규칙), API 테스트, 실제 모드 원천 호출 형식 테스트(계약·응답 형식)
+- 안전 관문: 쿠폰·환불 A·executed(한도 안), C(한도 초과·금액 불일치), finance 교차검증 호출이 없음
+- 화면: 타입 검사·빌드, 브라우저로 5개 섹션과 정산 묶음 요청 확인
+
+## 11. API 응답 형식 (백엔드·화면 공통 기준)
+
+금액은 정수 원, 시각은 UTC ISO8601. 모든 응답 `{"data": ..., "meta": {"mock": bool, "collected_at": str, "source": "shop-api"|"seed"}}`.
+값을 못 받으면 해당 필드는 `null`이고 `meta.unavailable: [필드 이름...]`에 적는다.
+
+```jsonc
+// GET /api/finance/overview
+{"date": "2026-10-23",
+ "kpis": {"gmv": 1250000, "commission_revenue": 118000, "refund_total": 64000, "coupon_cost": 42000, "pg_fee": 38750, "net_result": 37250},
+ "todo": [ {"kind": "settlement_batch"|"closing_confirm"|"recon_exception"|"audit_finding"|"policy_alert",
+            "title": "판매자 정산 3곳 지급 승인 대기", "count": 3, "amount": 980000, "link": "settlements"} ]}
+
+// GET /api/finance/closing?period=day|month&date=YYYY-MM-DD   (date 생략 = 오늘, month면 그 달)
+{"period": "day", "date": "2026-10-23", "from": "...", "to": "...",
+ "lines": [ {"code": "gmv", "label": "총거래액", "amount": 1250000},
+            {"code": "commission_revenue", "label": "판매 수수료 매출", "amount": 118000},
+            {"code": "coupon_cost", "label": "쿠폰 비용(회사 부담)", "amount": -42000},
+            {"code": "refund_total", "label": "환불", "amount": -64000},
+            {"code": "pg_fee", "label": "PG 수수료", "amount": -38750},
+            {"code": "net_result", "label": "영업 결과", "amount": 37250} ],
+ "journal": [ {"account": "외상매출금(PG)", "debit": 1250000, "credit": 0, "memo": "카드 결제 매출"} ],
+ "commentary": "오늘 총거래액은 125만 원으로 ...", "commentary_source": "llm"|"template",
+ "status": "draft"|"confirmed", "confirmed_by": null, "confirmed_at": null}
+
+// POST /api/finance/closing/confirm   body {"period": "day", "date": "2026-10-23"}   (Authorization: Bearer human:<이름>)
+// → 위 ClosingReport (status=confirmed). 사람 토큰 없으면 401 {"error": {...}}
+
+// GET /api/finance/reconciliation?date=YYYY-MM-DD   (생략 = 최근 7일)
+{"from": "...", "to": "...",
+ "counts": {"matched": 41, "mismatch": 2, "missing_in_pg": 1, "pending": 5, "fee_anomaly": 1},
+ "totals": {"order_amount": 2300000, "pg_amount": 2280000, "pg_fee": 71300, "pay_out": 2208700},
+ "items": [ {"order_id": "ord_...", "payment_id": "pay_...", "paid_at": "...", "order_amount": 32000, "pg_amount": 30000,
+             "fee": 960, "expected_fee": 928, "pay_out_amount": 29040, "paid_out_date": "2026-10-25"|null,
+             "status": "mismatch", "reason": "PG 금액이 주문보다 2,000원 적음", "note": null} ]}
+// items는 matched를 포함한 전체. 화면은 기본으로 matched 이외만 보여 준다.
+
+// POST /api/finance/reconciliation/{payment_id}/note   body {"note": "PG사에 문의함"}  (사람 토큰) → 바뀐 item
+
+// GET /api/finance/settlements?period=YYYY-Www   (생략 = 지난주, 월~일)
+{"period": "2026-W42", "from": "...", "to": "...", "pay_date": "2026-10-24",
+ "statements": [ {"seller_id": "sel_0001", "name": "책마루", "orders": 18, "gross": 540000, "commission_rate": 0.10,
+                  "commission": 54000, "seller_coupon": 0, "refunds": 32000, "payout": 454000,
+                  "hold_reasons": [ {"code": "open_claim", "label": "처리 중인 환불·교환 1건"} ],
+                  "status": "ready"|"held"|"requested"|"approved"|"rejected", "review_id": null} ],
+ "batch": {"status": "none"|"requested"|"approved"|"rejected", "review_id": null, "execution_id": null, "total_payout": 0, "seller_ids": []}}
+
+// POST /api/finance/settlements/batch   body {"period": "2026-W42"}
+// → 보류 없는(ready) 판매자만 묶어 execute(confirm_settlement) 요청. safety C 보류 → batch.status="requested", review_id 채움.
+//   safety가 꺼져 있으면 503 {"error": {"code": "safety_unavailable", ...}} (fail-closed, 지급 기록 없음)
+
+// GET /api/finance/policy
+{"rules": [ {"key": "compensation_coupon_per_customer", "label": "보상 쿠폰 1인 한도", "limit": 10000, "unit": "원",
+             "used_today": null, "used_month": null, "ratio": null, "alert": "ok"|"warn"|"over"|null, "source": "thresholds.toml"},
+            {"key": "coupon_budget_month", "label": "이번 달 쿠폰 예산", "limit": 3000000, "unit": "원",
+             "used_today": 42000, "used_month": 1240000, "ratio": 0.41, "alert": "ok"} ],
+ "proposals": [ {"key": "refund_auto_limit", "current": 100000, "proposed": 80000, "reason": "최근 2주 환불 95%가 8만 원 이하",
+                 "evidence": {"sample": 120, "p95": 78000}} ],
+ "how_to_change": "기준표(safety/.../thresholds.toml) PR로 사람이 바꿉니다."}
+
+// GET /api/finance/audit?days=7
+{"from": "...", "to": "...",
+ "stats": {"refund_count": 12, "refund_amount": 384000, "refund_rate": 0.052, "refund_rate_prev": 0.031,
+           "coupon_count": 40, "coupon_amount": 210000, "gate_held": 3, "gate_rejected": 1},
+ "findings": [ {"code": "split_under_limit"|"repeat_refund"|"duplicate_coupon"|"refund_rate_jump"|"amount_recheck_failed"|"gate_hold_trend",
+                "severity": "high"|"medium"|"low", "title": "같은 고객에게 한도 바로 아래 쿠폰 3번",
+                "detail": "buyer_0007에게 1시간 안에 9,900원 쿠폰 3장 (한도 10,000원)", "refs": ["cpn_...", "exe_..."]} ]}
+```
