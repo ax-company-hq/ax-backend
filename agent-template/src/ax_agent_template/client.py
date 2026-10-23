@@ -20,6 +20,7 @@ import httpx
 from pydantic import ValidationError
 
 from ax_agent_template.config import agent_token, agent_url, get_agent_name
+from ax_agent_template.logging import log_event
 from ax_agent_template.server import error_result
 from ax_contracts.schemas import AgentRequest, AgentResult, ErrorCode, TaskStatus
 
@@ -34,7 +35,9 @@ async def call_agent(
     name = get_agent_name()
     remaining = (req.meta.deadline - datetime.now(UTC)).total_seconds()
     if remaining <= 0:
-        return error_result(req.meta, TaskStatus.CANCELED, ErrorCode.TIMEOUT)
+        return _failed(
+            name, target, req, error_result(req.meta, TaskStatus.CANCELED, ErrorCode.TIMEOUT)
+        )
 
     meta = req.meta.model_copy(update={"path": [*req.meta.path, name], "token": agent_token(name)})
     sent = req.model_copy(update={"meta": meta})
@@ -44,16 +47,34 @@ async def call_agent(
     try:
         response = await client.post(url, json=sent.model_dump(mode="json"), timeout=remaining)
     except httpx.TimeoutException:
-        return error_result(meta, TaskStatus.CANCELED, ErrorCode.TIMEOUT)
+        return _failed(
+            name, target, req, error_result(meta, TaskStatus.CANCELED, ErrorCode.TIMEOUT)
+        )
     except httpx.HTTPError:
-        return error_result(meta, TaskStatus.FAILED, "unreachable")
+        return _failed(name, target, req, error_result(meta, TaskStatus.FAILED, "unreachable"))
     finally:
         if http_client is None:
             await client.aclose()
 
     if response.status_code != 200:
-        return error_result(meta, TaskStatus.FAILED, f"http_{response.status_code}")
+        failed = error_result(meta, TaskStatus.FAILED, f"http_{response.status_code}")
+        return _failed(name, target, req, failed)
     try:
         return AgentResult.model_validate(response.json())
     except (ValidationError, ValueError):
-        return error_result(meta, TaskStatus.FAILED, ErrorCode.INVALID_OUTPUT)
+        failed = error_result(meta, TaskStatus.FAILED, ErrorCode.INVALID_OUTPUT)
+        return _failed(name, target, req, failed)
+
+
+def _failed(name: str, target: str, req: AgentRequest, result: AgentResult) -> AgentResult:
+    """호출이 상대에게 닿지 못했거나 응답이 깨졌다. 받는 쪽은 기록할 수 없으니 보낸 쪽이 남긴다."""
+    log_event(
+        req.meta.context_id,
+        req.meta.tenant_id,
+        "task_status",
+        {"skill": req.skill, "target": target, "outcome": result.outcome},
+        source=name,
+        skill=req.skill,
+        task_status=result.status.value,
+    )
+    return result

@@ -33,6 +33,7 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from ax_agent_template.config import MAX_PATH_LENGTH, agent_name_scope, is_mock, set_agent_name
+from ax_agent_template.logging import log_event
 from ax_contracts.schemas import (
     AgentCard,
     AgentRequest,
@@ -166,7 +167,73 @@ def create_agent_app(card: AgentCard, handlers: Mapping[str, Handler]) -> FastAP
     return app
 
 
+def _skill_grade(card: AgentCard, skill_id: str) -> str | None:
+    for skill in card.skills:
+        if skill.id == skill_id:
+            return skill.grade
+    return None
+
+
+def _verified_requester(meta: RequestMeta) -> str | None:
+    """로그용 요청자. 토큰에서만 꺼내고 본문 값은 쓰지 않는다. 검증에 실패하면 `None`이다."""
+    try:
+        return verify_token(meta.token)
+    except PermissionError:
+        return None
+
+
+def _execution_id(result: AgentResult) -> str | None:
+    value = result.output.get("execution_id")
+    return value if isinstance(value, str) and len(value) <= 64 else None
+
+
 async def _handle(
+    card: AgentCard, handlers: Mapping[str, Handler], request: AgentRequest
+) -> AgentResult:
+    """요청을 처리하고 받은 것·보낸 것을 공통 로그에 한 줄씩 남긴다(COM-08).
+
+    `source`는 이 에이전트, `requester`는 요청한 쪽이다. 로그 `payload`에는 skill·상태·ID 같은
+    사실만 담고 `input`·`untrusted`·판단 문장은 넣지 않는다.
+    """
+    meta = request.meta
+    requester = _verified_requester(meta)
+    grade = _skill_grade(card, request.skill)
+    received: dict[str, Any] = {"skill": request.skill, "path": list(meta.path)}
+    if meta.idempotency_key:
+        received["idempotency_key"] = meta.idempotency_key
+    log_event(
+        meta.context_id,
+        meta.tenant_id,
+        "request_received",
+        received,
+        source=card.name,
+        skill=request.skill,
+        grade=grade,
+        requester=requester,
+    )
+    result = await _process(card, handlers, request)
+    sent: dict[str, Any] = {
+        "skill": request.skill,
+        "status": result.status.value,
+        "outcome": result.outcome,
+    }
+    if execution_id := _execution_id(result):
+        sent["execution_id"] = execution_id
+    log_event(
+        meta.context_id,
+        meta.tenant_id,
+        "result_sent",
+        sent,
+        source=card.name,
+        skill=request.skill,
+        task_status=result.status.value,
+        grade=grade,
+        requester=requester,
+    )
+    return result
+
+
+async def _process(
     card: AgentCard, handlers: Mapping[str, Handler], request: AgentRequest
 ) -> AgentResult:
     meta = request.meta

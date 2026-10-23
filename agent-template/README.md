@@ -29,9 +29,19 @@ v0은 인터페이스 확정이 목적이라 내부 로직 중 일부(실제 토
 | `llm.py` | `LLMClient`, `MockLLMClient`, `LLMSettings`(`<부서>_LLM_*` → 공통 `LLM_*`), `format_prompt`(`untrusted`는 데이터 블록으로만) |
 | `events.py` | `publish`, `subscribe` (Redis Streams, 목 모드는 메모리 버스) |
 | `queue.py` | `SerialQueue` 인터페이스 (마케팅 보상 쿠폰용, 스텁) |
-| `logging.py` | `log_event(context_id, tenant_id, kind, payload)` |
+| `logging.py` | `log_event(context_id, tenant_id, kind, payload, *, source, skill, task_status, grade, requester)`. 표준 로거에 JSON 한 줄을 남기고, `kind`가 계약 `LogKind`면 공통 로그 저장소에도 쓴다 |
+| `common_log.py` | 공통 로그 저장소(COM-08): `SqliteLogStore`(쓰기·읽기 조회), `AX_COMMON_LOG_DB`(파일 경로, 비면 저장소에 안 씀), `set_store` |
 | `testclient.py` | `ax-test-call` CLI |
 | `config.py` | 포트 표, 에이전트 이름·토큰·주소, 목 모드 |
+
+### 공통 로그 (소통 탭의 원천)
+모든 A2A 요청·응답이 자동으로 한 줄씩 쌓인다. 부서가 따로 남기지 않아도 된다.
+
+- `create_agent_app`이 받은 요청마다 `request_received`와 `result_sent`를 남긴다(거절·실패 결과도 포함).
+  `source`는 기록한 에이전트(받는 쪽), `requester`는 요청한 쪽(토큰에서 꺼낸 값)이다. 방향은 `kind`로 읽는다.
+- `call_agent`는 호출이 상대에게 닿지 못했을 때(시간 초과·연결 실패·깨진 응답)만 `task_status`로 남긴다. 닿은 호출은 받는 쪽이 이미 남겼다.
+- `payload`에는 skill·상태·결과 코드·ID(`execution_id`)만 담는다. 요청의 `input`·`untrusted`·판단 문장은 넣지 않는다.
+- 저장소는 SQLite 파일이고 위치는 `AX_COMMON_LOG_DB`다. 읽는 쪽은 `SqliteLogStore(path).query(CommonLogQuery(...))`로 최근 `limit`건을 시간 오름차순으로 받는다. 로그 쓰기가 실패해도 요청 처리는 멈추지 않는다.
 
 ## 3. 입출력 계약
 `contracts/` 참조 (`AgentCard`, `AgentRequest`, `AgentResult`, `EventEnvelope`, `ExecuteRequest`, `ExecuteDecision`).
