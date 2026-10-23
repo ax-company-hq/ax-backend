@@ -388,16 +388,26 @@ def morning_apply(team: team_mod.Team, in_dir: Path, sizes_path: Path | None,
 
 # ── /go · /stop ──────────────────────────────────────────
 def task_items(body: str) -> list[dict]:
-    """아침 이슈 본문의 후보 줄 → [{no, dept, name, checked}] (본문 순서)."""
+    """아침 이슈 본문의 후보 줄 -> [{no, dept, checked}] (본문 순서). 이름은 읽지 않는다."""
     items = []
     for line in (body or "").splitlines():
         m = TASK_LINE.match(line.strip())
-        if not m:
-            continue
-        name = TASK_NAME.search(m["text"])
-        items.append({"no": int(m["no"]), "dept": m["dept"], "checked": m["x"] in "xX",
-                      "name": clean(name["name"]) if name else f"단계 {m['no']}"})
+        if m:
+            items.append({"no": int(m["no"]), "dept": m["dept"], "checked": m["x"] in "xX"})
     return items
+
+
+def stage_table(team: team_mod.Team) -> dict[int, dict]:
+    """단계 번호 -> {name, dept}. 이슈 본문이 아니라 최근 e2e 결과 아티팩트에서 읽는다."""
+    import tempfile
+
+    import e2e_follow  # noqa: PLC0415 - go에서만 필요
+
+    with tempfile.TemporaryDirectory() as tmp:
+        if not e2e_follow.find_prev("0", Path(tmp)):
+            return {}
+        stages, _, _ = load_stages(Path(tmp), team)
+    return {s["no"]: {"name": s["name"], "dept": s["dept"]} for s in stages}
 
 
 def parse_command(body: str) -> tuple[str, int | None] | None:
@@ -468,12 +478,18 @@ def handle_go(event: dict, team: team_mod.Team, path: Path | None = None) -> lis
     items = [i for i in task_items(issue.get("body") or "") if i["checked"]]
     if limit is not None:
         items = items[:limit]
+    table = stage_table(team) if items else {}
     if not items:
         say(number, f"{seen}\n체크된 후보가 없습니다.")
         return ["체크된 후보 없음"]
     active = active_tasks()
     lines: list[str] = []
     for item in items:
+        known = table.get(item["no"])
+        if not known or known["dept"] != item["dept"]:
+            lines.append(f"- {item['no']}: 단계 표에서 찾지 못함 (건너뜀)")
+            continue
+        item["name"] = known["name"]
         head = f"- {item['no']}. {item['name']}:"
         if item["no"] in active:
             lines.append(f"{head} 이미 진행 중 #{active[item['no']]} (건너뜀)")
@@ -507,17 +523,35 @@ def stop_waiting(morning: int, seen: str) -> list[str]:
 
 
 # ── relay ────────────────────────────────────────────────
-def is_done(number: int) -> bool:
-    """닫힌 이슈, 또는 머지된 PR이면 True (머지 없이 닫은 PR은 아님)."""
+def blocker_state(number: int) -> str:
+    """선행의 상태: done | open | dropped(계획 없음으로 닫힘). 못 읽으면 open (풀지 않는다)."""
     try:
         info = api(f"repos/{repo()}/issues/{number}") or {}
         if info.get("state") != "closed":
-            return False
-        if "pull_request" in info:
-            return bool((api(f"repos/{repo()}/pulls/{number}") or {}).get("merged_at"))
-        return True
+            return "open"
+        if "pull_request" in info:  # PR은 머지된 경우만 완료
+            pr = api(f"repos/{repo()}/pulls/{number}") or {}
+            return "done" if pr.get("merged_at") else "open"
+        return "dropped" if info.get("state_reason") == "not_planned" else "done"
     except subprocess.CalledProcessError:
-        return False  # 못 읽으면 풀지 않는다
+        return "open"
+
+
+def is_done(number: int) -> bool:
+    """닫힌 이슈(계획 없음 제외), 또는 머지된 PR이면 True."""
+    return blocker_state(number) == "done"
+
+
+def flag_dropped(num: int, labels: list[str], refs: list[int]) -> str | None:
+    """선행이 계획 없음으로 닫혔으면 needs-human과 댓글(한 번만). 해당 없으면 None."""
+    dropped = [n for n in refs if blocker_state(n) == "dropped"]
+    if not dropped:
+        return None
+    if "needs-human" not in labels:
+        add_labels(num, ["needs-human"])
+        say(num, f"선행 #{dropped[0]}이 계획 없음으로 닫혔어요. 대기를 풀지 않으니 "
+            "사람이 확인해 주세요.")
+    return f"#{num}: 선행 #{dropped[0]} 계획 없음 - needs-human"
 
 
 def stored_to(team: team_mod.Team, issue: dict) -> str | None:
@@ -543,7 +577,13 @@ def relay_unblock(team: team_mod.Team) -> list[str]:
         if {"needs-human", "blocked", "answered"} & set(labels):
             continue
         refs = sorted({int(n) for n in BLOCKED_BY.findall(issue.get("body") or "")})
-        if not refs or not all(is_done(n) for n in refs):
+        if not refs:
+            continue
+        flagged = flag_dropped(issue["number"], labels, refs)
+        if flagged:
+            done.append(flagged)
+            continue
+        if not all(is_done(n) for n in refs):
             continue
         num = issue["number"]
         remove_label(num, WAIT_LABEL)

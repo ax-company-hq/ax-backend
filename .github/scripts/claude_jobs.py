@@ -546,7 +546,12 @@ BLOCKED_BY = re.compile(r"(?i)\bblocked-by\s+#(\d+)")
 
 
 def request_label(to: str, text: str) -> str:
-    """요청 이슈의 첫 라벨: 선행(blocked-by)이 열려 있으면 waiting, 아니면 to:<부서>."""
+    """요청 이슈의 첫 라벨: AX_RELAY=on이고 blocked-by 선행이 열려 있으면 waiting, 아니면 to:<부서>.
+
+    relay가 꺼져 있으면 waiting을 아무도 풀지 않으므로 항상 to:<부서> (예전과 같은 동작).
+    """
+    if os.environ.get("AX_RELAY") != "on":
+        return f"to:{to}"
     for n in {int(x) for x in BLOCKED_BY.findall(text)}:
         try:
             if api(f"repos/{repo()}/issues/{n}").get("state") != "closed":

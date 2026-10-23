@@ -413,6 +413,7 @@ jobs:
       - name: 검사 → requests → push·PR
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
+          AX_RELAY: ${{ vars.AX_RELAY }}
           DEPT: ${{ needs.prep.outputs.dept }}
           MODE: ${{ inputs.mode }}
           ISSUE: ${{ inputs.issue }}

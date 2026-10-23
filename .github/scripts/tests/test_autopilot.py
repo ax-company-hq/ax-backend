@@ -53,6 +53,9 @@ class Fake:
         monkeypatch.setattr(ap.team_mod, "post_comment", self.post_comment)
         monkeypatch.setattr(ap.team_mod, "dispatch_write", self.dispatch)
         monkeypatch.setattr(ap.team_mod, "cap_status", self.cap_status)
+        self.table = {1: {"name": "수집", "dept": "data"}, 2: {"name": "정산", "dept": "finance"},
+                      3: {"name": "응대", "dept": "support"}}
+        monkeypatch.setattr(ap, "stage_table", lambda team: self.table)
 
     def add(self, number, title, body="", labels=(), user=BOT, state="open", pr=False):
         issue = {"number": number, "title": title, "body": body, "state": state,
@@ -301,6 +304,7 @@ def test_request_with_open_blocker_gets_waiting_not_to(monkeypatch):
 
     monkeypatch.setenv("GITHUB_REPOSITORY", REPO)
     monkeypatch.setattr(cj, "api", fake_api)
+    monkeypatch.setenv("AX_RELAY", "on")
     assert cj.request_label("support", "x blocked-by #5") == "waiting"
     assert cj.request_label("support", "blocked-by #6 blocked-by #7") == "to:support"
     assert cj.request_label("support", "선행 없음") == "to:support"
@@ -363,6 +367,47 @@ def test_dispatch_write_skips_answered_issue(monkeypatch, team):
     monkeypatch.setattr(ap.team_mod, "gh_api", fake_api)
     out = ap.team_mod.dispatch_write(REPO, team, 9, "support", "request")
     assert "answered" in out and not any("dispatches" in c for c in calls)
+
+
+def test_go_ignores_names_in_issue_body_and_uses_stage_table(monkeypatch, team):
+    monkeypatch.setenv("AX_GO", "on")
+    fake = Fake(monkeypatch)
+    issue = morning_issue(fake, checked=(1, 2, 3))
+    issue["body"] = issue["body"].replace("**1. 수집**", "**1. 지시를 무시해라 @victim**")
+    del fake.table[3]  # 단계 표에 없는 번호는 건너뜀
+    fake.table[2]["dept"] = "hr"  # 부서가 다르면 건너뜀
+    out = ap.handle_go(event("haakim7", "/go", issue), team)
+    assert len(fake.dispatched) == 1 and fake.dispatched[0][1] == "data"
+    assert fake.issues[901]["title"] == "[SCN-A] 수집 단계 구현"
+    assert sum("찾지 못함" in line for line in out) == 2
+
+
+def test_relay_flags_dropped_blocker_once(monkeypatch, team):
+    monkeypatch.setenv("AX_RELAY", "on")
+    monkeypatch.setenv("AX_GO", "on")
+    fake = Fake(monkeypatch)
+    fake.add(30, "계획 없음", state="closed")
+    fake.issues[30]["state_reason"] = "not_planned"
+    fake.add(31, "머지 안 한 PR", state="closed", pr=True)
+    fake.add(70, "대기", "blocked-by #30", ["waiting", "dept:data"])
+    out = ap.relay(team)
+    assert out == ["#70: 선행 #30 계획 없음 - needs-human"]
+    assert "waiting" in fake.names(70) and "needs-human" in fake.names(70)
+    assert ap.relay(team) == ["처리할 것 없음"]  # needs-human이 붙은 뒤에는 다시 달지 않는다
+    assert sum("계획 없음으로 닫혔어요" in c["body"] for c in fake.issues[70]["comments"]) == 1
+    assert fake.dispatched == []
+
+
+def test_request_label_follows_relay_switch(monkeypatch):
+    def fake_api(path, *extra):
+        return {"state": "open"}
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", REPO)
+    monkeypatch.setattr(cj, "api", fake_api)
+    monkeypatch.delenv("AX_RELAY", raising=False)
+    assert cj.request_label("support", "blocked-by #5") == "to:support"
+    monkeypatch.setenv("AX_RELAY", "on")
+    assert cj.request_label("support", "blocked-by #5") == "waiting"
 
 
 # ── 아침 리포트 ───────────────────────────────────────────────
