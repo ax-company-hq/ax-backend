@@ -8,7 +8,7 @@ import pytest
 
 from ax_contracts.schemas import HoldReason
 from ax_safety.gate import Gate
-from ax_safety.rules import ActionSpec, load_registry, load_thresholds
+from ax_safety.rules import ActionSpec, ThresholdTable, load_registry, load_thresholds
 
 
 def test_rule_files_load_and_match_agreed_values() -> None:
@@ -17,6 +17,7 @@ def test_rule_files_load_and_match_agreed_values() -> None:
     assert table.review_timeout_seconds == 600  # 데모 10분 자동 거절
     values = {rule.key: rule.value for rule in table.rules if rule.metric != "param"}
     values.pop("pr_allowed_paths")
+    values.pop("merge_allowed_paths")
     assert values == {
         "coupon_total": 300_000,
         "coupon_unit": 20_000,
@@ -30,6 +31,19 @@ def test_rule_files_load_and_match_agreed_values() -> None:
     assert registry.get("confirm_settlement").base_grade == "C"  # type: ignore[union-attr]
     for spec in registry.actions:  # 자기 검증 금지
         assert spec.verifier != spec.owner
+
+
+def test_duplicate_rule_keys_are_refused() -> None:
+    rule = {"key": "dup", "action": "x", "metric": "amount", "value": 1}
+    with pytest.raises(ValueError, match="같은 규칙 키가 두 번 있다: dup"):
+        ThresholdTable.model_validate(
+            {
+                "version": 1,
+                "verify_timeout_seconds": 30,
+                "review_timeout_seconds": 600,
+                "rules": [rule, {**rule, "action": "y"}],
+            }
+        )
 
 
 def test_self_verification_is_refused_at_registration() -> None:
@@ -333,7 +347,9 @@ async def test_generate_pr_is_verified_by_code_rules(gate: Gate, verifier: Any, 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("action", ["write_spec", "split_tasks", "review_pr", "send_message"])
+@pytest.mark.parametrize(
+    "action", ["create_ticket", "write_spec", "split_tasks", "review_pr", "send_message"]
+)
 async def test_planning_record_actions_are_a(gate: Gate, act, action: str) -> None:
     decision = await gate.execute(act(action, "planning", f"plan-{action}"))
     assert (decision.grade, decision.status) == ("A", "executed")
@@ -374,11 +390,12 @@ async def test_merge_pr_rules(gate: Gate, verifier: Any, act) -> None:
     assert verifier.tasks == []
 
     for key, bad in {
-        "pr_changed_lines": {"changed_lines": 301},
-        "pr_allowed_paths": {"changed_paths": [".github/x.yml"]},
+        "merge_changed_lines": {"changed_lines": 301},
+        "merge_changed_files": {"changed_files": 21},
+        "merge_allowed_paths": {"changed_paths": [".github/x.yml"]},
         "pr_review_mismatch": {"review_mismatch_count": 2},
         "pr_linked_incident": {"linked_incident_count": 1},
-        "irreversible": {"irreversible_count": 1},
+        "merge_irreversible": {"irreversible_count": 1},
     }.items():
         decision = await gate.execute(
             act("merge_pr", "planning", f"merge-{key}", **{**clean, **bad})
