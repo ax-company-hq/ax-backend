@@ -5,11 +5,11 @@
 통합 에이전트(총괄). 이벤트를 받아 사건을 판단하고(`ctx_inc_` 발급), Agent Card 레지스트리로 부서를 골라 plan대로 순차·병렬 분배하고, `input-required`를 중계하고, 이관·재시도를 처리하고, 사건을 닫으며 hr에 기록을 요청한다. 인터페이스 기준은 `docs/notes/orchestrator/interface.md`.
 
 ## 2. 실행 방법
-목 모드(가짜 부서 7곳, 실제 연동 없음):
+목 모드(가짜 부서 7곳, 실제 연동 없음). 빈 포트를 찾아 띄우고 브라우저를 연다:
 ```
-ORCHESTRATOR_MOCK=1 uv run uvicorn ax_orchestrator.main:app --app-dir orchestrator/src --port 8000
+uv run python -m ax_orchestrator
 ```
-`http://localhost:8000/demo`에서 장애를 주입해 사건 흐름을 본다. `ORCHESTRATOR_HOLD_TIMEOUT`(초, 기본 600)은 C 등급 승인 대기 마감이다.
+터미널에 나온 `http://localhost:<포트>/demo`에서 장애를 주입해 사건 흐름을 본다. `ORCHESTRATOR_HOLD_TIMEOUT`(초, 기본 600)은 C 등급 승인 대기 마감이다.
 혼합 모드(내 부서만 실제, 나머지는 가짜): `ORCHESTRATOR_REAL_DEPTS=finance`(쉼표로 여러 부서). 부서별로 총괄이 부르는 skill·입력은 `docs/notes/orchestrator/department-guide.md`.
 테스트: `uv run pytest orchestrator`
 
