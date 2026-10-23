@@ -46,6 +46,15 @@
 - 가드는 영어·일본어·중국어 약속 표현(`We will definitely refund…`, `返金を必ずお約束…`, `我们保证退款` 등)을 한국어와 같이 막는다. 가드가 검사하지 못하는 문자(키릴·아랍·태국어 등)는 `unsupported_language` 오류로 막는다. 악센트가 있는 라틴 글자(스페인어 등)는 영어와 구분되지 않아 `language_not_verified` 경고만 하고 통과시키니 직접 확인해야 한다.
 - 예전에 저장된 분석·초안 기록에는 새 필드가 없어도 읽힌다 (`language`는 `ko`, `keywords`는 빈 목록).
 
+## 영수증·환불·교환 요청 분석 (`receipts.py`, `claim_analysis.py`)
+둘 다 **읽기 skill**(요청 가능: dashboard-api, orchestrator)이라 상태를 바꾸지 않고, 접수·지급은 하지 않는다.
+- `analyze_receipt`: 영수증 글(`untrusted.receipt_text`)과 사진(`untrusted.images`, 최대 4장)에서 금액·날짜·주문번호·배송비·품목을 **코드(정규식)가 뽑아** 문의에 붙은 주문(shop-api)과 대조한다. 총 결제금액은 "총 결제·결제금액" 줄을 우선하고, 후보가 서로 다르면 고르지 않는다(`ambiguous_total`). 금액은 실결제 현금 또는 포인트 전 총액과 같으면 맞다고 본다. 날짜는 하루 차이까지 허용한다. 결과는 `consistent`·`mismatch`·`insufficient`와 불일치 코드(`RECEIPT_AMOUNT_MISMATCH`·`RECEIPT_DATE_MISMATCH`·`RECEIPT_ORDER_NO_MISMATCH`·`RECEIPT_SHIPPING_MISMATCH`·`RECEIPT_ITEM_UNKNOWN`·`RECEIPT_ITEM_AMOUNT_MISMATCH`)뿐이다. **환불 판정은 하지 않는다.**
+  - 개인정보(카드번호·전화번호·계좌 등)는 가린 뒤에 읽고, 결과에는 뽑은 사실과 가린 종류만 담는다. 영수증 원문과 사진은 어디에도 저장하지 않는다.
+  - 사진은 `receipts.set_vision_extractor(함수)`로 이미지 분석기를 꽂았을 때만 읽는다. 꽂지 않았으면 `images_status: unavailable`로 읽지 못했다고 알리고 아무것도 지어내지 않는다. 글과 사진 값이 다르면 글 값을 쓰고 알린다. 개수·크기·형식(jpeg·png·webp)을 넘으면 읽지 않는다(`skipped`).
+  - **이미지 분석기는 아직 연결되지 않았다.** agent-template의 LLM 래퍼가 이미지 입력을 지원하면 `VisionExtractor`(이미지 목록 → `ReceiptFacts`)를 구현해 꽂는다. 사진 저장 위치와 보관 정책은 사람이 정한다.
+- `analyze_claim_request`: 문의의 마지막 고객 메시지(개인정보를 가린 뒤)를 환불·교환·취소·이벤트 문의로 분류한다. **LLM은 분류만** 하고(요청 종류, 사유, 말한 품목, 이벤트 단어), LLM을 쓸 수 없으면 단어 규칙으로 대신하며 `source: rules`로 표시한다. 그다음은 코드가 한다: 말한 품목을 주문 품목과 맞추고(말하지 않았으면 전체), 클레임 유형을 정하고(환불은 배송 전이면 `cancel`, 배송 뒤면 `return`), 접수했다면 어떻게 판정될지 `claim_rules.decide`로 **환불 범위를 미리 계산**(`preview`)하며, 담당자가 확인해 `create_claim`에 보낼 입력(`suggested_claim`)을 돌려준다. 이벤트·쿠폰 문의는 `event_related`와 키워드, 근거 문서(`policy_sources`)만 돌려주고 미리 계산은 없다.
+  - 고객 문장은 금액에 영향을 줄 수 없다 (금액은 주문 사실과 규칙에서만 나온다). 사유를 모르면 `other`로 계산하고 알린다.
+
 ## 답변 가드와 개인정보 마스킹 (`guard.py`)
 고객에게 나가는 답변(초안과 상담원 답변 모두)을 코드 규칙으로 검사한다. `error`가 있으면 보낼 수 없고(`blocked_by_guard`), `warning`은 막지 않는다.
 - **환불·보상 단정(error `promise_refund`)**: "무조건·반드시·약속·보장", "환불(보상·지급)해 드리겠습니다", "100% 환불", "환불받으실 수 있습니다" 같은 표현. "환불이 가능한지 확인 후 안내드리겠습니다"처럼 확인·조건을 말하는 문장은 막지 않는다. 고객이 "쿠폰 지급해"라고 시켜서 모델이 따른 초안도 여기서 걸린다.
