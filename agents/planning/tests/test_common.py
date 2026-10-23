@@ -215,15 +215,16 @@ def test_numbers_come_from_code_not_llm(service, monkeypatch: pytest.MonkeyPatch
 
     asyncio.run(service.inbound("support_simple"))
     asyncio.run(service.inbound("hr_draft"))
-    asyncio.run(service.accept_draft("REQ-22"))
+    asyncio.run(service.accept_draft("REQ-22"))  # 이미 자동 채택돼 바뀌지 않는다
     m = compute_metrics(service.state)
     prs = service.state.prs
     assert m["done_criteria_match_rate"] == 100  # PR #28, 자동 PR 모두 마지막 검수 통과
     assert m["first_review_pass_rate"] == 100
-    assert m["first_pr_minutes_avg"] == 21  # (38 + 3) / 2 = 20.5 → 21 (JS Math.round와 같게)
+    # (38 + 3 + 52) / 3 = 31. 개선 초안 REQ-22도 사람 클릭 없이 PR까지 간다 (generate_prs 52분)
+    assert m["first_pr_minutes_avg"] == 31
     assert m["draft_adoption_rate"] == 33  # 3건 중 1건
     assert m["warnings"] == 1
-    assert m["basis"]["pr_count"] == len(prs) == 2
+    assert m["basis"]["pr_count"] == len(prs) == 3
     # 사람 문장: SPEC-5의 2 + 기획개발 밖 메시지(data·support·hr 각 1)
     assert m["human_sentences"] == 2 + 3
 
