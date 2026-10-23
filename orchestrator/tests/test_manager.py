@@ -86,3 +86,21 @@ def test_demo_api_runs_scenario_and_hold_decision(monkeypatch) -> None:
         assert data["status"] == "resolved"
         assert client.get("/demo").status_code == 200
         assert client.get("/api/registry").json()["data"]["depts"]
+
+
+def test_demo_wrong_owner_option_is_transferred_not_failed(monkeypatch) -> None:
+    monkeypatch.setattr(state, "mock", True)
+    monkeypatch.setattr(state, "latency", 0.0)
+    monkeypatch.setattr(state, "manager", None)
+    with TestClient(app) as client:
+        ctx = client.post("/api/demo/incidents", json={"wrong_owner": True}).json()["data"][
+            "context_id"
+        ]
+        for _ in range(300):
+            data = client.get(f"/api/incidents/{ctx}").json()["data"]
+            if data["status"] != "open":
+                break
+            time.sleep(0.01)
+        step = next(s for s in data["steps"] if s["step_id"] == "publish_notice")
+        assert (step["status"], step["transferred_to"]) == ("completed", "support")
+        assert data["status"] == "resolved"

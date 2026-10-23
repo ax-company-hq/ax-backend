@@ -50,8 +50,10 @@ OWNERS = {
 }
 
 
-def fake_card(dept: str, *, empty: bool = False) -> dict[str, Any]:
-    skills = [] if empty else CARDS[dept]
+def fake_card(
+    dept: str, *, empty: bool = False, extra: list[tuple[str, str, str | None]] | None = None
+) -> dict[str, Any]:
+    skills = [] if empty else [*CARDS[dept], *(extra or [])]
     return {
         "name": dept,
         "owner": OWNERS[dept],
@@ -129,6 +131,7 @@ class FakeDepartments:
         self.calls: list[tuple[str, AgentRequest]] = []
         self.down: set[str] = set()
         self.empty_cards: set[str] = set()
+        self.extra_skills: dict[str, list[tuple[str, str, str | None]]] = {}  # 이관 후보용
         self._scripts: dict[tuple[str, str], deque[str]] = defaultdict(deque)
         self._seen_keys: dict[str, AgentResult] = {}
 
@@ -138,7 +141,7 @@ class FakeDepartments:
     async def fetch_card(self, dept: str) -> dict[str, Any] | None:
         if dept in self.down:
             return None
-        return fake_card(dept, empty=dept in self.empty_cards)
+        return fake_card(dept, empty=dept in self.empty_cards, extra=self.extra_skills.get(dept))
 
     async def __call__(self, dept: str, req: AgentRequest) -> AgentResult:
         self.calls.append((dept, req))

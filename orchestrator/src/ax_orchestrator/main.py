@@ -65,6 +65,7 @@ class AppState:
             fakes.script("marketing", "publish_notice", "fail")
         if demo.wrong_owner:
             fakes.script("marketing", "publish_notice", "forbidden")
+            fakes.extra_skills["support"] = [("publish_notice", "A", None)]  # 이관받을 부서
         real = real_depts_from_env(DEPTS)
         if real:
             set_agent_name("orchestrator")
