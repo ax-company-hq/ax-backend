@@ -92,7 +92,7 @@ async def create_claim(request: AgentRequest) -> AgentResult:
     if isinstance(parsed, AgentResult):
         return parsed
     order = orders.get_order(parsed.order_id)
-    if order is None or order.user_id != parsed.user_id:
+    if order is None or order.buyer_id != parsed.buyer_id:
         return h._done(
             request, {"message": f"주문 {parsed.order_id}를 찾을 수 없다"}, outcome="not_found"
         )
@@ -116,7 +116,7 @@ async def create_claim(request: AgentRequest) -> AgentResult:
         items=wanted,
         evidence_count=parsed.evidence_count,
         unsealed=parsed.unsealed,
-        prior_claims=CLAIMS.count_for_user(parsed.user_id),
+        prior_claims=CLAIMS.count_for_buyer(parsed.buyer_id),
         now=datetime.now(UTC),
     )
 
@@ -266,7 +266,7 @@ async def process_claim_queue(request: AgentRequest) -> AgentResult:
             {
                 "claim_id": claim.id,
                 "order_id": claim.order_id,
-                "buyer_id": f"usr_{claim.user_id}",
+                "buyer_id": claim.buyer_id,
                 "refund_amount": claim.expected_refund,
             },
             meta,

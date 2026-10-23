@@ -155,9 +155,9 @@ def test_draft_events_are_saved_with_context_and_feed_kpis(
 # ---------------------------------------------------------------- 클레임
 def create_claim(client: TestClient, key: str = "c-1", **fields: Any) -> dict[str, Any]:
     payload = {
-        "user_id": 1,
+        "buyer_id": "usr_1",
         "customer_name": "김하늘",
-        "order_id": 101,
+        "order_id": "101",
         "type": "return",
         "reason": "defect",
         "evidence_count": 2,
@@ -205,7 +205,9 @@ def test_claim_ids_continue_and_duplicates_are_still_detected(
     first = create_claim(client)["output"]["id"]
     boot(monkeypatch, repo)
     assert create_claim(client, key="c-2")["outcome"] == "duplicate_claim"  # 진행 중 클레임을 기억
-    other = create_claim(client, key="c-3", order_id=102, user_id=2, type="cancel", reason="other")
+    other = create_claim(
+        client, key="c-3", order_id="102", buyer_id="usr_2", type="cancel", reason="other"
+    )
     assert other["output"]["id"] == first + 1
 
 
@@ -323,8 +325,89 @@ def test_pg_full_flow_survives_restart(pg_repo: PgRepo, monkeypatch: pytest.Monk
     assert call(client, "get_inquiry", {"inquiry_id": inquiry["id"]})["output"]["messages"]
     assert create_inquiry(client, key="k-1")["output"]["id"] == inquiry["id"]  # 멱등 결과도 DB에서
     assert (
-        create_claim(client, key="c-9", order_id=102, user_id=2, type="cancel", reason="other")[
-            "output"
-        ]["id"]
+        create_claim(
+            client, key="c-9", order_id="102", buyer_id="usr_2", type="cancel", reason="other"
+        )["output"]["id"]
         == claim["id"] + 1
     )
+
+
+@needs_db
+def test_pg_migrates_a_legacy_claims_table_with_numeric_ids() -> None:
+    """숫자 `order_id`·`user_id` 열로 만들어진 예전 `claims`가 시작할 때 문자열 열로 옮겨진다."""
+    import psycopg
+    from psycopg.types.json import Jsonb
+
+    assert DSN
+    legacy = {
+        "id": 1,
+        "context_id": "ctx_ui_0001",
+        "order_id": 101,
+        "order_no": "ORD-2026-0101",
+        "user_id": 1,
+        "customer": "김하늘",
+        "type": "return",
+        "reason": "defect",
+        "status": "needs_review",
+        "created_at": "t",
+        "updated_at": "t",
+        "outcome": "needs_review",
+        "resolution": "환불",
+        "requires_return": True,
+        "lines": [
+            {
+                "order_item_id": 1,
+                "title": "책",
+                "qty": 1,
+                "requested_qty": 1,
+                "unit_price": 15000,
+                "refund_cash": 15000,
+                "points_back": 0,
+            }
+        ],
+    }
+    with psycopg.connect(DSN, autocommit=True) as conn:
+        conn.execute("DROP TABLE IF EXISTS claims")
+        conn.execute(
+            "CREATE TABLE claims (claim_id bigint PRIMARY KEY, tenant_id text NOT NULL, "
+            "context_id text NOT NULL, order_id bigint NOT NULL, user_id bigint NOT NULL, "
+            "status text NOT NULL, doc jsonb NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO claims VALUES (1, 'shop-demo', 'ctx_ui_0001', 101, 1, 'needs_review', %s)",
+            [Jsonb(legacy)],
+        )
+
+    repo = PgRepo(DSN)  # 시작하면서 이전한다
+    PgRepo(DSN).close()  # 다시 시작해도 이전 SQL이 오류 없이 지나간다
+    with psycopg.connect(DSN, autocommit=True) as conn:
+        columns = dict(
+            conn.execute(
+                "SELECT column_name, data_type FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = 'claims'"
+            ).fetchall()
+        )
+        row = conn.execute("SELECT order_id, buyer_id FROM claims").fetchone()
+    assert columns["order_id"] == "text" and columns["buyer_id"] == "text"
+    assert "user_id" not in columns
+    assert row == ("101", "usr_1")  # 기존 값이 문자열 형식으로 이어진다
+
+    store = PersistentClaimStore(repo)
+    claim = store.get(1)
+    assert claim is not None and (claim.order_id, claim.buyer_id) == ("101", "usr_1")
+    assert claim.lines[0].order_item_id == "1"
+    # 이전 뒤에도 문자열 ID 기록을 새로 저장하고 읽을 수 있다
+    repo.upsert(
+        "claims",
+        {
+            "claim_id": 2,
+            "tenant_id": "shop-demo",
+            "context_id": "ctx_ui_0002",
+            "order_id": "ord_0201",
+            "buyer_id": "usr_9",
+            "status": "needs_review",
+        },
+        {**claim.model_dump(mode="json"), "id": 2, "order_id": "ord_0201", "buyer_id": "usr_9"},
+    )
+    assert PersistentClaimStore(repo).get(2).order_id == "ord_0201"  # type: ignore[union-attr]
+    repo.close()

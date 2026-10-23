@@ -50,10 +50,10 @@ class ClaimStore:
         items = [c for c in self._claims.values() if status is None or c.status == status]
         return sorted(items, key=lambda c: c.id, reverse=True)
 
-    def count_for_user(self, user_id: int) -> int:
-        return sum(1 for c in self._claims.values() if c.user_id == user_id)
+    def count_for_buyer(self, buyer_id: str) -> int:
+        return sum(1 for c in self._claims.values() if c.buyer_id == buyer_id)
 
-    def has_open_claim(self, order_id: int, order_item_ids: set[int]) -> bool:
+    def has_open_claim(self, order_id: str, order_item_ids: set[str]) -> bool:
         """같은 주문 품목에 아직 끝나지 않은 클레임이 있으면 중복 접수로 본다."""
         for claim in self._claims.values():
             if claim.order_id != order_id or claim.status in ("rejected", "completed"):
@@ -135,7 +135,7 @@ class ClaimStore:
             context_id=context_id,
             order_id=order.id,
             order_no=order.order_no,
-            user_id=order.user_id,
+            buyer_id=order.buyer_id,
             customer=customer,
             type=claim_type,  # type: ignore[arg-type]
             reason=reason,  # type: ignore[arg-type]

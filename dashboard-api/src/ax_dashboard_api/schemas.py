@@ -100,7 +100,7 @@ class Reason(BaseModel):
 
 
 class DecisionLine(BaseModel):
-    order_item_id: int
+    order_item_id: int | str  # 목은 숫자, support는 문자열(shop-api order_item_id)
     title: str
     qty: int
     requested_qty: int
@@ -133,7 +133,7 @@ class ExchangeShipment(BaseModel):
 
 class Claim(BaseModel):
     id: int
-    order_id: int
+    order_id: int | str  # 목은 숫자, support는 문자열(shop-api ord_…)
     type: ClaimType
     reason: ClaimReason
     status: ClaimStatus
@@ -182,7 +182,7 @@ class AuditEntry(BaseModel):
 
 
 class ReceiptItem(BaseModel):
-    id: int
+    id: int | str
     title: str
     qty: int
     paid_amount: int

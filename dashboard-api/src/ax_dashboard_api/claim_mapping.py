@@ -81,6 +81,14 @@ def _inspection(value: str | None, *, received: bool) -> str | None:
     return INSPECTION_OUT.get(value, value)
 
 
+def _user_id(buyer_id: str) -> int | None:
+    """구매자 ID(`usr_<번호>`)에서 화면이 쓰는 숫자 고객 번호를 꺼낸다. 형식이 다르면 None."""
+    prefix = "usr_"
+    if buyer_id.startswith(prefix) and buyer_id[len(prefix) :].isdecimal():
+        return int(buyer_id[len(prefix) :])
+    return None
+
+
 def _manager_approved(audit: list[dict[str, Any]]) -> bool | None:
     for entry in reversed(audit):
         if entry["action"] == "approve":
@@ -138,7 +146,7 @@ def to_claim(data: dict[str, Any]) -> Claim:
         agent_note=data["agent_note"],
         manager_approved=_manager_approved(data["audit"]),
         inspection_note=data["inspection_note"],
-        user_id=data["user_id"],
+        user_id=_user_id(data["buyer_id"]),
     )
 
 
