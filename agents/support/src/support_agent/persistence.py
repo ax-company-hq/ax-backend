@@ -47,7 +47,7 @@ TABLES: tuple[Table, ...] = (
     Table("inquiry_results", ("tenant_id", "idempotency_key"), ("context_id",)),
     Table("draft_events", ("event_id",), ("tenant_id", "context_id", "inquiry_id")),
     Table("claims", ("claim_id",), ("tenant_id", "context_id", "order_id", "user_id", "status")),
-    Table("change_requests", ("tenant_id", "context_id"), ("inquiry_id", "status")),
+    Table("change_requests", ("tenant_id", "context_id", "inquiry_id"), ("status",)),
     Table("compensation_sequences", ("tenant_id", "context_id")),
     Table("compensation_results", ("tenant_id", "idempotency_key"), ("context_id",)),
 )
@@ -284,7 +284,7 @@ class PersistentChangeRequestStore(ChangeRequestStore):
         self._repo = repo
         for doc in repo.load("change_requests"):
             link = ChangeRequestLink.model_validate(doc)
-            self._links[link.context_id] = link
+            self._links[(link.context_id, link.inquiry_id)] = link
 
     def _put(self, link: ChangeRequestLink) -> ChangeRequestLink:
         self._repo.upsert(
