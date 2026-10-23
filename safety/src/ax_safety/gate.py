@@ -354,6 +354,9 @@ class Gate:
     ) -> ExecuteDecision:
         now = self._now()
         review_id = f"rev_{uuid.uuid4().hex[:12]}"
+        summary = request.params.get("summary")
+        if isinstance(summary, str) and summary.strip():  # 사람이 읽을 설명. 요청 쪽 데이터다
+            report = {"summary": summary.strip()[:200], **report}
         full_report = {
             "action": request.action,
             "requester": request.requester,
