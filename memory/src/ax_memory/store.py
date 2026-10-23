@@ -9,34 +9,17 @@ import hashlib
 import threading
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal, Protocol
+from typing import Literal, Protocol
 
 from ax_contracts.schemas.common import TENANT_ID_DEFAULT
 from ax_contracts.schemas.ids import IdPrefix
-from ax_contracts.schemas.record import Card
+from ax_contracts.schemas.record import Card, CardDraft
 
 CardKind = Literal["incident", "decision", "case", "notice", "policy", "fraud"]
 CardStatus = Literal["active", "superseded", "retired"]
 Confidence = Literal["low", "mid", "high"]
-
-
-# 계약 #38 머지 후 계약 모델로 교체 예정. 지금은 저장소 내부용 초안이다.
-@dataclass(frozen=True)
-class CardDraft:
-    """저장 전 카드 초안. `Card`에서 card_id·created_at·status·superseded_by를 뺀 것."""
-
-    kind: CardKind
-    context_id: str
-    title: str
-    body: str
-    author: str
-    confidence: Confidence
-    tenant_id: str = TENANT_ID_DEFAULT
-    tags: list[str] = field(default_factory=list)
-    source_refs: list[str] = field(default_factory=list)
-    extra: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
