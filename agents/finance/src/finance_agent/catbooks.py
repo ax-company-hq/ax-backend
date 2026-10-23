@@ -15,9 +15,14 @@
 확인하는 것 (숫자는 모두 코드가 계산한다)
 1. 환불 금액이 규정 계산과 맞는지: 줄별 환불 = 줄 결제 x 수량 비율(반올림 1원 허용),
    합계 = 줄 환불 + 배송비(0 또는 영수증 배송비) - 차감, 교환은 현금 환불 0, 보상 적립금은 규정 금액
-2. 환불이 결제 금액 - 이미 환불한 금액을 넘지 않는지 (`recompute`, `verify_amount`와 같은 코드)
-3. 안전 장치 기준(환불 10만 원 이상)을 넘으면 재무 AI 재량 한도(`ai_review_policy.toml`) 안에서만
-   승인한다 (`review.decide`, `review_hold`와 같은 코드). 한도를 넘거나 자료가 없으면 사람 확인.
+2. 환불이 결제 금액 - 이미 환불한 금액을 넘지 않는지
+   (`recheck.recompute`, 예전 `verify_amount` 계산)
+3. 규칙 확인을 통과해도 안전 장치 기준(환불 10만 원 이상)을 넘으면 "규칙 확인 통과 / 사람 확인
+   필요"로 둔다. 재무 AI가 대신 승인하지 않는다 (재무 재설계 2026-10-23: 건별 승인은 재무의 일이
+   아니다). 실제 지급은 안전 장치 C 보류 큐에서 사람이 결정한다.
+
+결과 `result`: 통과(pass)·막음(blocked)·사람 확인(needs_human).
+`rule_check`: 규칙 계산 결과 passed(맞음)·failed(틀림)·unchecked(자료가 없어 못 함).
 """
 
 from __future__ import annotations
@@ -30,10 +35,9 @@ from typing import Any
 
 import httpx
 
-from ax_contracts.schemas import AgentRequest, RequestMeta
-from finance_agent.handlers import recompute, state
-from finance_agent.review import decide
-from finance_agent.schemas import ReviewHoldInput, VerifyAmountInput
+from ax_contracts.schemas import RequestMeta
+from finance_agent.handlers import state
+from finance_agent.recheck import VerifyAmountInput, recompute
 from finance_agent.sources import Impact
 
 logger = logging.getLogger("ax.finance.catbooks")
@@ -61,6 +65,7 @@ STATUS_KO = {
     "return_received": "반품 도착, 지급 대기",
 }
 RESULT_KO = {"pass": "통과", "blocked": "막음", "needs_human": "사람 확인 필요"}
+RULE_CHECK_KO = {"passed": "규칙 확인 통과", "failed": "규칙 계산 틀림", "unchecked": "확인 못 함"}
 
 _lock = asyncio.Lock()
 
@@ -133,7 +138,7 @@ class CatbooksClient:
 
 
 class _ReceiptSource:
-    """`recompute`·`decide`에 캣북스 영수증의 현금 결제 금액을 넘겨주는 원천."""
+    """`recompute`에 캣북스 영수증의 현금 결제 금액을 넘겨주는 원천."""
 
     def __init__(self, paid: int | None) -> None:
         self.paid = paid
@@ -227,7 +232,6 @@ async def check_claim(
     points = _int(claim.get("points_back")) or 0
     comp = _int(claim.get("compensation")) or 0
     paid = _int(receipt.get("paid_amount")) if receipt else None
-    policy = state().policy
     item: dict[str, Any] = {
         "id": f"catbooks:claim:{claim_id}",
         "claim_id": claim_id,
@@ -251,10 +255,12 @@ async def check_claim(
         "checked_at": datetime.now(UTC).isoformat(),
     }
 
-    def done(result: str, code: str, explanation: str) -> dict[str, Any]:
+    def done(result: str, code: str, explanation: str, rule_check: str) -> dict[str, Any]:
         return item | {
             "result": result,
             "result_ko": RESULT_KO[result],
+            "rule_check": rule_check,
+            "rule_check_ko": RULE_CHECK_KO[rule_check],
             "reason_code": code,
             "explanation": explanation,
         }
@@ -265,18 +271,20 @@ async def check_claim(
             "needs_human",
             "no_receipt",
             f"{order}의 영수증을 받지 못해 결제 금액을 확인할 수 없습니다.",
+            "unchecked",
         )
 
     problems = rule_problems(claim, receipt)
     if problems:
         text = "규정 계산과 다릅니다: " + "; ".join(problems) + "."
-        return done("blocked", "amount_mismatch", text)
+        return done("blocked", "amount_mismatch", text, "failed")
 
     if claim.get("type") == "compensation" and not comp:
         return done(
             "needs_human",
             "amount_undecided",
-            "보상 금액이 정해지지 않은 신청이라 재무 AI가 판단할 수 없습니다.",
+            "보상 금액이 정해지지 않은 신청이라 규칙으로 확인할 수 없습니다.",
+            "unchecked",
         )
 
     abuse = (claim.get("abuse") or {}).get("score") or 0
@@ -286,6 +294,7 @@ async def check_claim(
             "abuse_suspected",
             f"쇼핑몰이 이상 신청 의심(점수 {abuse}점)으로 표시한 건이라 사람이 확인해 주세요. "
             f"금액 계산은 맞습니다 (환불 {_won(cash)}).",
+            "passed",
         )
 
     extra = f" 보상 적립금 {_won(comp)}은 규정 금액입니다." if comp else ""
@@ -294,67 +303,48 @@ async def check_claim(
             "pass",
             "no_cash_refund",
             f"현금 환불이 없는 {item['type_ko']}입니다.{extra}".strip(),
+            "passed",
         )
 
     key = f"catbooks_order_{claim.get('order_id')}"
     params = {"order_id": key, "refund_amount": cash}
     source = _ReceiptSource(paid)
     meta = _meta(claim_id)
-    if cash < SAFETY_REFUND_THRESHOLD:
-        out = await recompute(
-            AgentRequest(meta=meta, skill="verify_amount"),
-            VerifyAmountInput(
-                execution_id=f"catbooks_claim_{claim_id}",
-                action="refund_request",
-                requester="catbooks",
-                params=params,
-                computed_amount=cash,
-                threshold_version=0,
-            ),
-            source,  # type: ignore[arg-type]
-            {key: refunded_before},
-        )
-        if out.decision == "approved":
-            return done(
-                "pass",
-                "recomputed_match",
-                f"{order} 결제 {_won(paid)} 중 이미 {_won(refunded_before)} 환불, "
-                f"이번 환불 {_won(cash)}은 남은 금액 안입니다.{extra}",
-            )
-        return done(
-            "blocked",
-            out.reason_code,
-            f"{order} 결제 {_won(paid)} 중 이미 {_won(refunded_before)}을 환불해서 "
-            f"{_won(cash)}을 더 환불할 수 없습니다.",
-        )
-
-    review = await decide(
-        ReviewHoldInput(
-            review_id=f"catbooks_claim_{claim_id}",
+    out = await recompute(
+        meta,
+        VerifyAmountInput(
             execution_id=f"catbooks_claim_{claim_id}",
             action="refund_request",
             requester="catbooks",
             params=params,
             computed_amount=cash,
-            hold_reason="over_threshold",
+            threshold_version=0,
         ),
-        meta,
         source,  # type: ignore[arg-type]
-        refunded_before,
-        policy,
+        {key: refunded_before},
     )
-    text = review.explanation.replace(key, order)
-    if review.decision == "approve":
-        item["needs_safety"] = True
+    if out.decision != "approved":
         return done(
-            "pass",
-            "within_ai_limit",
-            f"안전 장치 기준({_won(SAFETY_REFUND_THRESHOLD)}) 이상이지만 재무 AI 재량 한도 안: "
-            f"{text}{extra} 실제 지급은 안전 장치를 거쳐야 합니다.",
+            "blocked",
+            out.reason_code,
+            f"{order} 결제 {_won(paid)} 중 이미 {_won(refunded_before)}을 환불해서 "
+            f"{_won(cash)}을 더 환불할 수 없습니다.",
+            "failed",
         )
-    if review.decision == "reject":
-        return done("blocked", review.reason_code, text)
-    return done("needs_human", review.reason_code, text)
+    within = (
+        f"{order} 결제 {_won(paid)} 중 이미 {_won(refunded_before)} 환불, "
+        f"이번 환불 {_won(cash)}은 남은 금액 안입니다.{extra}"
+    )
+    if cash < SAFETY_REFUND_THRESHOLD:
+        return done("pass", "recomputed_match", within, "passed")
+    item["needs_safety"] = True
+    return done(
+        "needs_human",
+        "rule_passed_needs_human",
+        f"규칙 확인 통과: {within} 안전 장치 기준({_won(SAFETY_REFUND_THRESHOLD)}) 이상이라 "
+        "실제 지급은 안전 장치에서 사람이 승인해야 합니다.",
+        "passed",
+    )
 
 
 def _refunded_by_order(claims: list[dict]) -> dict[Any, int]:
