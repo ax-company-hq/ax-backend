@@ -68,3 +68,34 @@ def test_not_connected_without_reader(monkeypatch):
     res = TestClient(app).get(URL)
     assert res.status_code == 503
     assert res.json()["error"]["code"] == "UPSTREAM_NOT_CONNECTED"
+
+
+def test_escalated_records_are_read_and_shown_as_needs_human(monkeypatch):
+    from datetime import UTC, datetime
+
+    from ax_contracts.data_access.common_log import LogRecord
+
+    monkeypatch.delenv("DASHBOARD_MOCK", raising=False)
+    monkeypatch.delenv("AGENT_TEMPLATE_MOCK", raising=False)
+    seen: list[CommonLogQuery] = []
+    record = LogRecord.model_validate(
+        {
+            "log_id": "log_esc_1",
+            "context_id": "ctx_inc_1",
+            "occurred_at": datetime(2026, 10, 22, 9, 0, tzinfo=UTC),
+            "source": "support",
+            "kind": "escalated",
+            "skill": "create_claim",
+            "requester": "orchestrator",
+        }
+    )
+
+    def reader(q: CommonLogQuery) -> CommonLogResult:
+        seen.append(q)
+        return CommonLogResult(records=[record])
+
+    communications.set_reader(reader)
+    res = TestClient(app).get(URL)
+    assert "escalated" in seen[0].kinds
+    (line,) = res.json()["data"]
+    assert line["outcome"] == "needs_human"

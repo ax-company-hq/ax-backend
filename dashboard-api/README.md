@@ -97,6 +97,14 @@ support 출력은 `claim_mapping.py`에서 화면 모델로 바꾼다 (값을 �
 - 온보딩 단계 완료는 이미 그 상태면 그대로 성공하고(`duplicate`), 없는 온보딩·단계는 404다. 변경(`assignment-changes`)의 시작·확정·퇴직 확정은 통합 에이전트만 부르고 화면은 조회만 한다 (hr Agent Card가 dashboard-api를 허용하지 않음). 계획 비교의 `draft`는 화면에서 사람이 쓴 요약이라 `input`으로 보낸다 (`untrusted` 비움).
 - 목 모드 데이터는 `mock_handover.py`(인수인계·후보 카드)와 `mock_hr.py`(온보딩·변경·명부·감사·계획 비교)에 있다. 목의 진행률은 hr과 같은 규칙(완료한 단계 / 전체 단계)으로 코드가 센다.
 
+### 소통 탭: 부서 간 A2A 대화
+| 경로 (`/api/dashboard` 아래) | 응답 `data` |
+| --- | --- |
+| GET `/communications?dept&context_id` | 한 줄(`CommunicationLine`)의 배열, 시간 오름차순. `meta.total`, `meta.truncated` |
+- 읽기는 공통 로그 읽기 조회(`CommonLogQuery`/`CommonLogResult`)만 쓴다. 쓰는 쪽은 agent-template이 A2A 요청·응답을 자동 기록하도록 요청해 둔 상태다(이슈 #242). 읽기 구현이 아직 없어서 목 모드가 아니면 `set_reader`로 읽기 함수를 꽂기 전까지 503 `UPSTREAM_NOT_CONNECTED`다.
+- 한 줄에는 코드가 만든 필드만 담는다: `from_agent` → `to_agent`, `skill`, `outcome`(`completed`·`rejected`·`held`·`needs_human`·`in_progress`), `occurred_at`, `context_id`, `execution_id`. `payload`와 고객 원문은 넣지 않는다. `execution_id`로 안전 레이어 결정과 이어 "보류·거부"를 한 줄에 보여 줄 수 있다.
+- `dept`는 그 부서가 보냈거나 받은 줄만, `context_id`는 같은 사건끼리 묶어 본다. 방향은 요청(`request_received`)이면 요청자 → 받은 쪽, 결과·결정이면 기록한 쪽 → 요청자다. 이벤트 발행·기억 참조는 부서 간 대화가 아니라서 뺀다. 이관 큐로 넘긴 건(`escalated`)은 `needs_human`으로 보인다.
+
 ### 사건 ID (`context_id`)
 모든 요청에는 사건 단위 `context_id`가 필요하다. 화면(상담원) 호출은 요청마다 새 `ctx_ui_<hex>`를 붙인다 (`support_client.UI_CONTEXT_PREFIX`, 한 곳).
 - 계약에 정해진 접두사는 흉내 내지 않는다: `ctx_inc_`(통합 에이전트 발급), `ctx_req_`(기획개발 발급 — 같은 변경 요청을 여러 부서가 보내면 하나로 묶는 번호표), `ctx_ntc_`, `ctx_cmp_`(마케팅 발급). 예전에는 화면 호출에 `ctx_req_`를 붙였는데, 기획개발이 발급하는 변경 요청 번호와 같은 모양이라 헷갈릴 수 있어 바꿨다.
