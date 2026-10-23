@@ -11,6 +11,7 @@ uv run python -m ax_orchestrator
 ```
 터미널에 나온 `http://localhost:<포트>/demo`에서 장애를 주입해 사건 흐름을 본다. `ORCHESTRATOR_HOLD_TIMEOUT`(초, 기본 600)은 C 등급 승인 대기 마감이다.
 혼합 모드(내 부서만 실제, 나머지는 가짜): `ORCHESTRATOR_REAL_DEPTS=finance`(쉼표로 여러 부서). 부서별로 총괄이 부르는 skill·입력은 `docs/notes/orchestrator/department-guide.md`.
+시연 콘솔: 백엔드의 `/demo`는 개발용 간단 화면이고, 같은 기능의 프론트엔드 시연 콘솔은 `ax-frontend`의 `orchestrator-web`(포트 3004)이다. 접속 방법(터미널 2개)은 그 레포 README의 "통합 에이전트 화면 접속"을 따른다. 운영 화면(관리자 회사 전체)은 `dashboard-web`(병환)이 `dashboard-api`를 거쳐 만든다.
 테스트: `uv run pytest orchestrator`
 
 ## 3. 입출력 계약

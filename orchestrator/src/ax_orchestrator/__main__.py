@@ -36,7 +36,12 @@ def main(argv: list[str] | None = None) -> None:
     port = args.port or free_port()
     os.environ.setdefault("ORCHESTRATOR_MOCK", "1")
     url = f"http://localhost:{port}/demo"
-    print(f"\n  총괄 목업: {url}\n  (끄려면 Ctrl+C)\n", flush=True)
+    print(f"\n  총괄 목업: {url}\n  (끄려면 Ctrl+C)", flush=True)
+    print(
+        "  시연 콘솔(ax-frontend orchestrator-web)을 쓰려면:\n"
+        f"    ORCHESTRATOR_PROXY_TARGET=http://localhost:{port} npm run dev:orchestrator\n",
+        flush=True,
+    )
     if not args.no_browser:
         threading.Timer(1.5, webbrowser.open, args=(url,)).start()
 
