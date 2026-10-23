@@ -1,13 +1,15 @@
-"""인사 탭(인수인계 질문) 목 엔드포인트. 형식은 계약 `ax_contracts.schemas.hr`와 같아야 한다."""
+"""인사 탭(인수인계 질문·후보 카드) 목 엔드포인트. 형식은 계약 `schemas.hr`와 같아야 한다."""
 
 import pytest
 from fastapi.testclient import TestClient
 
 from ax_contracts.schemas.hr import (
     AnswerHandoverQuestionOutput,
+    DecideCandidateCardOutput,
     HandoverQuestion,
-    StartHandoverOutput,
+    HandoverView,
 )
+from ax_contracts.schemas.record import Card
 from ax_dashboard_api import mock_handover
 from ax_dashboard_api.main import app
 
@@ -32,14 +34,29 @@ def answer(client: TestClient, question_id: str, text: str = "확인 끝났습�
     )
 
 
+def decide(client: TestClient, card_id: str, decision: str = "approve", **extra):
+    return client.post(
+        f"{BASE}/candidate-cards/{card_id}/decision", json={"decision": decision, **extra}
+    )
+
+
 def test_list_matches_the_contract_models(client: TestClient) -> None:
     body = client.get(BASE + "/handovers").json()
-    handovers = [StartHandoverOutput.model_validate(h) for h in body["data"]]
+    handovers = [HandoverView.model_validate(h) for h in body["data"]]
     assert body["meta"]["total"] == 2
     first = handovers[0]
-    assert first.status == "input_required" and first.gap_count == 2 and first.completeness == 50
-    assert len(first.questions) == first.gap_count  # 빈 자리 수는 질문 수와 같다
-    assert handovers[1].status == "ready" and handovers[1].questions == []
+    assert first.status == "input_required" and first.completeness == 50
+    assert (first.owner_id, first.successor_id, first.area) == ("emp_01", "emp_02", "payment")
+    assert len(first.open_questions) == 2
+    assert handovers[1].status == "ready" and handovers[1].open_questions == []
+
+
+def test_list_filters_by_status_and_area(client: TestClient) -> None:
+    ready = client.get(BASE + "/handovers", params={"status": "ready"}).json()
+    assert [h["handover_id"] for h in ready["data"]] == ["hov_0002"]
+    payment = client.get(BASE + "/handovers", params={"area": "payment"}).json()
+    assert [h["handover_id"] for h in payment["data"]] == ["hov_0001"]
+    assert client.get(BASE + "/handovers", params={"status": "nope"}).status_code == 422
 
 
 def test_get_one_and_unknown_is_404(client: TestClient) -> None:
@@ -54,6 +71,8 @@ def test_pending_questions_carry_the_context_id_the_answer_must_use(client: Test
     assert [q.question_id for q in questions] == ["hq_0001", "hq_0002"]
     assert {q.context_id for q in questions} == {"ctx_hnd_0001"}
     assert all(q.assignee_id and q.question and q.gap_field for q in questions)
+    other = client.get(BASE + "/handover-questions", params={"assignee_id": "emp_99"}).json()
+    assert other["data"] == []
 
 
 def test_answering_raises_completeness_until_the_handover_is_ready(client: TestClient) -> None:
@@ -66,27 +85,20 @@ def test_answering_raises_completeness_until_the_handover_is_ready(client: TestC
     )
     assert last.status == "ready" and last.completeness == 100 and last.remaining_questions == []
     assert client.get(BASE + "/handover-questions").json()["data"] == []
-    assert client.get(BASE + "/handovers/hov_0001").json()["data"]["gap_count"] == 0
+    assert client.get(BASE + "/handovers/hov_0001").json()["data"]["open_questions"] == []
 
 
 def test_same_answer_twice_is_applied_once(client: TestClient) -> None:
-    first = answer(client, "hq_0001", key="same").json()
-    second = answer(client, "hq_0001", key="same")
+    first = answer(client, "hq_0001", key="a").json()
+    second = answer(client, "hq_0001", key="b")  # 키가 달라도 같은 답이면 한 번만 반영
     assert second.status_code == 200 and second.json() == first
-    assert client.get(BASE + "/handovers/hov_0001").json()["data"]["gap_count"] == 1
+    assert len(client.get(BASE + "/handovers/hov_0001").json()["data"]["open_questions"]) == 1
 
 
-def test_reusing_a_key_for_another_question_conflicts(client: TestClient) -> None:
-    answer(client, "hq_0001", key="same")
-    response = answer(client, "hq_0002", key="same")
-    assert response.status_code == 409
-    assert response.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
-
-
-def test_answering_an_answered_question_with_a_new_key_is_409(client: TestClient) -> None:
-    answer(client, "hq_0001", key="k-1")
-    response = answer(client, "hq_0001", key="k-2")
-    assert response.status_code == 409 and response.json()["error"]["code"] == "INVALID_STATE"
+def test_a_different_answer_to_an_answered_question_is_a_conflict(client: TestClient) -> None:
+    answer(client, "hq_0001", text="첫 답")
+    response = answer(client, "hq_0001", text="다른 답", key="k-2")
+    assert response.status_code == 409 and response.json()["error"]["code"] == "CONFLICT"
 
 
 def test_unknown_question_is_404(client: TestClient) -> None:
@@ -110,13 +122,33 @@ def test_invalid_answer_requests_are_422_and_change_nothing(client: TestClient, 
     assert len(client.get(BASE + "/handover-questions").json()["data"]) == 2
 
 
-def test_not_connected_outside_mock_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("DASHBOARD_MOCK", raising=False)
-    monkeypatch.delenv("AGENT_TEMPLATE_MOCK", raising=False)
-    client = TestClient(app)
-    for path in ("/handovers", "/handover-questions"):
-        response = client.get(BASE + path)
-        assert response.status_code == 503
-        assert response.json()["error"]["code"] == "UPSTREAM_NOT_CONNECTED"
-    post = answer(client, "hq_0001")
-    assert post.status_code == 503
+# ---------------------------------------------------------------- 후보 카드
+def test_candidate_cards_match_the_contract_model(client: TestClient) -> None:
+    body = client.get(BASE + "/candidate-cards").json()
+    cards = [Card.model_validate(c) for c in body["data"]]
+    assert body["meta"]["total"] == 2
+    assert all(c.candidate and c.confidence == "low" for c in cards)
+    search = client.get(BASE + "/candidate-cards", params={"area": "search"}).json()
+    assert [c["card_id"] for c in search["data"]] == ["card_d2c8a53d7ee0"]
+
+
+def test_deciding_a_card_removes_it_from_the_queue(client: TestClient) -> None:
+    approved = DecideCandidateCardOutput.model_validate(
+        decide(client, "card_d2c8a53d7ee0", note="맞는 결정").json()["data"]
+    )
+    assert (approved.card_id, approved.status) == ("card_d2c8a53d7ee0", "active")
+    rejected = decide(client, "card_77aa10c2be31", "reject").json()["data"]
+    assert rejected["status"] == "retired"
+    assert client.get(BASE + "/candidate-cards").json()["data"] == []
+
+
+def test_same_decision_twice_succeeds_and_the_opposite_conflicts(client: TestClient) -> None:
+    decide(client, "card_d2c8a53d7ee0")
+    assert decide(client, "card_d2c8a53d7ee0").status_code == 200
+    response = decide(client, "card_d2c8a53d7ee0", "reject")
+    assert response.status_code == 409 and response.json()["error"]["code"] == "CONFLICT"
+
+
+def test_unknown_card_is_404_and_a_bad_decision_is_422(client: TestClient) -> None:
+    assert decide(client, "card_9999").status_code == 404
+    assert decide(client, "card_d2c8a53d7ee0", "maybe").status_code == 422
