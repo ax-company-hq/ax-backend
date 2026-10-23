@@ -193,3 +193,85 @@ def test_verify_rejects_when_no_merge_in_window(a2a_body) -> None:
     assert (result["status"], result["outcome"]) == ("completed", "rejected_by_review")
     assert result["output"]["approved"] is False
     assert result["output"]["reason_code"] == "no_deploy_in_window"
+
+
+# ---- verify_rollback_target: safety 교차검증 호출 형식 (`Gate._cross_verify`)
+
+ROLLBACK_PARAMS = {
+    "service": "shop-api",
+    "from_version": "v2.4.1",
+    "to_version": "v2.4.0",
+    "release_fault_injection": True,
+    "incident_opened_at": "2026-10-21T05:04:00Z",
+}
+
+
+def _rollback_review(
+    a2a_body, deployed_at: str | None, action: str = "rollback_deployment", **extra
+) -> dict:
+    """safety `Gate._cross_verify`가 verifier skill에 넣는 input과 같은 모양."""
+    params = {**ROLLBACK_PARAMS, **extra}
+    if deployed_at is not None:
+        params["deployed_at"] = deployed_at
+    payload = {
+        "execution_id": "exe_rb_1",
+        "action": action,
+        "requester": "infra",
+        "params": params,
+        "computed_amount": None,
+        "threshold_version": "2026-10-23",
+    }
+    body = a2a_body(
+        "verify_rollback_target", payload, token="mock:safety", idempotency_key="verify:exe_rb_1"
+    )
+    return _call(body)
+
+
+def _safety_verdict(result: dict) -> str:
+    """safety `call_verifier` 규칙: completed + (decision approved 또는 approved true)만 승인."""
+    if result["status"] != "completed":
+        return "unavailable"
+    out = result["output"]
+    approved = out.get("decision") == "approved" or out.get("approved") is True
+    return "approved" if approved else "rejected"
+
+
+def test_verify_review_format_approves(a2a_body) -> None:
+    result = _rollback_review(a2a_body, "2026-10-21T05:03:00Z")
+    assert (result["status"], result["outcome"]) == ("completed", None)
+    out = VerifyRollbackTargetOutput.model_validate(result["output"])
+    assert (out.approved, out.reason_code) == (True, "deploy_before_incident")
+    assert [p.pr_number for p in out.related_prs] == [28]
+    assert _safety_verdict(result) == "approved"
+    assert "execution:exe_rb_1" in result["evidence"]["ref_ids"]
+    # 계약 형식과 같은 판정이다
+    contract = _verify(a2a_body, "2026-10-21T05:03:00Z")
+    assert result["output"] == contract["output"]
+    # 계약 이름(target_version)으로 와도 같다
+    named = _rollback_review(a2a_body, "2026-10-21T05:03:00Z", target_version="v2.4.1")
+    assert named["output"] == result["output"]
+
+
+def test_verify_review_format_rejects(a2a_body) -> None:
+    after = _rollback_review(a2a_body, "2026-10-21T05:10:00Z")
+    assert (after["status"], after["outcome"]) == ("completed", "rejected_by_review")
+    assert after["output"]["reason_code"] == "deploy_after_incident"
+    assert _safety_verdict(after) == "rejected"
+    none = _rollback_review(a2a_body, "2026-10-20T05:03:00Z")
+    assert (none["status"], none["outcome"]) == ("completed", "rejected_by_review")
+    assert none["output"]["reason_code"] == "no_deploy_in_window"
+    assert _safety_verdict(none) == "rejected"
+
+
+def test_verify_review_format_bad_input_fails(a2a_body) -> None:
+    # 배포 시각이 없으면 판정하지 않는다 → failed (safety는 무응답 → 보류)
+    no_deploy = _rollback_review(a2a_body, None)
+    assert (no_deploy["status"], no_deploy["outcome"]) == ("failed", "invalid_input")
+    assert _safety_verdict(no_deploy) == "unavailable"
+    # 되돌릴 버전(from_version)도 없으면 실패
+    no_version = _rollback_review(a2a_body, "2026-10-21T05:03:00Z", from_version=None)
+    assert (no_version["status"], no_version["outcome"]) == ("failed", "invalid_input")
+    # 다른 액션의 검토는 받지 않는다
+    other = _rollback_review(a2a_body, "2026-10-21T05:03:00Z", action="restart_service")
+    assert (other["status"], other["outcome"]) == ("failed", "invalid_input")
+    assert _safety_verdict(other) == "unavailable"
