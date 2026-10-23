@@ -18,6 +18,7 @@ from ax_contracts.schemas import AgentRequest, AgentResult, Evidence
 from support_agent import claim_rules, orders
 from support_agent import handlers as h
 from support_agent.claim_schemas import (
+    ClaimReasonHit,
     CreateClaimInput,
     DecideClaimInput,
     GetClaimInput,
@@ -31,6 +32,19 @@ from support_agent.claim_schemas import (
 from support_agent.claims import ClaimStore, now_iso
 
 CLAIMS = ClaimStore()
+# 지급을 실행하지 못한 이유 (safety 판정 상태 → 화면에 보일 문장)
+HELD_MESSAGE = {
+    "verifying": "재무 교차검증 중",
+    "held": "안전 레이어 보류 (사람 확인 대기)",
+    "rejected": "실행이 거부됨",
+    "failed": "실행에 실패함",
+}
+
+
+def _note(request: AgentRequest) -> str | None:
+    """상담원·검수 메모는 `untrusted.note`로만 받는다. 저장만 하고 지시로 쓰지 않는다."""
+    note = request.untrusted.get("note")
+    return note.strip() or None if isinstance(note, str) else None
 
 
 def _claim_not_found(request: AgentRequest, claim_id: int) -> AgentResult:
@@ -140,7 +154,6 @@ async def decide_claim(request: AgentRequest) -> AgentResult:
     allowed = ("needs_review",) if parsed.decision == "approve" else ("needs_review", "needs_info")
     if claim.status not in allowed:
         return _invalid_state(request, claim.id, claim.status, "결정")
-    note = request.untrusted.get("note")
 
     async def apply() -> tuple[dict[str, Any], bool]:
         if parsed.decision == "approve":
@@ -148,8 +161,14 @@ async def decide_claim(request: AgentRequest) -> AgentResult:
         else:
             status = "rejected"
         claim.decided_by = request.meta.requester or "agent_console"
+        claim.agent_note = _note(request)
         CLAIMS.set_status(
-            claim, status, parsed.decision, note=note if isinstance(note, str) else ""
+            claim,
+            status,
+            parsed.decision,
+            note=claim.agent_note or "",
+            system_outcome=claim.outcome,
+            agent_action=parsed.decision,
         )
         return claim.model_dump(mode="json"), False
 
@@ -175,6 +194,7 @@ async def receive_return(request: AgentRequest) -> AgentResult:
     async def apply() -> tuple[dict[str, Any], bool]:
         claim.return_received_at = now_iso()
         claim.inspection = parsed.inspection
+        claim.inspection_note = _note(request)
         CLAIMS.set_status(claim, "return_received", "receive", inspection=parsed.inspection)
         return claim.model_dump(mode="json"), False
 
@@ -195,6 +215,7 @@ async def inspect_return(request: AgentRequest) -> AgentResult:
 
     async def apply() -> tuple[dict[str, Any], bool]:
         claim.inspection = parsed.inspection
+        claim.inspection_note = _note(request)
         CLAIMS.set_status(claim, "return_received", "inspection", inspection=parsed.inspection)
         return claim.model_dump(mode="json"), False
 
@@ -228,6 +249,7 @@ async def process_claim_queue(request: AgentRequest) -> AgentResult:
                     claim_id=claim.id,
                     result="skipped",
                     detail=", ".join(b.message for b in entry.blockers),
+                    blockers=entry.blockers,
                 )
             )
             continue
@@ -260,13 +282,32 @@ async def process_claim_queue(request: AgentRequest) -> AgentResult:
         )
         if decision.status != "executed":
             held += 1
-            results.append(QueueRunResult(claim_id=claim.id, result="held", detail=decision.status))
+            results.append(
+                QueueRunResult(
+                    claim_id=claim.id,
+                    result="held",
+                    detail=decision.status,
+                    blockers=[
+                        ClaimReasonHit(
+                            code="ON_HOLD",
+                            level="block",
+                            message=HELD_MESSAGE.get(decision.status, decision.status),
+                        )
+                    ],
+                )
+            )
             continue
         # TODO: shop-api 환불 API(SHOP-12) 호출. 지금은 실행 허가와 지급 기록만 남긴다
         claim.refund_paid = claim.expected_refund
         claim.processed_at = now_iso()
         CLAIMS.set_status(
-            claim, "completed", "pay", amount=claim.expected_refund, execution=decision.execution_id
+            claim,
+            "completed",
+            "pay",
+            amount=claim.expected_refund,
+            refund_cash=claim.expected_refund,
+            compensation=0,
+            execution=decision.execution_id,
         )
         paid += 1
         results.append(QueueRunResult(claim_id=claim.id, result="paid", refund=claim.refund_paid))
