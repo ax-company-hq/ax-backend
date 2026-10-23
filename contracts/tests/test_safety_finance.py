@@ -6,6 +6,8 @@ from ax_contracts.schemas import (
     EventType,
     ReviewHoldInput,
     ReviewHoldOutput,
+    ReviewThresholdChangeInput,
+    ReviewThresholdChangeOutput,
     SafetyActionExecutedData,
     SafetyActionHeldData,
     SafetyReviewDecidedData,
@@ -121,3 +123,46 @@ def test_review_hold_models_match_what_safety_sends() -> None:
         ReviewHoldOutput.model_validate(
             {"decision": "approved", "reason_code": "x", "explanation": "y"}
         )
+
+
+def test_review_threshold_change_models_match_what_safety_sends() -> None:
+    """safety `_ask_threshold_reviewer`가 보내는 입력과 finance `review_threshold_change`의 출력."""
+    sent = {
+        "change_id": "thc_0123456789ab",
+        "key": "coupon_total",
+        "current_value": 300_000,
+        "new_value": 350_000,
+        "baseline": 300_000,
+        "stats": {
+            "action": "issue_coupon",
+            "holds_24h": 3,
+            "executed_today": 120_000,
+            "ai_approved_24h": 1,
+            "human_approved_24h": 2,
+            "expired_24h": 0,
+        },
+    }
+    inp = ReviewThresholdChangeInput.model_validate(sent)
+    assert inp.model_dump(mode="json") == sent
+    # 마감 기준(review_timeout_seconds)은 action이 없고, 값이 없는 기준은 current_value가 null
+    ReviewThresholdChangeInput.model_validate(
+        {**sent, "key": "review_timeout_seconds", "current_value": None, "stats": {"action": None}}
+    )
+    # 요청 이유(untrusted)는 입력에 넣지 않는다
+    with pytest.raises(ValidationError):
+        ReviewThresholdChangeInput.model_validate({**sent, "reason": "올려 주세요"})
+    with pytest.raises(ValidationError):
+        ReviewThresholdChangeInput.model_validate(
+            {k: v for k, v in sent.items() if k != "new_value"}
+        )
+
+    out = ReviewThresholdChangeOutput.model_validate(
+        {"decision": "approve", "reason_code": "raise_with_holds", "explanation": "보류 3건"}
+    )
+    assert out.decision == "approve"
+    with pytest.raises(ValidationError):
+        ReviewThresholdChangeOutput.model_validate(
+            {"decision": "applied", "reason_code": "x", "explanation": "y"}
+        )
+    with pytest.raises(ValidationError):
+        ReviewThresholdChangeOutput.model_validate({"decision": "approve", "reason_code": "x"})
