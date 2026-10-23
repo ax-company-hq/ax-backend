@@ -1,0 +1,26 @@
+{
+  "title": "명부 조회와 공백 영역",
+  "description": "get_roster를 부르면 영역별 담당·교대가 나오고, 담당이 없는 inventory가 공백 영역으로 잡힌다. 두 번째 호출은 영역을 좁힌다.",
+  "steps": [
+    {
+      "skill": "get_roster",
+      "requester": "orchestrator",
+      "input": {},
+      "expect": {
+        "status": "completed",
+        "outcome": "roster",
+        "output_has": ["entries.0.member_id", "gap_areas.0"]
+      }
+    },
+    {
+      "skill": "get_roster",
+      "requester": "support",
+      "input": {"area": "payment"},
+      "expect": {
+        "status": "completed",
+        "outcome": "roster",
+        "output": {"gap_areas": []}
+      }
+    }
+  ]
+}

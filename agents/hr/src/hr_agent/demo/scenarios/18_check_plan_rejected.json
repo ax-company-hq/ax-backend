@@ -1,0 +1,37 @@
+{
+  "title": "계획 비교: 이미 기각된 안",
+  "description": "결제 서버 캐시 도입안이 기각된 기록이 있다. 같은 영역에 비슷한 새 계획을 내면 REJECTED_BEFORE 경고가 나오고, 기각 후 경과 일수는 코드가 계산한다. 열흘 뒤에 다시 물으면 10일로 나온다.",
+  "steps": [
+    {
+      "skill": "record_case",
+      "requester": "planning",
+      "context_id": "ctx_rec_0001",
+      "input": {
+        "context_id": "ctx_rec_0001",
+        "kind": "decision_rejected",
+        "summary": "결제 서버 캐시 도입안을 기각했다",
+        "decision_reason": "결제 정합성 위험",
+        "alternatives_considered": ["현행 유지"],
+        "source_refs": ["req:88", "area:payment"],
+        "author": "planning"
+      },
+      "expect": {"status": "completed", "outcome": "card_created"}
+    },
+    {
+      "action": "advance",
+      "minutes": 14400,
+      "label": "열흘 경과"
+    },
+    {
+      "skill": "check_plan",
+      "requester": "planning",
+      "input": {"draft": {"title": "결제 서버 캐시 도입", "summary": "결제 응답 속도를 위해 서버 캐시를 도입한다", "area": "payment", "kind": "spec"}},
+      "expect": {
+        "status": "completed",
+        "outcome": "warn",
+        "output": {"verdict": "warn", "findings.0.code": "REJECTED_BEFORE", "computed.days_since_rejected": 10},
+        "output_has": ["findings.0.card_ids.0", "computed.basis"]
+      }
+    }
+  ]
+}

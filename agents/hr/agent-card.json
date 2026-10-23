@@ -11,13 +11,243 @@
   "skills": [
     {
       "id": "record_case",
-      "description": "부서가 보낸 사건·결정 기록(kind, 요약, 결정 이유, 검토한 대안, 근거 참조)을 받아 결정 카드로 정리해 회사 기억에 저장한다. 결정이 없는 기록은 기록만 남긴다. v0 스텁: 입력을 그대로 돌려준다.",
+      "description": "부서가 보낸 사건·결정 기록(kind, 요약, 결정 이유, 검토한 대안, 근거 참조)을 받아 결정 카드로 정리해 회사 기억에 저장한다. 결정이 없는 기록은 기록만 남기고, 확신이 낮은 카드는 후보로 보류한다. 같은 기록이 두 번 오면 한 번만 처리한다.",
       "input_schema": "contracts/src/ax_contracts/schemas/record.py#RecordCase",
-      "output_schema": "contracts/src/ax_contracts/schemas/record.py#RecordCase",
+      "output_schema": "contracts/src/ax_contracts/schemas/hr.py#RecordCaseOutput",
       "grade": "A",
-      "allowed_requesters": ["orchestrator", "planning", "support", "infra"],
+      "allowed_requesters": [
+        "orchestrator",
+        "planning",
+        "support",
+        "marketing",
+        "finance",
+        "data",
+        "infra"
+      ],
       "verifier": null,
       "priority": "required"
+    },
+    {
+      "id": "get_roster",
+      "description": "영역별 담당자·역할·교대 일정과, 담당이 없거나 교대 시각에 비는 공백 영역을 조회한다(조회 전용, 개인 인사 정보 없음).",
+      "input_schema": "contracts/src/ax_contracts/schemas/hr.py#GetRosterInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/hr.py#GetRosterOutput",
+      "grade": "read",
+      "allowed_requesters": [
+        "dashboard-api",
+        "orchestrator",
+        "planning",
+        "support",
+        "marketing",
+        "finance",
+        "data",
+        "infra"
+      ],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "start_handover",
+      "description": "인계자·영역을 받아 인수인계 초안을 만든다. 진행 중인 일(planning)·결정 카드(회사 기억)·연락처(명부)는 자동으로 채우고, 빈 자리는 인계자에게 묻는 질문으로 돌려준다. 완성도와 빈 자리 수는 코드가 계산한다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/hr.py#StartHandoverInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/hr.py#StartHandoverOutput",
+      "grade": "A",
+      "allowed_requesters": [
+        "orchestrator"
+      ],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "answer_handover_question",
+      "description": "인계자가 빈 자리 질문에 답하면 해당 항목을 채우고 완성도를 다시 계산한다. 같은 답을 두 번 보내도 한 번만 반영한다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/hr.py#AnswerHandoverQuestionInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/hr.py#AnswerHandoverQuestionOutput",
+      "grade": "A",
+      "allowed_requesters": [
+        "dashboard-api",
+        "orchestrator"
+      ],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "confirm_handover",
+      "description": "인수인계를 확정한다. 완성도가 기준 이상이면 planning이 진행 중 항목 누락을 교차검증한 뒤 확정(B), 기준 미만이면 보류 큐에 올려 사람이 결정한다(C).",
+      "input_schema": "contracts/src/ax_contracts/schemas/hr.py#ConfirmHandoverInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/hr.py#ConfirmHandoverOutput",
+      "grade": "B",
+      "allowed_requesters": [
+        "orchestrator"
+      ],
+      "verifier": "planning",
+      "priority": "recommended"
+    },
+    {
+      "id": "start_onboarding",
+      "description": "새 담당자의 온보딩 계획을 만든다. 해당 영역의 유효한 결정 카드를 읽을 순서대로 나열하고, 인수인계 확인과 공통 확인 목록을 붙인다. 진행률은 끝낸 단계 수로 계산한다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/hr.py#StartOnboardingInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/hr.py#StartOnboardingOutput",
+      "grade": "A",
+      "allowed_requesters": [
+        "orchestrator"
+      ],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "request_assignment_change",
+      "description": "교대·발령·퇴직·입사 변경을 요청받아 확인 목록, 후임 후보, 권한 변경 목록(전달만, 실행은 각 부서)을 만들고 인수인계(입사는 온보딩)를 함께 시작한다. 같은 사람·영역의 변경이 진행 중이면 잠금으로 막는다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/hr.py#RequestAssignmentChangeInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/hr.py#RequestAssignmentChangeOutput",
+      "grade": "A",
+      "allowed_requesters": [
+        "orchestrator"
+      ],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "confirm_reassignment",
+      "description": "재배치(발령·교대·입사)를 확정한다. 변경 뒤 담당이 비거나 겹치는 영역이 없는지 코드 규칙으로 먼저 확인하고, 통과하면 적용한 뒤 다시 검증하며 문제가 있으면 되돌린다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/hr.py#ConfirmReassignmentInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/hr.py#ConfirmReassignmentOutput",
+      "grade": "B",
+      "allowed_requesters": [
+        "orchestrator"
+      ],
+      "verifier": "safety",
+      "priority": "recommended"
+    },
+    {
+      "id": "confirm_offboarding",
+      "description": "퇴직을 확정한다. C 등급이라 보류 큐에서 사람이 승인해야 하며, 승인 뒤 같은 요청을 다시 보내면 적용한다. 퇴직으로 담당이 비는 영역이 생기면 적용하지 않는다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/hr.py#ConfirmOffboardingInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/hr.py#ConfirmOffboardingOutput",
+      "grade": "C",
+      "allowed_requesters": [
+        "orchestrator"
+      ],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "check_plan",
+      "description": "새 계획 초안을 같은 영역의 결정 카드와 비교한다. 기각된 안과 비슷하면 경고(경과 일수는 코드가 계산), 채택하지 않기로 한 대안과 같으면 충돌, 확정된 결정과 같은 방향이면 일치로 알린다. 관련 카드가 없으면 판정하지 않고 '기록에 없음'으로 답한다. 조회 전용이다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/hr.py#CheckPlanInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/hr.py#CheckPlanOutput",
+      "grade": "read",
+      "allowed_requesters": [
+        "dashboard-api",
+        "orchestrator",
+        "planning"
+      ],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "list_handovers",
+      "description": "인수인계 현황(상태·완성도·인계 목록·답을 기다리는 질문)을 조회한다. 저장된 값을 그대로 돌려주는 읽기 전용이다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/hr.py#ListHandoversInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/hr.py#ListHandoversOutput",
+      "grade": "read",
+      "allowed_requesters": [
+        "dashboard-api",
+        "orchestrator"
+      ],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "list_open_questions",
+      "description": "인계자의 답을 기다리는 질문 목록을 조회한다(대시보드가 인계자에게 보여 주는 질문).",
+      "input_schema": "contracts/src/ax_contracts/schemas/hr.py#ListOpenQuestionsInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/hr.py#ListOpenQuestionsOutput",
+      "grade": "read",
+      "allowed_requesters": [
+        "dashboard-api",
+        "orchestrator"
+      ],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "list_onboardings",
+      "description": "온보딩 현황(읽을 단계와 코드가 센 진행률)을 조회한다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/hr.py#ListOnboardingsInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/hr.py#ListOnboardingsOutput",
+      "grade": "read",
+      "allowed_requesters": [
+        "dashboard-api",
+        "orchestrator"
+      ],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "list_changes",
+      "description": "교대·발령·퇴직·입사 변경 요청의 상태와 확인 목록을 조회한다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/hr.py#ListChangesInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/hr.py#ListChangesOutput",
+      "grade": "read",
+      "allowed_requesters": [
+        "dashboard-api",
+        "orchestrator"
+      ],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "list_candidate_cards",
+      "description": "확신이 낮아 사람 확인을 기다리는 후보 카드를 조회한다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/hr.py#ListCandidateCardsInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/hr.py#ListCandidateCardsOutput",
+      "grade": "read",
+      "allowed_requesters": [
+        "dashboard-api",
+        "orchestrator"
+      ],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "get_audit_timeline",
+      "description": "사건 하나에서 hr이 한 일을 시간순으로 조회한다. 기록이 없으면 비어 있다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/hr.py#GetAuditTimelineInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/hr.py#GetAuditTimelineOutput",
+      "grade": "read",
+      "allowed_requesters": [
+        "dashboard-api",
+        "orchestrator"
+      ],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "update_onboarding_step",
+      "description": "온보딩 단계의 완료 표시를 바꾼다. 진행률은 완료한 단계 수로 코드가 다시 센다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/hr.py#UpdateOnboardingStepInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/hr.py#StartOnboardingOutput",
+      "grade": "A",
+      "allowed_requesters": [
+        "dashboard-api",
+        "orchestrator"
+      ],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "decide_candidate_card",
+      "description": "후보 카드를 사람이 승인(active)하거나 폐기(retired)한다. 승인하면 같은 영역의 옛 결정을 대체됨으로 연결한다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/hr.py#DecideCandidateCardInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/hr.py#DecideCandidateCardOutput",
+      "grade": "A",
+      "allowed_requesters": [
+        "dashboard-api",
+        "orchestrator"
+      ],
+      "verifier": null,
+      "priority": "recommended"
     }
   ]
 }
