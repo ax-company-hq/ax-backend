@@ -438,7 +438,8 @@ def run(team: team_mod.Team, out_dir: Path, e2e_dir: Path | None = None,
         print(msg, file=sys.stderr)
         return 1
     write_atomic(target, status)
-    t = status["totals"]
-    print(f"status.json 갱신: 단독 {t['unit_pass']} / 연결 {t['chain_pass']} / "
-          f"실서버 {t['real_pass']} (총 {t['total']}), 피드 {len(status['feed'])}건")
+    t = status.get("totals") or {}
+    print(f"status.json 갱신: 단독 {t.get('unit_pass', 0)} / 연결 {t.get('chain_pass', 0)} / "
+          f"실서버 {t.get('real_pass', 0)} (총 {t.get('total', 0)}), "
+          f"피드 {len(status.get('feed') or [])}건")
     return 0
