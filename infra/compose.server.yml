@@ -1,0 +1,94 @@
+# 서버 PC 전용 override. 기본 infra/compose.yml(팀원 로컬 개발)의 동작은 바꾸지 않는다.
+#   docker compose -f infra/compose.yml -f infra/compose.server.yml up -d --build
+# - 외부에 열리는 포트는 gateway(${AX_GATEWAY_PORT:-8080}) 하나뿐. 나머지 서비스는 compose 네트워크 안에서만(expose)
+# - 모든 서비스 restart: unless-stopped
+# - 공통 로그 볼륨(infra/common-log/*.yml)은 기본 compose 그대로 쓴다. `down -v`는 공통 로그를 지우므로 하지 않는다
+services:
+  orchestrator:
+    ports: !reset []
+    expose:
+      - "8000"
+    restart: unless-stopped
+  safety:
+    ports: !reset []
+    expose:
+      - "8001"
+    restart: unless-stopped
+  memory:
+    ports: !reset []
+    expose:
+      - "8002"
+    restart: unless-stopped
+  shop-api:
+    ports: !reset []
+    expose:
+      - "8010"
+    restart: unless-stopped
+  dashboard-api:
+    ports: !reset []
+    expose:
+      - "8020"
+    restart: unless-stopped
+  planning:
+    ports: !reset []
+    expose:
+      - "8101"
+    restart: unless-stopped
+  support:
+    ports: !reset []
+    expose:
+      - "8102"
+    restart: unless-stopped
+  marketing:
+    ports: !reset []
+    expose:
+      - "8103"
+    restart: unless-stopped
+  hr:
+    ports: !reset []
+    expose:
+      - "8104"
+    restart: unless-stopped
+  finance:
+    ports: !reset []
+    expose:
+      - "8105"
+    restart: unless-stopped
+  data:
+    ports: !reset []
+    expose:
+      - "8106"
+    restart: unless-stopped
+  infra-dejafix:
+    ports: !reset []
+    expose:
+      - "8107"
+    restart: unless-stopped
+  redis:
+    ports: !reset []
+    expose:
+      - "6379"
+    restart: unless-stopped
+  postgres:
+    ports: !reset []
+    expose:
+      - "5432"
+    restart: unless-stopped
+  memory-db:
+    restart: unless-stopped
+  support-db:
+    restart: unless-stopped
+
+  # 고객 홈페이지(/), 관리자(/admin/), 기획개발(/admin/planning/) 정적 파일과
+  # /api/ -> dashboard-api, /shop-api/ -> shop-api 프록시. 이미지는 ax-frontend의 nginx/Dockerfile로 만든다
+  # (두 레포를 같은 폴더에 나란히 clone. 다른 위치면 AX_FRONTEND_DIR).
+  gateway:
+    build:
+      context: ${AX_FRONTEND_DIR:-../../ax-frontend}
+      dockerfile: nginx/Dockerfile
+    ports:
+      - "${AX_GATEWAY_PORT:-8080}:80"
+    depends_on:
+      - dashboard-api
+      - shop-api
+    restart: unless-stopped
