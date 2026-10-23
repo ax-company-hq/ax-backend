@@ -8,19 +8,20 @@ from typing import Any
 import pytest
 
 from ax_agent_template import config
+from ax_agent_template.testing import reset_state  # noqa: F401  autouse, 템플릿 상태 초기화
 from planning_agent.domain.service import PlanningService
 from planning_agent.runtime import set_service
 
 
 @pytest.fixture(autouse=True)
-def service(monkeypatch: pytest.MonkeyPatch) -> PlanningService:
-    """모든 테스트는 목 모드(`AGENT_TEMPLATE_MOCK=1`)로 돌고, 초기 데이터에서 시작한다."""
+def service(monkeypatch: pytest.MonkeyPatch, reset_state: None) -> PlanningService:  # noqa: F811
+    """모든 테스트는 목 모드(`AGENT_TEMPLATE_MOCK=1`)로 돌고, 초기 데이터에서 시작한다.
+
+    템플릿 상태를 비우는 reset_state 뒤에 돌아야 에이전트 이름이 planning으로 남는다.
+    """
     monkeypatch.setenv("AGENT_TEMPLATE_MOCK", "1")
-    saved = config._agent_name
     config.set_agent_name("planning")  # 다른 부서 테스트가 먼저 돌아도 execute 요청자는 planning
-    svc = set_service(PlanningService())
-    yield svc
-    config._agent_name = saved
+    return set_service(PlanningService())
 
 
 def _a2a_body(
