@@ -137,7 +137,6 @@ from ax_contracts.schemas.planning import (
     VerifyRollbackTargetInput,
     VerifyRollbackTargetOutput,
 )
-from ax_contracts.schemas.review import ActionReviewInput, ActionReviewOutput
 from ax_contracts.schemas.record import (
     Card,
     CardDraft,
@@ -153,6 +152,7 @@ from ax_contracts.schemas.record import (
     RecordCase,
     RecordKind,
 )
+from ax_contracts.schemas.review import ActionReviewInput, ActionReviewOutput
 
 __all__ = [
     "EVENT_DATA_MODELS",
