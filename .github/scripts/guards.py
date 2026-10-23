@@ -41,6 +41,7 @@ class PullRequest:
     is_fork: bool = False
     labels: list[str] = field(default_factory=list)
     issue: int | None = None  # 봇 PR 본문의 `Closes #N`
+    mode: str | None = None  # 봇 PR 본문의 작성 모드 (task|request)
 
 
 @dataclass
@@ -51,7 +52,7 @@ class Plan:
     statuses: list[dict] = field(default_factory=list)
     comment: str | None = None
     remove_hotfix: bool = False
-    requeue: dict | None = None  # 봇 PR이 관문에 걸리면 {issue, reason}: PR 닫고 재대기
+    requeue: dict | None = None  # 봇 PR이 관문에 걸리면 {issue, reason, dept, mode}: 닫고 재대기
 
     def status(self, context: str, state: str, description: str) -> None:
         self.statuses.append(
@@ -137,7 +138,8 @@ def decide(
         )
         hint = [*problems, *test_violations][:HINT_LINES]
         detail = "\n".join(f"- {h}" for h in hint)
-        plan.requeue = {"issue": pr.issue, "reason": f"관문 실패 — {reason}\n\n힌트:\n{detail}"}
+        plan.requeue = {"issue": pr.issue, "reason": f"관문 실패 — {reason}\n\n힌트:\n{detail}",
+                        "dept": team.dept_of_branch(pr.branch), "mode": pr.mode}
 
     lines = []
     if problems:
@@ -173,13 +175,23 @@ def load_pr(repo: str, number: int) -> PullRequest:
         is_fork=(d["head"]["repo"] or {}).get("full_name") != repo,
         labels=[label["name"] for label in d["labels"]],
         issue=closes_issue(d.get("body") or ""),
+        mode=pr_mode(d.get("body") or ""),
     )
 
 
 def closes_issue(body: str) -> int | None:
-    """봇 PR의 연결 이슈. 봇만 쓰는 표시 <!-- ax-issue:N -->만 믿는다 (Claude가 쓴 본문 무시)."""
-    m = re.search(r"<!-- ax-issue:(\d+) -->", body)
-    return int(m.group(1)) if m else None
+    """봇 PR의 연결 이슈. 봇이 본문 맨 끝에 붙이는 표시 <!-- ax-issue:N -->의 마지막 것만 믿는다.
+
+    Claude가 쓴 본문의 HTML 주석은 write_apply가 지우지만, 혹시 남아도 마지막(봇) 표시가 이긴다.
+    """
+    found = re.findall(r"<!-- ax-issue:(\d+) -->", body)
+    return int(found[-1]) if found else None
+
+
+def pr_mode(body: str) -> str | None:
+    """봇 PR 본문 끝 <!-- by:<부서> mode:<모드> -->의 모드 (마지막 것)."""
+    found = re.findall(r"<!-- by:[a-z0-9-]+ mode:([a-z-]+) -->", body)
+    return found[-1] if found else None
 
 
 def hotfix_status_present(team: team_mod.Team, repo: str, sha: str) -> bool:
@@ -271,7 +283,7 @@ def cmd_apply(args) -> int:
         # 첫 실패(retry-1)면 힌트를 읽고 다시 작성하게 바로 실행한다.
         # 두 번째면 needs-human에서 멈춘다
         if result == "retry-1":
-            print(team_mod.dispatch_write(repo, team, rq["issue"]))
+            print(team_mod.dispatch_write(repo, team, rq["issue"], rq.get("dept"), rq.get("mode")))
     return 0
 
 

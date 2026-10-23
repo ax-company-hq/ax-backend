@@ -263,21 +263,36 @@ def test_guard_added_test_ok() -> None:
 
 def test_guard_deleted_file() -> None:
     v = guard([ch("agents/data/tests/test_x.py", "D")], BASE_TEST, "")
-    assert any("test_ 함수 수 감소 3 → 0" in x for x in v)
-    assert any("assert 감소 4 → 0" in x for x in v)
+    assert "테스트 삭제 agents/data/tests/test_x.py::TestC.test_c" in v
+    assert any("assert 감소 3 → 0" in x for x in v)  # assert True는 세지 않음
 
 
 def test_guard_fewer_tests() -> None:
     head = BASE_TEST.replace("def test_b():\n    assert True\n", "")
-    assert any("test_ 함수 수 감소" in x for x in guard(
-        [ch("agents/data/tests/test_x.py")], BASE_TEST, head))
+    assert guard([ch("agents/data/tests/test_x.py")], BASE_TEST, head) == [
+        "테스트 삭제 agents/data/tests/test_x.py::test_b"]
 
 
 def test_guard_assert_halved() -> None:
     head = BASE_TEST.replace("    assert 2 == 2\n", "    pass\n").replace(
         "    assert True\n", "    pass\n")
     v = guard([ch("agents/data/tests/test_x.py")], BASE_TEST, head)
-    assert v == ["테스트 함수 안 assert 감소 4 → 2 (부서 합계)"]
+    assert v == ["테스트 함수 안 assert 감소 3 → 2 (부서 합계)"]
+
+
+def test_guard_rejects_swapping_tests_for_trivial_ones() -> None:
+    # 리뷰 지적: 테스트를 지우고 같은 수의 빈 테스트로 갈아치우면 합계가 같아도 실패해야 한다
+    head = "def test_n1():\n    assert True\n\ndef test_n2():\n    assert 1\n\n" \
+           "def test_n3():\n    assert 1\n"
+    v = guard([ch("agents/data/tests/test_x.py", "D"), ch("agents/data/tests/test_y.py", "A")],
+              BASE_TEST, head)
+    assert any("테스트 삭제" in x for x in v) and any("assert 감소" in x for x in v)
+
+
+def test_guard_trivial_asserts_do_not_count() -> None:
+    head = BASE_TEST.replace("    assert 2 == 2\n", "    assert True\n")
+    assert guard([ch("agents/data/tests/test_x.py")], BASE_TEST, head) == [
+        "테스트 함수 안 assert 감소 3 → 2 (부서 합계)"]
 
 
 def test_guard_ignores_non_test_files() -> None:
@@ -330,7 +345,8 @@ def test_cli_rename_counts_both_paths(repo: Path, capsys) -> None:
     run(repo, "commit", "-q", "-m", "move")
     rc = team_mod.main(["test-guard", "dev", "HEAD"])
     # tests/ 밖으로 옮기면 테스트 파일이 아니게 됨 → data 합계 감소
-    assert rc == 1 and "data: test_ 함수 수 감소 3 → 0" in capsys.readouterr().out
+    assert rc == 1 and "data: 테스트 삭제 agents/data/tests/test_x.py::test_a" in (
+        capsys.readouterr().out)
 
 
 def test_cli_split_test_file_ok(repo: Path, capsys) -> None:
@@ -749,7 +765,9 @@ def test_dispatch_write_runs_claude_write(team: Team, monkeypatch) -> None:
 
     monkeypatch.setattr(team_mod, "gh_api", fake)
     assert "support:request" in team_mod.dispatch_write("o/r", team, 9)
-    path, extra = calls[1]
+    # 실행 전에 wip-wait로 대기 표시 (concurrency 대기열에서 취소돼도 다시 잡히게)
+    assert calls[1] == ("repos/o/r/issues/9/labels", ("-X", "POST", "-f", "labels[]=wip-wait"))
+    path, extra = calls[2]
     assert path == "repos/o/r/actions/workflows/_claude-write.yml/dispatches"
     assert "inputs[dept]=support" in extra and "inputs[mode]=request" in extra
     assert "inputs[issue]=9" in extra and "ref=dev" in extra
@@ -761,3 +779,12 @@ def test_dispatch_write_never_raises(team: Team, monkeypatch) -> None:
 
     monkeypatch.setattr(team_mod, "gh_api", boom)
     assert "다시 실행하지 못함" in team_mod.dispatch_write("o/r", team, 9)
+
+
+def test_dispatch_write_explicit_dept_mode_skips_label_lookup(team: Team, monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(team_mod, "gh_api", lambda path, *e: calls.append((path, e)))
+    assert "data:task" in team_mod.dispatch_write("o/r", team, 9, "data", "task")
+    assert [c[0] for c in calls] == ["repos/o/r/issues/9/labels",
+                                     "repos/o/r/actions/workflows/_claude-write.yml/dispatches"]
+    assert "inputs[dept]=data" in calls[1][1] and "inputs[mode]=task" in calls[1][1]

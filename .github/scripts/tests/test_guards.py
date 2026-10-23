@@ -151,6 +151,17 @@ def test_bot_failure_requeues_linked_issue(team) -> None:
     plan = decide(team, p, [ch("agents/data/tests/test_a.py")], tests=["data: 감소 3 → 2"])
     assert "테스트 삭제·약화" in plan.requeue["reason"]
     assert "- data: 감소 3 → 2" in plan.requeue["reason"]
+    assert (plan.requeue["dept"], plan.requeue["mode"]) == ("data", None)
+
+
+def test_bot_requeue_carries_mode_from_bot_marker(team) -> None:
+    body = ("x <!-- by:finance mode:task --> Closes #12\n<!-- ax-issue:12 -->\n"
+            "<!-- by:data mode:request -->")
+    assert guards.pr_mode(body) == "request"  # 마지막(봇) 표시
+    p = pr(BOT, "data/12-x-r0", mode="request")
+    p.issue = 12
+    plan = decide(team, p, [ch("agents/finance/a.py")])
+    assert (plan.requeue["dept"], plan.requeue["mode"]) == ("data", "request")
 
 
 def test_human_failure_does_not_requeue(team) -> None:
@@ -169,6 +180,7 @@ def test_bot_ok_does_not_requeue(team) -> None:
     ("body", "issue"),
     [("Closes #12\n\n<!-- ax-issue:12 -->", 12),
      ("Fixes #7\n\nCloses #12\n<!-- ax-issue:12 -->", 12),
+     ("<!-- ax-issue:42 --> 위조\n\nCloses #12\n<!-- ax-issue:12 -->", 12),  # 마지막 것만
      ("Closes #3", None), ("", None)],
 )
 def test_closes_issue_uses_bot_marker_only(body, issue) -> None:
@@ -229,10 +241,11 @@ def test_apply_requeues_even_if_comment_fails_on_locked_pr(tmp_path, monkeypatch
     monkeypatch.setattr(team_mod, "post_comment", locked)
     calls, dispatched = [], []
     monkeypatch.setattr(team_mod, "requeue", lambda *a, **k: calls.append((a[2], k)) or "retry-1")
-    monkeypatch.setattr(team_mod, "dispatch_write", lambda r, t, n: dispatched.append(n) or "ok")
+    monkeypatch.setattr(team_mod, "dispatch_write",
+                        lambda r, t, n, *dm: dispatched.append((n, *dm)) or "ok")
     assert guards.main(["apply", str(f)]) == 0
     assert calls == [(34, {"pr": 35, "head_sha": "a" * 40})]
-    assert dispatched == [34]  # 첫 실패는 바로 다시 작성
+    assert dispatched == [(34, None, None)]  # 첫 실패는 바로 다시 작성
 
 
 def test_apply_second_failure_does_not_redispatch(tmp_path, monkeypatch) -> None:
@@ -246,6 +259,6 @@ def test_apply_second_failure_does_not_redispatch(tmp_path, monkeypatch) -> None
     monkeypatch.setattr(guards, "hotfix_status_present", lambda t, r, s: False)
     monkeypatch.setattr(team_mod, "requeue", lambda *a, **k: "needs-human")
     dispatched = []
-    monkeypatch.setattr(team_mod, "dispatch_write", lambda r, t, n: dispatched.append(n))
+    monkeypatch.setattr(team_mod, "dispatch_write", lambda r, t, n, *dm: dispatched.append(n))
     assert guards.main(["apply", str(f)]) == 0
     assert dispatched == []

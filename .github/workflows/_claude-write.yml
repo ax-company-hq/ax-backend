@@ -109,6 +109,14 @@ jobs:
         run: |
           gh api -X POST "repos/$REPO/issues/$ISSUE/labels" -f "labels[]=wip-wait" >/dev/null
           gh api -X POST "repos/$REPO/issues/$ISSUE/comments" -f body="대기 ($ERR)" >/dev/null
+      - name: 대기 표시 해제 (wip 말고 다른 이유로 막힘)
+        # 막는 라벨·닫힌 이슈 등으로 시작할 수 없으면 wip-wait를 떼서 다른 대기 이슈를 가로막지 않게
+        if: failure() && steps.check.outputs.error != '' && !startsWith(steps.check.outputs.error, 'wip')
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ inputs.issue }}
+        run: gh api -X DELETE "repos/$REPO/issues/$ISSUE/labels/wip-wait" >/dev/null 2>&1 || true
       - name: in-progress
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
@@ -458,10 +466,12 @@ jobs:
           ISSUE: ${{ inputs.issue }}
           REASON: "작성 실패 (claude=${{ needs.claude.result }}, build=${{ needs.build.result }}, apply=${{ needs.apply.result }})"
           MAX_TURNS: ${{ needs.claude.outputs.max_turns }}
+          DEPT: ${{ needs.prep.outputs.dept }}
+          MODE: ${{ inputs.mode }}
         run: |
           # 턴 한도 → needs-split (재시도 안 함). 그 밖의 실패 → 재대기 (첫 실패는 한 번 더, 두 번째는 needs-human)
           "$RUNNER_TEMP/venv/bin/python" -I .github/scripts/claude_jobs.py write-finalize --issue "$ISSUE" \
-            --reason "$REASON" --max-turns "${MAX_TURNS:-false}"
+            --reason "$REASON" --max-turns "${MAX_TURNS:-false}" --dept "$DEPT" --mode "$MODE"
       - name: artifact 삭제
         if: always()
         env:

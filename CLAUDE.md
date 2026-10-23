@@ -44,7 +44,7 @@ e커머스 가상회사의 부서별 AI 에이전트를 A2A로 연결한 AX 플�
 6. **API 응답 형식을 바꾸면** `contracts/openapi/`가 CI로 다시 생성되는지 확인하고, 프론트 담당(재헌, 병환)에게 알린다.
 7. **비밀값은 `.env`에만 둔다.** 커밋 금지. 부서 환경변수 예시는 `<폴더>/.env.example`에 둔다. 루트 `.env.example`은 공통 변수만 두며 사람 승인 경로다. LLM 키는 각자 따로 쓴다.
 8. **`uv.lock`은 직접 고치지 않는다.** 자기 폴더 `pyproject.toml`에 의존성을 추가하면 lock 갱신은 CI의 build 잡이 한다. 충돌은 sweeper의 lock-refresh가 처리한다.
-9. **테스트를 지우거나 약하게 만들지 않는다.** test-guard가 부서별 합계로 `test_` 함수 수 감소·assert 수 감소를 막는다 (파일을 나누거나 옮기는 것은 합계가 같으면 통과).
+9. **테스트를 지우거나 약하게 만들지 않는다.** test-guard가 부서별로 테스트 삭제(바뀐 파일에 있던 테스트 이름이 사라짐)와 의미 있는 assert 수 감소(`assert True` 같은 상수 assert는 세지 않음)를 막는다. 파일을 나누거나 옮기는 것은 테스트 이름이 남아 있으면 통과한다.
 10. **자동화 파일은 사람만 바꾼다.** `.github/`, `.claude/`, `scripts/`, `CLAUDE.md`, `docs/`(notes 제외)는 code owner 승인이 필요하다. 부서 폴더 안에 `CLAUDE.md`, `.claude/`, `.mcp.json`을 만들지 않는다.
 11. **기준 문서와 다른 동작은 docs PR이 먼저다.** `docs/requirements.md`, `docs/agent-common.md`(기준 문서)와 다르게 동작해야 하면, 먼저 기준 문서를 고치는 docs PR을 팀이 합의해 머지한 뒤 코드 PR을 올린다. 코드 PR 본문에 그 docs PR 번호를 적는다. docs PR 없이 기준 문서와 다른 코드 PR은 리뷰에서 막는다.
 

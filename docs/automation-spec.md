@@ -255,7 +255,7 @@ concurrency `guards-<PR>` cancel-in-progress: true. 포크 PR은 바로 folder-g
   - 사람 PR: human_paths만 바꿨으면 통과(대신 code owner 리뷰가 필수로 걸림). 아니면 check-diff <depts-of 작성자> 통과
   - 어느 경우든 깊이와 상관없이 `CLAUDE.md`, `CLAUDE.local.md`, `.claude/`, `.mcp.json`이 부서 폴더 안에 생기면 실패 (사람 PR이 루트 것을 바꾸는 건 human_paths)
   - 실패: 이유 코멘트. bot_login PR이면 닫고 requeue("다른 폴더 변경은 to:<부서> 요청으로 분리")
-- test-guard: merge-base 대비 부서별 합계로 `def test_` 수 감소, 테스트 함수 안 assert 수 감소(AST 정적 계산) → 실패 + 코멘트. 파일 분할·이동은 같은 부서 합계가 줄지 않으면 통과 (11장).
+- test-guard: merge-base 대비 부서별로, 바뀐 파일에 있던 테스트 이름(`Class.test_x`)이 같은 부서 바뀐 파일 어디에도 없으면 삭제, 테스트 함수 안 의미 있는 assert 수(상수 assert 제외) 합계가 줄면 약화(AST 정적 계산) → 실패 + 코멘트. 파일 분할·이동은 이름이 남으면 통과 (11장).
   bot_login PR이면 requeue. bot_branches(revert/ 등)는 성공
 - dev-health: repo 변수 AX_DEV_RED가 on이면 pending("dev 빨간불 — 복구 후 자동 재개"), 아니면 success. revert/ 브랜치는 항상 success
 hotfix.yml — pull_request_target labeled(hotfix만), 스위치 무관:
@@ -355,13 +355,15 @@ claude-review.yml — 트리거: pull_request_target [opened, synchronize, reope
 - WIP 제한: _claude-write prep에서 부서의 열린 봇 PR(부서 브랜치)이 open_bot_prs 이상이거나 진행 중(in-progress) to:/dept: 이슈가
   in_progress_issues 이상이면 시작하지 않고 `wip-wait` 라벨 + 코멘트. wip-resume.yml(봇 PR closed)과 stale-sweep이 자리가 난 부서의
   wip-wait 이슈 1개(priority → 번호 순)를 _claude-write로 다시 실행한다
+- 다시 실행(dispatch_write)은 먼저 `wip-wait`를 붙인다: _claude-write concurrency 대기열에서 밀려 취소돼도 wip-resume·매일 정리가 다시 잡는다.
+  사람이 머지하지 않고 닫은 봇 PR은 wip-resume이 연결 이슈의 in-progress를 뗀다. 열린 PR 없이 2시간 넘은 in-progress는 WIP 수에 세지 않는다
 - 실패 처리: 봇 부서 PR이 관문(guards) 또는 ci에서 실패하면 실패 요약을 힌트로 이슈에 남기고 PR 닫기·브랜치 삭제·재대기(team.py requeue).
   첫 실패(retry-1)는 바로 _claude-write를 다시 실행, 같은 이슈 두 번째 실패는 `needs-human`(자동 재시도 멈춤).
-  ci 실패는 bot-ci-failed.yml(workflow_run ci)이 처리하고, AX_DEV_RED=on이거나 dev push ci의 최근 완료 실행이 실패면 아무것도 하지 않는다.
+  ci 실패는 bot-ci-failed.yml(workflow_run ci, 같은 레포 브랜치만)이 처리하고, AX_DEV_RED=on이거나 dev push ci가 초록이라고 확신할 수 없으면(최근 실행이 실행 중·실패) 아무것도 하지 않는다.
   claude-ci-fix·address(2단계)는 이 규칙으로 대신한다
 - 턴 한도: 작성 Claude 단계가 --max-turns를 넘으면(execution_file의 result) 재대기하지 않고 `needs-split` 라벨 + "작업 분할 필요" 코멘트
 - 매일 정리: stale-sweep.yml(`0 1 * * *`, AX_AUTOMATION=on) — stale_hours보다 오래 변화 없는 봇 부서 PR은 닫고(브랜치 삭제, 연결 이슈 needs-human),
-  봇이 만든 이슈(report·incident·in-progress 제외)는 `stale` 라벨로 닫는다. 목록을 `[report] 정리 <날짜>` 이슈에 남기고 전날 것은 닫는다.
+  봇이 만든 이슈는 `stale` 라벨로 닫는다 (report·incident·in-progress·wip-wait·needs-human·needs-split·delegated·blocked·external·quota·priority는 제외). 목록을 `[report] 정리 <날짜>` 이슈에 남기고 전날 것은 닫는다.
   revert/·openapi/sync- 같은 봇 브랜치 PR은 dev-health 담당이라 건드리지 않는다
 - 기준 문서와 다른 동작: docs PR(requirements·agent-common)을 먼저 합의·머지한 뒤 코드 PR (CLAUDE.md 작업 규칙 11, review.md 막는 기준 1)
 

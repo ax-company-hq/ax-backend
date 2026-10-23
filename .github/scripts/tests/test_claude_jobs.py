@@ -310,9 +310,19 @@ def test_wip_check_in_progress_issues(team) -> None:
     busy = [issue(1, ["to:data", "in-progress"]), issue(2, ["dept:data", "in-progress"]),
             issue(3, ["to:finance", "in-progress"]),
             issue(4, ["to:data", "in-progress"], pull_request={})]  # PR은 세지 않음
-    assert cj.wip_check(team, "data", [], busy) is None
+    now = cj.parse_time("2026-10-20T01:00:00Z")
+    assert cj.wip_check(team, "data", [], busy, now) is None
     busy.append(issue(5, ["to:data", "in-progress"]))
-    assert "진행 중 이슈 3/3" in cj.wip_check(team, "data", [], busy)
+    assert "진행 중 이슈 3/3" in cj.wip_check(team, "data", [], busy, now)
+    # 열린 PR도 없이 2시간 넘게 멈춘 in-progress는 세지 않는다 (라벨만 남은 것)
+    later = cj.parse_time("2026-10-20T03:00:00Z")
+    assert cj.wip_check(team, "data", [], busy, later) is None
+    # 열린 봇 PR이 있는 이슈는 오래돼도 센다
+    prs = [bot_pr("finance/1-a-r0", 1, body="<!-- ax-issue:1 -->"),
+           bot_pr("finance/2-b-r0", 2, body="<!-- ax-issue:2 -->")]
+    busy = [issue(1, ["to:finance", "in-progress"]), issue(2, ["to:finance", "in-progress"]),
+            issue(3, ["to:finance", "in-progress"])]
+    assert "열린 봇 PR 2/2" in cj.wip_check(team, "finance", prs, busy, later)
 
 
 def test_wip_resume_picks_priority_then_oldest_per_free_dept(team, monkeypatch) -> None:
@@ -333,7 +343,8 @@ def test_wip_resume_picks_priority_then_oldest_per_free_dept(team, monkeypatch) 
     monkeypatch.setattr(cj, "api", fake_api)
     monkeypatch.setattr(cj, "remove_label", lambda n, lb: removed.append((n, lb)))
     monkeypatch.setattr(cj.team_mod, "dispatch_write",
-                        lambda r, t, n: dispatched.append(n) or f"#{n}")
+                        lambda r, t, n, *dm: dispatched.append(n) or f"#{n}")
+    waiting.append(issue(5, ["to:data", "wip-wait", "quota"]))  # 막힌 이슈는 건너뜀
     assert cj.wip_resume(team) == ["#8"]
     assert removed == [] and dispatched == [8]  # 라벨은 작성이 시작될 때 뗀다
     dispatched.clear()
@@ -382,12 +393,14 @@ def test_write_finalize_max_turns_marks_needs_split(team, monkeypatch) -> None:
 def test_write_finalize_redispatches_first_failure_only(team, monkeypatch) -> None:
     monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
     dispatched = []
-    monkeypatch.setattr(cj.team_mod, "dispatch_write", lambda r, t, n: dispatched.append(n))
+    monkeypatch.setattr(cj.team_mod, "dispatch_write",
+                        lambda r, t, n, *dm: dispatched.append((n, *dm)))
     monkeypatch.setattr(cj.team_mod, "requeue", lambda *a, **k: "retry-1")
-    cj.main(["write-finalize", "--issue", "5", "--reason", "x"])
+    cj.main(["write-finalize", "--issue", "5", "--reason", "x", "--dept", "data",
+             "--mode", "request"])
     monkeypatch.setattr(cj.team_mod, "requeue", lambda *a, **k: "needs-human")
     cj.main(["write-finalize", "--issue", "6", "--reason", "x"])
-    assert dispatched == [5]
+    assert dispatched == [(5, "data", "request")]
 
 
 # ── ci 실패 요약 · 재대기 ─────────────────────────────────
@@ -434,16 +447,18 @@ def ci_env(monkeypatch, prs, red=False):
 
     monkeypatch.setattr(cj.team_mod, "requeue", fake_requeue)
     monkeypatch.setattr(cj.team_mod, "dispatch_write",
-                        lambda r, t, n: calls["dispatch"].append(n) or "dispatched")
+                        lambda r, t, n, *dm: calls["dispatch"].append((n, *dm)) or "dispatched")
     return calls
 
 
 def test_ci_failed_requeues_with_hint_and_redispatches(team, monkeypatch) -> None:
-    pr = bot_pr("agent-template/140-x-r0", 144, body="Closes #140\n<!-- ax-issue:140 -->",
+    pr = bot_pr("agent-template/140-x-r0", 144,
+                body="Closes #140\n<!-- ax-issue:140 -->\n<!-- by:agent-template mode:request -->",
                 sha="h1")
     calls = ci_env(monkeypatch, [pr])
     out = cj.ci_failed(team, "99", "h1", "agent-template/140-x-r0", False)
-    assert out.startswith("retry-1") and calls["dispatch"] == [140]
+    assert out.startswith("retry-1")
+    assert calls["dispatch"] == [(140, "agent-template", "request")]
     issue_no, reason, kw = calls["requeue"][0]
     assert issue_no == 140 and kw == {"pr": 144, "head_sha": "h1"}
     assert "ci 실패 (PR #144)" in reason and "E501" in reason
@@ -523,3 +538,63 @@ def test_stale_sweep_closes_and_reports(team, monkeypatch) -> None:
     assert "title=[report] 정리 2026-10-23" in new_report[1]
     body = next(x for x in new_report[1] if x.startswith("body="))
     assert "PR #30" in body and "이슈 #10" in body
+
+
+
+@pytest.mark.parametrize(
+    ("runs", "red"),
+    [([{"status": "completed", "conclusion": "success"}], False),
+     ([{"status": "completed", "conclusion": "failure"}], True),
+     ([{"status": "in_progress", "conclusion": None},
+       {"status": "completed", "conclusion": "success"}], True),  # 방금 머지가 깼을 수 있음
+     ([{"status": "completed", "conclusion": "cancelled"},
+       {"status": "completed", "conclusion": "failure"}], True),
+     ([{"status": "completed", "conclusion": "cancelled"},
+       {"status": "completed", "conclusion": "success"}], False),
+     ([], True)],
+)
+def test_dev_ci_red(monkeypatch, runs, red) -> None:
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setattr(cj, "api", lambda *a, **k: {"workflow_runs": runs})
+    assert cj.dev_ci_red() is red
+
+
+def test_check_result_strips_html_comments(team) -> None:
+    out = cj.check_result({"title": "feat(data): x", "body": "a <!-- ax-issue:42 --> b <!--x",
+                           "summary": "", "requests": []}, team)
+    assert "ax-issue" not in out["body"] and "<!--" not in out["body"]
+
+
+def test_linked_prs_uses_last_bot_marker(team) -> None:
+    prs = [bot_pr("data/1-a-r0", 1, body="<!-- ax-issue:42 -->\nCloses #1\n<!-- ax-issue:1 -->")]
+    assert cj.linked_prs(prs, 1, team) == [1] and cj.linked_prs(prs, 42, team) == []
+
+
+def test_stale_skips_waiting_and_escalated_issues(team) -> None:
+    now = cj.parse_time("2026-10-23T03:00:00Z")
+    old = "2026-10-20T00:00:00Z"
+    labels = ["wip-wait", "needs-human", "needs-split", "delegated", "quota", "priority"]
+    issues = [issue(n, ["to:data", lb], updated=old) for n, lb in enumerate(labels, 1)]
+    assert cj.stale_targets(team, [], issues, now) == ([], [])
+
+
+@pytest.mark.parametrize(
+    ("merged", "closer", "removed"),
+    [(None, "JangJaehyeonn", True), ("2026-10-23T00:00:00Z", "JangJaehyeonn", False),
+     (None, BOT, False)],
+)
+def test_release_closed_pr(team, monkeypatch, merged, closer, removed) -> None:
+    pr = {**bot_pr("data/7-a-r0", 30, body="<!-- ax-issue:7 -->"), "merged_at": merged}
+
+    def fake_api(path, *extra):
+        if path.endswith("/pulls/30"):
+            return pr
+        return [{"event": "labeled", "actor": {"login": BOT}},
+                {"event": "closed", "actor": {"login": closer}}]
+
+    got = []
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setattr(cj, "api", fake_api)
+    monkeypatch.setattr(cj, "remove_label", lambda n, lb: got.append((n, lb)))
+    cj.release_closed_pr(team, 30)
+    assert (got == [(7, "in-progress")]) is removed

@@ -346,34 +346,76 @@ def count_tests_and_asserts(source: str) -> tuple[int, int]:
 HUMAN_TESTS = "(사람 경로)"
 
 
+def _trivial_assert(node: ast.AST) -> bool:
+    """`assert True`, `assert 1`, `assert "x"`처럼 항상 통과하는 상수 assert."""
+    return isinstance(node, ast.Assert) and isinstance(node.test, ast.Constant) and bool(
+        node.test.value)
+
+
+def _count_real_asserts(node: ast.AST) -> int:
+    return _count_asserts(node) - sum(1 for sub in ast.walk(node) if _trivial_assert(sub))
+
+
+def test_inventory(source: str) -> tuple[set[str], int]:
+    """(테스트 이름 집합 `Class.test_x`/`test_x`, 의미 있는 assert 수)."""
+    tree = ast.parse(source)
+    names: set[str] = set()
+    asserts = 0
+
+    def visit(body, prefix: str) -> None:
+        nonlocal asserts
+        for n in body:
+            if isinstance(n, ast.ClassDef):
+                visit(n.body, f"{prefix}{n.name}.")
+            elif isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef) and n.name.startswith(
+                    "test_"):
+                names.add(prefix + n.name)
+                asserts += _count_real_asserts(n)
+
+    visit(tree.body, "")
+    return names, asserts
+
+
+HUMAN_TESTS = "(사람 경로)"
+
+
 def find_test_weakening(changes: list[Change], read_base, read_head,
                         team: Team | None = None) -> list[str]:
-    """부서별 합계로 테스트 약화를 찾는다: test_ 함수 수 감소, 테스트 함수 안 assert 수 감소.
+    """부서별로 테스트 약화를 찾는다.
 
-    파일을 나누거나 옮겨도 같은 부서 안 합계가 줄지 않으면 통과한다
-    (파일 삭제만으로는 실패하지 않음).
+    - 바뀐 파일에 있던 테스트 이름이 같은 부서의 바뀐 파일 어디에도 남아 있지 않으면 실패
+      (파일을 나누거나 옮기는 것은 이름이 남으니 통과, 지우거나 이름만 바꿔 갈아치우면 실패)
+    - 테스트 함수 안 의미 있는 assert 수(`assert True` 같은 상수 assert 제외) 합계가 줄면 실패
     team이 없으면 전체를 한 묶음으로 본다. 부서 폴더 밖 테스트는 "(사람 경로)" 한 묶음.
     """
     violations: list[str] = []
-    totals: dict[str, list[int]] = {}  # 묶음 → [base 테스트, head 테스트, base assert, head assert]
+    groups: dict[str, dict] = {}
     for c in changes:
         if not is_test_path(c.path):
             continue
         try:
-            b = count_tests_and_asserts(read_base(c.path)) if c.status != "A" else (0, 0)
-            h = count_tests_and_asserts(read_head(c.path)) if c.status != "D" else (0, 0)
+            b = test_inventory(read_base(c.path)) if c.status != "A" else (set(), 0)
+            h = test_inventory(read_head(c.path)) if c.status != "D" else (set(), 0)
         except (SyntaxError, ValueError, RecursionError, MemoryError) as e:
             violations.append(f"{c.path}: 파싱 실패 ({type(e).__name__})")
             continue
         group = (team.dept_of_path(c.path) if team else None) or HUMAN_TESTS
-        t = totals.setdefault(group, [0, 0, 0, 0])
-        t[0], t[1], t[2], t[3] = t[0] + b[0], t[1] + h[0], t[2] + b[1], t[3] + h[1]
-    for group, (bt, ht, ba, ha) in sorted(totals.items()):
+        g = groups.setdefault(group, {"base": {}, "head": set(), "ba": 0, "ha": 0})
+        for name in b[0]:
+            g["base"].setdefault(name, c.path)
+        g["head"] |= h[0]
+        g["ba"] += b[1]
+        g["ha"] += h[1]
+    for group, g in sorted(groups.items()):
         where = f"{group}: " if team else ""
-        if ht < bt:
-            violations.append(f"{where}test_ 함수 수 감소 {bt} → {ht} (부서 합계)")
-        if ha < ba:
-            violations.append(f"{where}테스트 함수 안 assert 감소 {ba} → {ha} (부서 합계)")
+        gone = sorted(n for n in g["base"] if n not in g["head"])
+        for name in gone[:10]:
+            violations.append(f"{where}테스트 삭제 {g['base'][name]}::{name}")
+        if len(gone) > 10:
+            violations.append(f"{where}테스트 삭제 외 {len(gone) - 10}개")
+        if g["ha"] < g["ba"]:
+            violations.append(
+                f"{where}테스트 함수 안 assert 감소 {g['ba']} → {g['ha']} (부서 합계)")
     return violations
 
 
@@ -721,18 +763,27 @@ def write_target(team: Team, labels: list[str]) -> tuple[str, str] | None:
     return None
 
 
-def dispatch_write(repo: str, team: Team, issue: int) -> str:
+QUEUE_LABEL = "wip-wait"
+
+
+def dispatch_write(repo: str, team: Team, issue: int, dept: str | None = None,
+                   mode: str | None = None) -> str:
     """이슈를 다시 작성하게 _claude-write를 실행한다 (ax-bot 토큰, actions: write).
 
-    run 제목이 claude:<부서>:<모드> #<이슈>라 cap이 작성으로 센다. 실패해도 예외를 올리지 않는다
-    (재대기는 이미 끝났고, 사람이 to: 라벨을 다시 붙이면 된다).
+    dept·mode를 주면 그대로, 없으면 이슈 라벨(to:→request, dept:→task)로 정한다.
+    실행 전에 wip-wait를 붙여 둔다: _claude-write의 concurrency 대기열에서 실행이 밀려 취소돼도
+    라벨이 남아 wip-resume·매일 정리가 다시 잡는다 (작성이 시작되면 in-progress 단계가 뗀다).
+    run 제목이 claude:<부서>:<모드> #<이슈>라 cap이 작성으로 센다. 실패해도 예외를 올리지 않는다.
     """
     try:
-        info = gh_api(f"repos/{repo}/issues/{issue}") or {}
-        target = write_target(team, [lb["name"] for lb in info.get("labels", [])])
-        if not target:
-            return f"#{issue}: to:/dept: 라벨이 없어 다시 실행하지 않음"
-        dept, mode = target
+        if not (dept in team.depts and mode in ("task", "request")):
+            info = gh_api(f"repos/{repo}/issues/{issue}") or {}
+            target = write_target(team, [lb["name"] for lb in info.get("labels", [])])
+            if not target:
+                return f"#{issue}: to:/dept: 라벨이 없어 다시 실행하지 않음"
+            dept, mode = target
+        gh_api(f"repos/{repo}/issues/{issue}/labels", "-X", "POST",
+               "-f", f"labels[]={QUEUE_LABEL}")
         gh_api(f"repos/{repo}/actions/workflows/{WRITE_WORKFLOW}/dispatches", "-X", "POST",
                "-f", "ref=dev", "-f", f"inputs[dept]={dept}", "-f", f"inputs[mode]={mode}",
                "-f", f"inputs[issue]={issue}")

@@ -38,6 +38,7 @@ WIP_LABEL = "wip-wait"
 SPLIT_LABEL = "needs-split"
 STALE_LABEL = "stale"
 MAX_WRITE_TURNS = 30  # _claude-write.yml의 --max-turns와 같게
+HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 MAX_TITLE = 120
 MAX_BODY = 20_000
 MAX_PATCH_BYTES = 2_000_000
@@ -104,6 +105,8 @@ def check_result(data: object, team: team_mod.Team) -> dict:
         if not isinstance(v, str) or len(v) > limit:
             raise JobError(f"result.json {key}가 문자열이 아니거나 너무 김")
         out[key] = v
+    # 봇 표시(<!-- ax-issue:N --> 등)를 흉내 내지 못하게 Claude가 쓴 HTML 주석은 지운다
+    out["body"] = HTML_COMMENT.sub("", out["body"]).replace("<!--", "")
     if not out["title"].strip():
         raise JobError("result.json title이 비어 있음")
     if any(ord(ch) < 32 for ch in out["title"]):
@@ -218,16 +221,20 @@ def strip_closing_keywords(text: str) -> str:
 
 
 def linked_prs(prs: list[dict], issue_no: int, team: team_mod.Team) -> list[int]:
-    """그 이슈에 연결된 열린 봇 PR (봇만 쓰는 표시로 찾는다)."""
-    marker = ISSUE_MARKER.format(n=issue_no)
+    """그 이슈에 연결된 열린 봇 PR (봇이 본문 끝에 붙인 표시로 찾는다)."""
     return [p["number"] for p in prs
-            if p["user"]["login"] == team.bot_login and marker in (p.get("body") or "")]
+            if p["user"]["login"] == team.bot_login and pr_issue(p) == issue_no]
 
 
 def pr_issue(pr: dict) -> int | None:
-    """봇 PR의 연결 이슈. 봇만 쓰는 표시 <!-- ax-issue:N -->만 믿는다."""
-    m = re.search(r"<!-- ax-issue:(\d+) -->", pr.get("body") or "")
-    return int(m.group(1)) if m else None
+    """봇 PR의 연결 이슈. 봇이 본문 끝에 붙이는 <!-- ax-issue:N -->의 마지막 것만 믿는다."""
+    found = re.findall(r"<!-- ax-issue:(\d+) -->", pr.get("body") or "")
+    return int(found[-1]) if found else None
+
+
+def pr_mode(pr: dict) -> str | None:
+    found = re.findall(r"<!-- by:[a-z0-9-]+ mode:([a-z-]+) -->", pr.get("body") or "")
+    return found[-1] if found else None
 
 
 def is_dept_bot_pr(team: team_mod.Team, pr: dict) -> str | None:
@@ -239,8 +246,11 @@ def is_dept_bot_pr(team: team_mod.Team, pr: dict) -> str | None:
 
 
 # ── WIP 제한 ─────────────────────────────────────────────
+STALE_IN_PROGRESS_HOURS = 2  # 작성 한 번은 40분 안에 끝난다
+
+
 def wip_check(team: team_mod.Team, dept: str, open_prs: list[dict],
-              in_progress: list[dict]) -> str | None:
+              in_progress: list[dict], now: datetime | None = None) -> str | None:
     """새 작성을 시작하면 부서 한도를 넘는지. 넘으면 이유, 아니면 None.
 
     열린 봇 PR(부서 브랜치) 수가 open_bot_prs 이상이거나, 진행 중(in-progress) to:/dept: 이슈 수가
@@ -249,15 +259,39 @@ def wip_check(team: team_mod.Team, dept: str, open_prs: list[dict],
     max_prs = int(team.wip.get("open_bot_prs", 0))
     max_issues = int(team.wip.get("in_progress_issues", 0))
     prs = [p for p in open_prs if is_dept_bot_pr(team, p) == dept]
+    with_pr = {pr_issue(p) for p in prs}
+    cutoff = (now or datetime.now(UTC)) - timedelta(hours=STALE_IN_PROGRESS_HOURS)
     mine = {f"to:{dept}", f"dept:{dept}"}
+    # 열린 PR도 없이 오래 멈춘 in-progress(PR을 사람이 닫는 등으로 라벨만 남은 것)는 세지 않는다
     issues = [i for i in in_progress
-              if "pull_request" not in i and mine & set(labels_of(i))]
+              if "pull_request" not in i and mine & set(labels_of(i))
+              and (i["number"] in with_pr or "updated_at" not in i
+                   or parse_time(i["updated_at"]) >= cutoff)]
     if max_prs and len(prs) >= max_prs:
         return f"{dept} 열린 봇 PR {len(prs)}/{max_prs} — 하나가 머지·닫히면 자동으로 시작합니다."
     if max_issues and len(issues) >= max_issues:
         return (f"{dept} 진행 중 이슈 {len(issues)}/{max_issues} — 하나가 끝나면 자동으로 "
                 "시작합니다.")
     return None
+
+
+def release_closed_pr(team: team_mod.Team, pr_no: int) -> str:
+    """머지되지 않고 사람이 닫은 봇 PR → 연결 이슈의 in-progress를 뗀다 (WIP 칸 비우기).
+
+    봇이 닫은 경우(requeue·정리)는 라벨을 이미 정리했고 재시도가 막 시작됐을 수 있어
+    건드리지 않는다.
+    """
+    pr = api(f"repos/{repo()}/pulls/{pr_no}")
+    if pr.get("merged_at") or not is_dept_bot_pr(team, pr):
+        return "머지됐거나 봇 부서 PR이 아님"
+    issue_no = pr_issue(pr)
+    events = api(f"repos/{repo()}/issues/{pr_no}/events?per_page=100") or []
+    closer = next((e.get("actor") or {} for e in reversed(events) if e.get("event") == "closed"),
+                  {}).get("login")
+    if not issue_no or closer in (None, team.bot_login):
+        return "봇이 닫았거나 연결 이슈 없음"
+    remove_label(issue_no, "in-progress")
+    return f"#{issue_no} in-progress 해제 (PR #{pr_no}을 {closer}가 닫음)"
 
 
 def wip_resume(team: team_mod.Team, depts: list[str] | None = None) -> list[str]:
@@ -270,6 +304,8 @@ def wip_resume(team: team_mod.Team, depts: list[str] | None = None) -> list[str]
     busy = api(f"repos/{repo()}/issues?state=open&labels=in-progress&per_page=100") or []
     by_dept: dict[str, list[dict]] = {}
     for i in waiting:
+        if BLOCK_LABELS & set(labels_of(i)):
+            continue  # quota·needs-human 등은 재개해도 prep에서 막힌다 (다음 이슈를 가로막지 않게)
         target = team_mod.write_target(team, labels_of(i))
         if target and (depts is None or target[0] in depts):
             by_dept.setdefault(target[0], []).append(i)
@@ -280,7 +316,8 @@ def wip_resume(team: team_mod.Team, depts: list[str] | None = None) -> list[str]
         items.sort(key=lambda i: ("priority" not in labels_of(i), i["number"]))
         # wip-wait는 작성이 실제로 시작될 때(_claude-write in-progress 단계) 뗀다.
         # 실행이 대기열에서 취소돼도 라벨이 남아 다음 재개 때 다시 잡힌다
-        done.append(team_mod.dispatch_write(repo(), team, items[0]["number"]))
+        dept_, mode = team_mod.write_target(team, labels_of(items[0]))  # type: ignore[misc]
+        done.append(team_mod.dispatch_write(repo(), team, items[0]["number"], dept_, mode))
     return done
 
 
@@ -783,11 +820,20 @@ def summarize_ci_log(text: str) -> str:
 
 
 def dev_ci_red() -> bool:
-    """dev push ci의 가장 최근 완료 실행이 실패면 True (그때는 봇 PR을 닫지 않는다)."""
+    """dev가 초록이라고 확신할 수 없으면 True (그때는 봇 PR을 닫지 않는다).
+
+    가장 최근 dev push ci가 실행·대기 중이면(방금 머지가 dev를 깼을 수 있음) True.
+    cancelled·skipped는 건너뛰고, 그다음 완료 실행이 success가 아니면 True.
+    """
     data = api(f"repos/{repo()}/actions/workflows/ci.yml/runs?branch=dev&event=push"
-               "&status=completed&per_page=1") or {}
-    runs = data.get("workflow_runs", [])
-    return bool(runs) and runs[0].get("conclusion") == "failure"
+               "&per_page=10") or {}
+    for run in data.get("workflow_runs", []):
+        if run.get("status") != "completed":
+            return True
+        if run.get("conclusion") in ("cancelled", "skipped"):
+            continue
+        return run.get("conclusion") != "success"
+    return True
 
 
 def ci_failed(team: team_mod.Team, run_id: str, head_sha: str, branch: str,
@@ -814,12 +860,15 @@ def ci_failed(team: team_mod.Team, run_id: str, head_sha: str, branch: str,
     reason = f"ci 실패 (PR #{pr['number']}) — 힌트:\n```\n{hint}\n```"
     result = team_mod.requeue(repo(), team, issue_no, reason, pr=pr["number"], head_sha=head_sha)
     if result == "retry-1":
-        return f"{result}; {team_mod.dispatch_write(repo(), team, issue_no)}"
+        dept = team.dept_of_branch(branch)
+        return f"{result}; {team_mod.dispatch_write(repo(), team, issue_no, dept, pr_mode(pr))}"
     return result
 
 
 # ── 매일 정리: 48시간 멈춘 봇 PR·이슈 ───────────────────────
-STALE_SKIP_LABELS = {"report", "incident", "in-progress"}
+# 일부러 기다리거나 사람이 볼 이슈는 닫지 않는다
+STALE_SKIP_LABELS = {"report", "incident", "in-progress", "wip-wait", "needs-human",
+                     "needs-split", "delegated", "blocked", "external", "quota", "priority"}
 REPORT_PREFIX = "[report] 정리"
 
 
@@ -924,6 +973,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - 단계별 분기
     p.add_argument("--issue", type=int, required=True)
     p.add_argument("--reason", required=True)
     p.add_argument("--max-turns", default="false")
+    p.add_argument("--dept")
+    p.add_argument("--mode")
     p = sub.add_parser("max-turns")
     p.add_argument("--file", type=Path)
     p.add_argument("--limit", type=int, default=MAX_WRITE_TURNS)
@@ -934,6 +985,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - 단계별 분기
     p.add_argument("--dev-red", default="off")
     p = sub.add_parser("wip-resume")
     p.add_argument("--branch", default="")
+    p.add_argument("--pr", type=int)
     sub.add_parser("stale-sweep")
     p = sub.add_parser("claude-settings")
     p.add_argument("--dept", required=True)
@@ -991,7 +1043,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - 단계별 분기
                                       run_id=os.environ.get("GITHUB_RUN_ID"))
             print(result)
             if result == "retry-1":  # 첫 실패는 한 번 더 시도, 두 번째는 needs-human
-                print(team_mod.dispatch_write(repo(), team, args.issue))
+                print(team_mod.dispatch_write(repo(), team, args.issue, args.dept, args.mode))
             return 0
         if args.cmd == "max-turns":
             hit = hit_max_turns(args.file, args.limit)
@@ -1001,6 +1053,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - 단계별 분기
             print(ci_failed(team, args.run_id, args.head_sha, args.branch, args.dev_red == "on"))
             return 0
         if args.cmd == "wip-resume":
+            if args.pr:
+                print(release_closed_pr(team, args.pr))
             dept = team.dept_of_branch(args.branch) if args.branch else None
             if args.branch and not dept:
                 print("부서 브랜치가 아님")
