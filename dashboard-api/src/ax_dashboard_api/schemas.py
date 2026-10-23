@@ -448,6 +448,12 @@ class CandidateDecisionBody(BaseModel):
     note: str | None = None
 
 
+class OnboardingStepBody(BaseModel):
+    """온보딩 단계 완료 표시. `done: false`면 완료를 취소한다."""
+
+    done: bool = True
+
+
 class AgentMessageBody(TextBody):
     draft_style: str | None = None
     draft_text: str | None = None
