@@ -15,7 +15,7 @@
       "input_schema": "agents/support/src/support_agent/schemas.py#ListInquiriesInput",
       "output_schema": "agents/support/src/support_agent/schemas.py#ConversationListItem",
       "grade": "read",
-      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "allowed_requesters": ["dashboard-api", "orchestrator", "shop-api"],
       "verifier": null,
       "priority": "required"
     },
@@ -25,7 +25,7 @@
       "input_schema": "agents/support/src/support_agent/schemas.py#GetInquiryInput",
       "output_schema": "agents/support/src/support_agent/schemas.py#Conversation",
       "grade": "read",
-      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "allowed_requesters": ["dashboard-api", "orchestrator", "shop-api"],
       "verifier": null,
       "priority": "required"
     },
