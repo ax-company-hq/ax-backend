@@ -240,6 +240,16 @@
       "priority": "optional"
     },
     {
+      "id": "receive_change_result",
+      "description": "기획개발이 변경 요청을 닫을 때(완료·거절) 보내는 결과(ChangeResultInput)를 그 ctx_req_ 사건에 연결된 모든 문의에 적용하고 적용한 문의 수를 돌려준다(저장소 기록). 같은 결과의 재전송은 한 번만 적용하고, 이미 닫힌 요청에 다른 결과가 오면 거절한다. 연결된 문의가 없으면 applied=0. 요약은 코드가 만든 한 줄이며 고객 공지는 따로 붙인다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/planning.py#ChangeResultInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/planning.py#ChangeResultOutput",
+      "grade": "A",
+      "allowed_requesters": ["planning"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
       "id": "analyze_receipt",
       "description": "영수증 글(untrusted.receipt_text)과 사진(untrusted.images)에서 금액·날짜·주문번호·배송비·품목을 코드가 뽑아 문의에 붙은 주문과 대조한다(읽기). 개인정보는 가린 뒤 읽고 원문은 저장하지 않는다. 사진은 이미지 분석이 연결됐을 때만 읽고 아니면 읽지 못했다고 알린다. 같음·다름·확인할 수 없음만 말하고 환불 판정은 하지 않는다.",
       "input_schema": "agents/support/src/support_agent/analysis_schemas.py#AnalyzeReceiptInput",

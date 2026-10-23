@@ -17,10 +17,15 @@ from pydantic import ValidationError
 
 from ax_agent_template.server import error_result
 from ax_contracts.schemas import AgentRequest, AgentResult, Evidence, TaskStatus
-from ax_contracts.schemas.planning import CreateTicketOutput
+from ax_contracts.schemas.ids import ContextPrefix
+from ax_contracts.schemas.planning import (
+    ChangeResultInput,
+    ChangeResultOutput,
+    CreateTicketOutput,
+)
 from support_agent import guard
 from support_agent import handlers as h
-from support_agent.change_requests import source_ref_for
+from support_agent.change_requests import ChangeRequestConflict, source_ref_for
 from support_agent.change_schemas import (
     ListChangeRequestsInput,
     ListChangeRequestsOutput,
@@ -124,7 +129,66 @@ async def list_change_requests(request: AgentRequest) -> AgentResult:
     return h._done(request, ListChangeRequestsOutput(items=items).model_dump(mode="json"))
 
 
+SUMMARY_LIMIT = 300
+
+
+async def receive_change_result(request: AgentRequest) -> AgentResult:
+    """기획개발이 변경 요청을 닫을 때(완료·거절) 보내는 결과를 연결된 모든 문의에 적용한다.
+
+    통지는 `ctx_req_` 사건 하나당 한 번 온다(중복 연결된 요청은 원래 요청이 닫힐 때 같은 사건으로
+    한 번에). 그 사건에 연결된 모든 문의에 같은 결과를 적용하고(`applied`는 그 문의 수), 같은
+    결과가 다시 오면 한 번만 적용한 것으로 본다. 이미 닫힌 요청에 다른 결과가 오면 거절한다.
+    이 사건에 연결된 문의가 없으면 다른 부서 몫이라 `applied=0`으로 답한다. 고객 공지는 따로
+    붙인다(`attach_notice`).
+    """
+
+    parsed = h._parse(request, ChangeResultInput)
+    if isinstance(parsed, AgentResult):
+        return parsed
+    context_id = request.meta.context_id
+    if not context_id.startswith(ContextPrefix.REQUEST.value):
+        return error_result(
+            request.meta,
+            TaskStatus.FAILED,
+            "invalid_input",
+            f"변경 요청 결과는 {ContextPrefix.REQUEST.value} 사건으로만 온다",
+        )
+    links = h.CHANGES.for_context(context_id)
+    if not links:
+        return h._done(
+            request,
+            ChangeResultOutput(applied=0).model_dump(mode="json"),
+            outcome="not_linked",
+            evidence=Evidence(ref_ids=[context_id, parsed.request_id]),
+        )
+    result = {
+        "request_id": parsed.request_id,
+        "pr_numbers": parsed.pr_numbers,
+        "merged_at": parsed.merged_at.isoformat() if parsed.merged_at else None,
+        "spec_id": parsed.spec_id,
+        "reason_code": parsed.reason_code,
+        "summary": parsed.summary[:SUMMARY_LIMIT],  # 코드가 만든 한 줄. 길이만 제한한다
+    }
+    repeated = links[0].status == parsed.status and links[0].result == result
+    try:
+        updated = h.CHANGES.record_result(context_id, parsed.status, result=result)
+    except ChangeRequestConflict as exc:
+        return h._done(request, {"message": str(exc)}, outcome="invalid_state")
+    return h._done(
+        request,
+        ChangeResultOutput(applied=len(updated)).model_dump(mode="json"),
+        outcome="duplicate" if repeated else "applied",
+        evidence=Evidence(
+            ref_ids=[context_id, parsed.request_id, *(f"inquiry:{u.inquiry_id}" for u in updated)],
+            data_summary=(
+                f"변경 요청 {parsed.request_id} {parsed.status}: 문의 {len(updated)}건에 적용"
+            ),
+        ),
+    )
+
+
 CHANGE_HANDLERS = {
     "request_change": request_change,
     "list_change_requests": list_change_requests,
+    "receive_change_result": receive_change_result,
 }

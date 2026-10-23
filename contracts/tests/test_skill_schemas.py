@@ -5,6 +5,8 @@ from ax_contracts.schemas import (
     AnomalyDetectionInput,
     AnomalyDetectionOutput,
     CategoryImpact,
+    ChangeResultInput,
+    ChangeResultOutput,
     CreateTicketInput,
     CreateTicketOutput,
     DiagnoseIncidentInput,
@@ -90,6 +92,41 @@ def test_create_ticket() -> None:
                 "outcome": "created",
                 "duplicate_of": "REQ-1",
             }
+        )
+
+
+def test_change_result() -> None:
+    done = ChangeResultInput.model_validate(
+        {
+            "request_id": "REQ-1",
+            "status": "completed",
+            "pr_numbers": [42],
+            "merged_at": T0,
+            "summary": "PR #42 머지",
+        }
+    )
+    assert (done.spec_id, done.reason_code) == (None, None)
+    no = ChangeResultInput.model_validate(
+        {
+            "request_id": "REQ-2",
+            "status": "declined",
+            "reason_code": "out_of_scope",
+            "summary": "범위 밖",
+        }
+    )
+    assert no.pr_numbers == []
+    assert ChangeResultOutput.model_validate({"applied": 3}).applied == 3
+    with pytest.raises(ValidationError):
+        ChangeResultInput.model_validate(
+            {"request_id": "REQ-3", "status": "requested", "summary": "s"}
+        )
+    with pytest.raises(ValidationError):
+        ChangeResultInput.model_validate(
+            {"request_id": "REQ-3", "status": "declined", "pr_numbers": [1], "summary": "s"}
+        )
+    with pytest.raises(ValidationError):
+        ChangeResultInput.model_validate(
+            {"request_id": "REQ-3", "status": "completed", "reason_code": "x", "summary": "s"}
         )
 
 
