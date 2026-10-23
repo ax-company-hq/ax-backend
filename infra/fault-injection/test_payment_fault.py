@@ -79,7 +79,9 @@ class PaymentFaultTest(unittest.TestCase):
         self.assertIn("DELETE", [m for m, *_ in _Shop.seen])
 
     def test_latency_sends_delay(self):
-        self.assertEqual(payment_fault.main(["inject", "--kind", "latency", "--delay-ms", "1500"]), 0)
+        self.assertEqual(
+            payment_fault.main(["inject", "--kind", "latency", "--delay-ms", "1500"]), 0
+        )
         self.assertEqual(_Shop.state["delay_ms"], 1500)
 
     def test_http_error_is_nonzero(self):
