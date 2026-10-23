@@ -1,7 +1,7 @@
 """주문 조회. 클레임 판정에 쓰는 주문·결제 사실은 이 모듈에서만 읽는다.
 
-TODO: shop-api 주문 조회 API(data-access 형식)가 생기면 거기서 받는다. 그 전까지는 시드 주문을
-쓴다. 금액은 정수 원, 시간은 UTC다. 판정 금액은 요청이 아니라 여기 값으로 코드가 계산한다.
+주문은 shop-api에서 읽고(`shop_client.load_order`), 목 모드의 시드 주문은 이 모듈이 갖는다.
+금액은 정수 원, 시간은 UTC다. 판정 금액은 요청이 아니라 여기 값으로 코드가 계산한다.
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ class Order(AxModel):
     delivered_at: datetime | None = None
     shipping_fee: int = 0
     points_used: int = 0
+    payment_id: str | None = None  # 환불할 결제 (shop-api `payment_id`, 시드는 없음)
     items: list[OrderItem] = Field(default_factory=list)
 
 

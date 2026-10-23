@@ -191,7 +191,7 @@
     },
     {
       "id": "process_claim_queue",
-      "description": "보상 큐의 준비된 건을 refund_request(execute, 재무 교차검증·기준 이상 C 보류)로 지급 처리한다. 지급 연동(shop-api 환불 API)은 아직 없다.",
+      "description": "보상 큐의 준비된 건을 refund_request(execute, 재무 교차검증·기준 이상 C 보류)로 지급 처리한다. 실행되면 shop-api 환불 API로 현금을 환불하고, 실패하면 보류로 남겨 같은 키로 재시도한다.",
       "input_schema": "agents/support/src/support_agent/claim_schemas.py#ProcessClaimQueueInput",
       "output_schema": "agents/support/src/support_agent/claim_schemas.py#QueueRun",
       "grade": "B",

@@ -97,6 +97,7 @@ class Claim(AxModel):
     order_id: EntityId
     order_no: str
     buyer_id: str  # 구매자 ID (shop-api `buyer_id`, 예: usr_1)
+    payment_id: str | None = None  # 환불할 결제 (shop-api). 시드 주문은 없다
     customer: str
     type: ClaimType
     reason: ClaimReason
