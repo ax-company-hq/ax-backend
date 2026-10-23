@@ -1,0 +1,47 @@
+{
+  "title": "온보딩: 결정 카드를 읽을 순서로",
+  "description": "결제 영역 결정 2건을 기록한 뒤 신규 입사자 emp_10의 온보딩을 만든다. 결정 카드가 읽을 순서대로 나열되고 진행률은 0%에서 시작한다.",
+  "steps": [
+    {
+      "skill": "record_case",
+      "requester": "planning",
+      "context_id": "ctx_dec_0001",
+      "input": {
+        "context_id": "ctx_dec_0001",
+        "kind": "spec_confirmed",
+        "summary": "결제 재시도를 최대 2회로 확정했다",
+        "decision_reason": "중복 결제 위험을 줄이기 위해",
+        "alternatives_considered": ["재시도 없음"],
+        "source_refs": ["pr:412", "area:payment"],
+        "author": "planning"
+      },
+      "expect": {"status": "completed", "outcome": "card_created"}
+    },
+    {
+      "skill": "record_case",
+      "requester": "planning",
+      "context_id": "ctx_dec_0002",
+      "input": {
+        "context_id": "ctx_dec_0002",
+        "kind": "spec_confirmed",
+        "summary": "결제 타임아웃을 5초로 확정했다",
+        "decision_reason": "게이트웨이 응답 지연을 견디기 위해",
+        "alternatives_considered": ["3초"],
+        "source_refs": ["pr:413", "area:payment"],
+        "author": "planning"
+      },
+      "expect": {"status": "completed", "outcome": "card_created"}
+    },
+    {
+      "skill": "start_onboarding",
+      "requester": "orchestrator",
+      "input": {"member_id": "emp_10", "area": "payment"},
+      "expect": {
+        "status": "completed",
+        "outcome": "onboarding_started",
+        "output": {"progress": 0},
+        "output_has": ["onboarding_id", "steps.0.title", "steps.2.card_id"]
+      }
+    }
+  ]
+}

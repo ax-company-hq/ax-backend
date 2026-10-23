@@ -1,0 +1,478 @@
+[
+ {
+  "kind": "spec_confirmed",
+  "summary": "결제 재시도를 최대 2회로 확정했다. 중복 결제 위험을 줄이기 위해",
+  "expect_decision": true,
+  "expect_reason": "중복 결제 위험을 줄이기 위해",
+  "expect_rejected": false
+ },
+ {
+  "kind": "spec_confirmed",
+  "summary": "중복 결제 위험을 줄이기 위해 결제 재시도를 최대 2회로 확정했다",
+  "expect_decision": true,
+  "expect_reason": "중복 결제 위험을 줄이기 위해",
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "검색 색인을 매일 새로 만들기로 했다, 최신성 문제 때문에",
+  "expect_decision": true,
+  "expect_reason": "최신성 문제 때문에",
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "배포 창구를 새벽으로 옮긴다 (트래픽이 적기 때문에)",
+  "expect_decision": true,
+  "expect_reason": "트래픽이 적기 때문에",
+  "expect_rejected": false
+ },
+ {
+  "kind": "rollback_executed",
+  "summary": "v1.4.1을 v1.4.0으로 롤백했다. 오류율이 급증했으므로",
+  "expect_decision": true,
+  "expect_reason": "오류율이 급증했으므로",
+  "expect_rejected": false
+ },
+ {
+  "kind": "rollback_executed",
+  "summary": "결제 실패가 늘었기 때문에 shop-api를 롤백했다",
+  "expect_decision": true,
+  "expect_reason": "결제 실패가 늘었기 때문에",
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "재고 알림 기준을 20개로 낮춘다, 품절이 잦았던 탓에",
+  "expect_decision": true,
+  "expect_reason": "품절이 잦았던 탓에",
+  "expect_rejected": false
+ },
+ {
+  "kind": "spec_confirmed",
+  "summary": "카탈로그 카테고리를 3단계로 줄인다. 이유는 탐색 경로가 길어서",
+  "expect_decision": true,
+  "expect_reason": "탐색 경로가 길어서",
+  "expect_rejected": false
+ },
+ {
+  "kind": "spec_confirmed",
+  "summary": "쿠폰 중복 사용을 막는다. 사유: 정산 오차 방지",
+  "expect_decision": true,
+  "expect_reason": "정산 오차 방지",
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "야간 배치 시간을 2시로 옮긴다. 근거는 접속량 감소",
+  "expect_decision": true,
+  "expect_reason": "접속량 감소",
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "응답 템플릿을 통일한다. 고객 혼선으로 인해",
+  "expect_decision": true,
+  "expect_reason": "고객 혼선으로 인해",
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "검색 결과를 20건으로 제한한다. 응답 속도를 고려해",
+  "expect_decision": true,
+  "expect_reason": "응답 속도를 고려해",
+  "expect_rejected": false
+ },
+ {
+  "kind": "spec_confirmed",
+  "summary": "처리 지연이 반복되므로 환불 승인 단계를 줄였다",
+  "expect_decision": true,
+  "expect_reason": "처리 지연이 반복되므로",
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision_extracted",
+  "summary": "알림 문구는 간결하게 가기로 했다. 가독성을 높이기 위해",
+  "expect_decision": true,
+  "expect_reason": "가독성을 높이기 위해",
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "결제 로그 보관을 90일로 한다. 감사 요구 때문에",
+  "expect_decision": true,
+  "expect_reason": "감사 요구 때문에",
+  "expect_rejected": false
+ },
+ {
+  "kind": "spec_confirmed",
+  "summary": "배송 상태를 5단계로 표시한다 (고객 문의를 줄이기 위해서)",
+  "expect_decision": true,
+  "expect_reason": "고객 문의를 줄이기 위해서",
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "A/B 테스트를 2주 유지한다. 표본이 부족하기 때문에",
+  "expect_decision": true,
+  "expect_reason": "표본이 부족하기 때문에",
+  "expect_rejected": false
+ },
+ {
+  "kind": "rollback_executed",
+  "summary": "설정 변경을 되돌렸다. 장애 재발을 막기 위하여",
+  "expect_decision": true,
+  "expect_reason": "장애 재발을 막기 위하여",
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "API 호출 한도를 낮췄다 — 비용 증가 때문에",
+  "expect_decision": true,
+  "expect_reason": "비용 증가 때문에",
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "시스템 안정화 덕분에 야간 점검을 생략한다",
+  "expect_decision": true,
+  "expect_reason": "시스템 안정화 덕분에",
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "결제 서버 증설을 보류한다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "spec_confirmed",
+  "summary": "상품 상세 화면 개편안을 확정했다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision_extracted",
+  "summary": "배송 지연 안내 문구를 변경하기로 했다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "rollback_executed",
+  "summary": "v1.3.9로 롤백했다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "쿠폰 발행 한도를 유지한다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "spec_confirmed",
+  "summary": "회원 등급 기준을 확정했다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "야간 알림을 끈다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "재입고 안내 메일 발송을 시작한다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "incident",
+  "summary": "결제 API 응답이 지연되고 있다",
+  "expect_decision": false,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "case",
+  "summary": "고객이 배송 지연을 문의했다",
+  "expect_decision": false,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "notice",
+  "summary": "내일 22시 정기 점검이 있다",
+  "expect_decision": false,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "pr_merged",
+  "summary": "결제 재시도 PR이 머지됐다",
+  "expect_decision": false,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "request_closed",
+  "summary": "환불 요청이 종료됐다",
+  "expect_decision": false,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "incident",
+  "summary": "검색 서버 CPU가 90%를 넘었다",
+  "expect_decision": false,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "case",
+  "summary": "쿠폰 오류 문의가 3건 접수됐다",
+  "expect_decision": false,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "notice",
+  "summary": "신규 입점 판매자 안내를 게시했다",
+  "expect_decision": false,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "pr_merged",
+  "summary": "카탈로그 개편 PR이 머지됐다",
+  "expect_decision": false,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "request_closed",
+  "summary": "문의 12번을 완료 처리했다",
+  "expect_decision": false,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "notice",
+  "summary": "점검을 위해 서비스가 잠시 중단된다",
+  "expect_decision": false,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "incident",
+  "summary": "서버 점검 때문에 응답이 지연됐다",
+  "expect_decision": false,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "결제 서버 캐시 도입안을 기각했다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": true
+ },
+ {
+  "kind": "decision",
+  "summary": "신규 결제 수단 추가 요청을 반려했다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": true
+ },
+ {
+  "kind": "decision_extracted",
+  "summary": "무제한 재시도 방안은 채택하지 않기로 했다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": true
+ },
+ {
+  "kind": "decision",
+  "summary": "야간 배포를 도입하지 않기로 했다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": true
+ },
+ {
+  "kind": "decision",
+  "summary": "프로모션 자동 확대안을 기각한다. 비용 때문에",
+  "expect_decision": true,
+  "expect_reason": "비용 때문에",
+  "expect_rejected": true
+ },
+ {
+  "kind": "decision_rejected",
+  "summary": "검색 개인화 도입안",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": true
+ },
+ {
+  "kind": "decision",
+  "summary": "쿠폰 중복 허용안은 반려됐다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": true
+ },
+ {
+  "kind": "decision",
+  "summary": "재고 자동 폐기안을 채택하지 않았다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": true
+ },
+ {
+  "kind": "decision",
+  "summary": "기각하지 않고 조건부로 승인했다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "기존 반려 결정을 철회하고 도입하기로 했다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "spec_confirmed",
+  "summary": "기각된 안을 보완해 다시 확정했다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "반려 사유를 정리해 공유했다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "기각 건수가 줄었다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "위해 요소를 제거한다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "재해에 대비해 백업 주기를 단축한다",
+  "expect_decision": true,
+  "expect_reason": "재해에 대비해",
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "재발 방지를 위한 점검 항목을 추가한다",
+  "expect_decision": true,
+  "expect_reason": "재발 방지를 위한",
+  "expect_rejected": false
+ },
+ {
+  "kind": "spec_confirmed",
+  "summary": "보안 강화를 위해 비밀번호 규칙을 변경한다",
+  "expect_decision": true,
+  "expect_reason": "보안 강화를 위해",
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "재시도 횟수는 3회로 한다 (타임아웃 대응 목적)",
+  "expect_decision": true,
+  "expect_reason": "타임아웃 대응 목적",
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "결제 모듈 교체 방안을 보류했다. 일정이 빠듯하므로",
+  "expect_decision": true,
+  "expect_reason": "일정이 빠듯하므로",
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "로그 샘플링을 도입한다. 저장 비용이 크기 때문에",
+  "expect_decision": true,
+  "expect_reason": "저장 비용이 크기 때문에",
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "야간 배포를 멈추지 않기로 했다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "롤백하지 않기로 결정했다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "기각했던 B안을 다시 채택했다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "반려됐던 안을 이번에 승인했다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "기존 결정을 철회하고 B안은 기각했다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": true
+ },
+ {
+  "kind": "decision",
+  "summary": "팀장이 승인해 배포를 확정한다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "rollback_executed",
+  "summary": "로그를 확인해 v1.3.9로 롤백했다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": false
+ },
+ {
+  "kind": "decision",
+  "summary": "근거는 없지만 일단 유지한다",
+  "expect_decision": true,
+  "expect_reason": null,
+  "expect_rejected": false
+ }
+]

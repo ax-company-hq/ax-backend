@@ -1,0 +1,30 @@
+{
+  "title": "기각한 안 기록 (decision_rejected)",
+  "description": "planning이 기각 결정을 이유·대안과 함께 보낸다. 카드는 outcome=rejected로 남아 나중에 계획 비교(check_plan)의 근거가 된다.",
+  "steps": [
+    {
+      "label": "기각 기록",
+      "skill": "record_case",
+      "requester": "planning",
+      "input": {
+        "context_id": "ctx_req_0202",
+        "kind": "decision_rejected",
+        "summary": "결제 서버 캐시 도입안을 기각했다",
+        "decision_reason": "결제 정합성 위험",
+        "alternatives_considered": [
+          "현행 유지"
+        ],
+        "source_refs": [
+          "req:88",
+          "area:payment"
+        ],
+        "author": "planning"
+      },
+      "expect": {
+        "status": "completed",
+        "outcome": "card_created",
+        "card_count": 1
+      }
+    }
+  ]
+}
