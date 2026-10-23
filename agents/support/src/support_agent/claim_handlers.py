@@ -15,7 +15,7 @@ from typing import Any
 
 from ax_agent_template.execute import execute
 from ax_contracts.schemas import AgentRequest, AgentResult, Evidence
-from support_agent import claim_rules, orders
+from support_agent import claim_rules, orders, persistence
 from support_agent import handlers as h
 from support_agent.claim_schemas import (
     CreateClaimInput,
@@ -28,9 +28,9 @@ from support_agent.claim_schemas import (
     QueueRunResult,
     ReceiveReturnInput,
 )
-from support_agent.claims import ClaimStore, now_iso
+from support_agent.claims import now_iso
 
-CLAIMS = ClaimStore()
+CLAIMS = persistence.build_claim_store()
 
 
 def _claim_not_found(request: AgentRequest, claim_id: int) -> AgentResult:
