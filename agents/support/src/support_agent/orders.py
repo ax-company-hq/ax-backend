@@ -28,6 +28,8 @@ class Order(AxModel):
     buyer_id: str  # 구매자 ID (shop-api `buyer_id`, 예: buy_0001)
     status: str  # paid | preparing | shipped | delivered
     paid_at: datetime
+    promised_delivery_at: datetime | None = None  # 약속한 배송일 (없으면 확인할 수 없음)
+    shipped_at: datetime | None = None
     delivered_at: datetime | None = None
     shipping_fee: int = 0
     points_used: int = 0
@@ -42,6 +44,8 @@ SEED_ORDERS: list[Order] = [
         buyer_id="buy_0001",
         status="delivered",
         paid_at=datetime(2026, 10, 10, tzinfo=UTC),
+        promised_delivery_at=datetime(2026, 10, 12, tzinfo=UTC),
+        shipped_at=datetime(2026, 10, 11, tzinfo=UTC),
         delivered_at=datetime(2026, 10, 14, tzinfo=UTC),
         shipping_fee=3000,
         items=[
@@ -55,6 +59,7 @@ SEED_ORDERS: list[Order] = [
         buyer_id="buy_0002",
         status="preparing",
         paid_at=datetime(2026, 10, 21, tzinfo=UTC),
+        promised_delivery_at=datetime(2026, 10, 24, tzinfo=UTC),
         shipping_fee=3000,
         points_used=1000,
         items=[
