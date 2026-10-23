@@ -1,7 +1,11 @@
 # 서버 PC 접속 안내 (홈페이지·관리자)
 
-서버 PC에서 `docker compose up -d` 한 번으로 nginx 게이트웨이 하나가 한 포트(기본 8080)로 고객 홈페이지·관리자·API를 서빙한다.
-외부에 열리는 포트는 이것 하나뿐이다. 나머지 서비스(총괄 8000, safety 8001, 각 에이전트 등)는 compose 내부 네트워크에서만 열린다.
+서버 PC에서는 서버 전용 override `infra/compose.server.yml`을 함께 써서 nginx 게이트웨이 하나가 한 포트(기본 8080)로 고객 홈페이지·관리자·API를 서빙한다.
+이때 외부에 열리는 포트는 이것 하나뿐이고, 나머지 서비스(총괄 8000, safety 8001, 각 에이전트 등)는 compose 내부 네트워크에서만 열린다.
+
+기본 `infra/compose.yml`(팀원 로컬 개발)의 동작은 바뀌지 않는다. 로컬에서는 지금처럼 `docker compose -f infra/compose.yml up`으로 각 서비스 포트가 호스트에 열린다.
+
+`infra/compose.server.yml`은 infra 요청 #296이 머지된 뒤에 생긴다. 그 전에는 아래 서버 PC 명령이 동작하지 않는다.
 
 > **보안 경고 (먼저 읽기).** 게이트웨이의 `/api/`는 dashboard-api를 그대로 연결한다. dashboard-api의 쓰기 API(클레임 승인·거절, 보상 큐 처리, 문의 답변·상태 변경, 후보 카드 결정 등)에는 아직 인증이 없다.
 > 따라서 **같은 LAN이나 Tailscale에 들어온 사람은 누구나 `/api/dashboard/...`로 직접 POST할 수 있다.** `/admin/`의 데모 로그인은 화면 입구만 막을 뿐 API는 막지 않는다.
@@ -21,16 +25,10 @@
 
 1. `git pull` (ax-backend와 ax-frontend를 같은 폴더에 나란히 둔다)
 2. `.env` 생성 (`.env.example` 복사 후 값 채우기. 비밀값은 커밋 금지). 게이트웨이 포트는 `AX_GATEWAY_PORT` (기본 8080)
-3. `docker compose --env-file .env -f infra/compose.yml up -d --build` (compose는 `infra/.env`를 읽으므로 루트 `.env`는 `--env-file`로 넘긴다)
+3. `docker compose --env-file .env -f infra/compose.yml -f infra/compose.server.yml up -d --build` (compose는 `infra/.env`를 읽으므로 루트 `.env`는 `--env-file`로 넘긴다)
 4. 확인: `http://localhost:8080/`, `/admin/`, `/admin/planning/`
 
-모든 서비스는 `restart: unless-stopped`라 서버 PC를 다시 켜면 Docker가 올라오는 대로 따라 올라온다.
-
-로컬 개발에서 각 서비스 포트(8000, 8001, 8010 등)를 호스트에 열고 싶으면 override 파일을 함께 쓴다.
-
-```
-docker compose -f infra/compose.yml -f infra/compose.dev.yml up
-```
+`compose.server.yml`이 모든 서비스에 `restart: unless-stopped`를 붙이므로 서버 PC를 다시 켜면 Docker가 올라오는 대로 따라 올라온다. 내릴 때도 같은 두 파일로 `down`(`-v` 없이)을 쓴다.
 
 ## 방화벽 (Windows, 관리자 PowerShell)
 

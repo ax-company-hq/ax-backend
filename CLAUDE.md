@@ -148,16 +148,15 @@ e커머스 가상회사의 부서별 AI 에이전트를 A2A로 연결한 AX 플�
 | agents/data | 8106 |
 | agents/infra-dejafix | 8107 |
 | redis (이벤트 버스) | 6379 |
-| gateway (nginx, 서버 PC에서 외부에 열리는 유일한 포트) | 8080 (`AX_GATEWAY_PORT`) |
+| gateway (nginx, 서버 PC 전용 `infra/compose.server.yml`. 그때 외부에 열리는 유일한 포트) | 8080 (`AX_GATEWAY_PORT`) |
 | ax-frontend shop-web / dashboard-web | 3000 / 3001 |
 
-위 서비스 포트는 compose 안에서만 열린다. 로컬에서 호스트 포트가 필요하면 `compose.dev.yml`을 함께 쓴다 (아래 "실행"). 새 서비스를 추가하면 이 표부터 갱신한다.
+새 서비스를 추가하면 이 표부터 갱신한다.
 
 ## 실행
 
-- 전체: `docker compose -f infra/compose.yml up`. 외부에 열리는 포트는 gateway(8080) 하나뿐이고, 각 서비스 포트(8000, 8010 등)는 호스트에 열리지 않는다
-- 로컬 개발에서 서비스 포트를 호스트에 열려면: `docker compose -f infra/compose.yml -f infra/compose.dev.yml up [서비스...]`
-- 서버 PC 운영(켜기·방화벽·접속)은 `docs/automation/dashboard-access.md`
+- 전체: `docker compose -f infra/compose.yml up`
+- 서버 PC 운영: `docker compose -f infra/compose.yml -f infra/compose.server.yml up -d --build` (서버 전용 override, #296 머지 후. 외부에는 gateway 8080 하나만 열린다). 켜기·방화벽·접속은 `docs/automation/dashboard-access.md`
 - 개발할 때는 자기 PC에서 자기 서비스와 필요한 것만 띄운다. 서버 PC는 통합 테스트·데모에만 쓴다.
 - 각 서비스 폴더의 `compose.yml`을 `infra/compose.yml`이 `include:`로 불러온다.
 - 프론트까지 함께 띄울 때는 두 레포를 같은 폴더에 나란히 clone한다.
