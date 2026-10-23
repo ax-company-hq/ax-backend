@@ -81,6 +81,12 @@ support 출력은 `claim_mapping.py`에서 화면 모델로 바꾼다 (값을 �
 | POST `/handover-questions/{question_id}/answer` | `answer_handover_question` | 본문 `HandoverAnswerRequest`(`question_id`, `answer`, `idempotency_key`) → `AnswerHandoverQuestionOutput` |
 | GET `/candidate-cards?area` | `list_candidate_cards` | 후보 `Card[]` (`candidate: true`, `confidence` low·mid·high) |
 | POST `/candidate-cards/{card_id}/decision` | `decide_candidate_card` | 본문 `{decision: approve|reject, note?}` → `{card_id, status: active|retired}` |
+| GET `/onboardings?member_id&area` | `list_onboardings` | `OnboardingView[]` (단계·진행률) |
+| POST `/onboardings/{onboarding_id}/steps/{step_id}` | `update_onboarding_step` | 본문 `{done: true|false}`(기본 true) → `StartOnboardingOutput` (진행률은 다시 센 값) |
+| GET `/assignment-changes?status&area&member_id` | `list_changes` | `ChangeView[]` (교대·발령·퇴직·입사 요청, 확인 목록) |
+| GET `/roster?area` | `get_roster` | `GetRosterOutput` 한 개 (`entries`, `gap_areas`, `collected_at`). 개인 정보 없음 |
+| GET `/hr-activity/{context_id}` | `get_audit_timeline` | `AuditEntry[]` (hr이 한 일, 시간순) |
+| POST `/plan-checks` | `check_plan` | 본문 `{draft: {title, summary, area, kind}}` → `CheckPlanOutput` (읽기, 저장 안 함) |
 - 답변은 질문이 속한 사건의 `context_id`(질문 목록에서 받은 값)를 그대로 `meta.context_id`로 보낸다. 새로 만들지 않는다. 그래서 hr 감사 기록이 그 사건으로 모인다. 이미 답해서 대기 목록에서 빠진 질문(같은 답의 재전송)은 사건을 알 수 없어 새 `ctx_ui_`로 보내고, hr이 질문 ID로 찾아 한 번만 반영한다. 멱등 키는 본문의 `idempotency_key`다.
 - 같은 답을 다시 보내면 한 번만 반영되고 성공한다. **다른 답**을 다시 보내면 409 `CONFLICT`다. 없는 질문·카드·인수인계는 404 `NOT_FOUND`, 본문 오류(빈 답변·빈 키·경로와 다른 `question_id`·모르는 결정 값)는 422다.
 - 후보 카드: 같은 결정을 다시 하면 성공하고 반대 결정이면 409 `CONFLICT`다. 실행은 hr이 `decide_candidate_card`(A)로 한다. 대시보드는 hr skill만 부르고 직접 `execute()`하지 않는다. 승인 권한 규칙은 아직 없다(누구나 호출 가능, 정하면 여기서 막는다).
@@ -88,7 +94,8 @@ support 출력은 `claim_mapping.py`에서 화면 모델로 바꾼다 (값을 �
 - 목과 실제는 같은 모양이다. 예전 목의 `StartHandoverOutput`(`gap_count`, `questions`)은 hr 화면 계약의 `HandoverView`(`open_questions`)로 바뀌었다. 화면 타입을 다시 만들어야 한다.
 - 완성도·진행률 같은 숫자는 hr이 계산한 값이다 (목은 코드가 계산: 완성도 = (항목 수 - 빈 자리) / 항목 수).
 - 답변 문장은 사람이 쓴 내부 입력이라 계약대로 `input`으로 보낸다. 화면은 텍스트로만 표시해야 한다.
-- 아직 연결하지 않은 hr 화면 경로(온보딩·변경·명부·감사 기록·계획 비교)는 `dashboard-api-contract.md` 2장의 제안 경로대로 이어서 붙인다.
+- 온보딩 단계 완료는 이미 그 상태면 그대로 성공하고(`duplicate`), 없는 온보딩·단계는 404다. 변경(`assignment-changes`)의 시작·확정·퇴직 확정은 통합 에이전트만 부르고 화면은 조회만 한다 (hr Agent Card가 dashboard-api를 허용하지 않음). 계획 비교의 `draft`는 화면에서 사람이 쓴 요약이라 `input`으로 보낸다 (`untrusted` 비움).
+- 목 모드 데이터는 `mock_handover.py`(인수인계·후보 카드)와 `mock_hr.py`(온보딩·변경·명부·감사·계획 비교)에 있다. 목의 진행률은 hr과 같은 규칙(완료한 단계 / 전체 단계)으로 코드가 센다.
 
 ### 사건 ID (`context_id`)
 모든 요청에는 사건 단위 `context_id`가 필요하다. 화면(상담원) 호출은 요청마다 새 `ctx_ui_<hex>`를 붙인다 (`support_client.UI_CONTEXT_PREFIX`, 한 곳).
