@@ -90,7 +90,7 @@ def runs_on_blocks(text: str) -> list[str]:
             if nxt.strip() and (len(nxt) - len(nxt.lstrip())) <= indent:
                 break
             block.append(nxt)
-        blocks.append(chr(10).join(block))
+        blocks.append("\n".join(block))
     return blocks
 
 

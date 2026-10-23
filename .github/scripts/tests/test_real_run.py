@@ -267,7 +267,7 @@ def test_expression_in_runs_on_fails_everywhere(tmp_path: Path, runs_on: str) ->
 def test_expression_elsewhere_is_fine(tmp_path: Path) -> None:
     lines = ["on: push", "jobs:", "  a:", "    runs-on: ubuntu-latest", "    steps:",
              "      - run: echo ${{ github.sha }}"]
-    write_wf(tmp_path, "ci.yml", chr(10).join(lines) + chr(10))
+    write_wf(tmp_path, "ci.yml", "\n".join(lines) + "\n")
     assert guard.check_workflows(tmp_path) == []
 
 
@@ -293,13 +293,31 @@ def test_standing_stack_running_makes_run_fail_without_touching_compose(
 
 def test_standing_stack_check_reads_ps_output(monkeypatch) -> None:
     class Done:
-        def __init__(self, out: str) -> None:
+        def __init__(self, out: str, code: int = 0) -> None:
             self.stdout = out
+            self.returncode = code
 
     monkeypatch.setattr(run_mod.subprocess, "run", lambda *a, **k: Done("abc123\n"))
     assert run_mod.standing_stack_running() is True
     monkeypatch.setattr(run_mod.subprocess, "run", lambda *a, **k: Done(""))
     assert run_mod.standing_stack_running() is False
+
+
+def test_standing_stack_check_fails_closed(monkeypatch) -> None:
+    """확인이 실패하면(종료 코드 0 아님, 예외) 떠 있는 것으로 보고 실행하지 않는다."""
+
+    class Done:
+        stdout = ""
+        returncode = 1
+
+    monkeypatch.setattr(run_mod.subprocess, "run", lambda *a, **k: Done())
+    assert run_mod.standing_stack_running() is True
+
+    def boom(*a, **k):
+        raise FileNotFoundError("docker")
+
+    monkeypatch.setattr(run_mod.subprocess, "run", boom)
+    assert run_mod.standing_stack_running() is True
 
 
 def test_time_budget_fits_job_timeout_with_three_runs() -> None:

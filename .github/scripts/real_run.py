@@ -185,13 +185,18 @@ def write_output(name: str, value: str) -> None:
 
 
 def standing_stack_running() -> bool:
-    """서버 PC 상시 스택(ax-backend)에 컨테이너가 있으면 True (덮어쓰기·포트 충돌 방지)."""
+    """서버 PC 상시 스택(ax-backend)에 컨테이너가 있으면 True (덮어쓰기·포트 충돌 방지).
+
+    확인 자체가 실패하면(예외, 종료 코드 0 아님) 떠 있는 것으로 보고 멈춘다 (fail-closed).
+    """
     try:
         proc = subprocess.run(
             STANDING_PS, cwd=ROOT, capture_output=True, text=True, timeout=60, check=False
         )
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return False
+        return True
+    if proc.returncode != 0:
+        return True
     return bool(proc.stdout.strip())
 
 
