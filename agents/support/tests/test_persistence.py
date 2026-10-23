@@ -155,7 +155,7 @@ def test_draft_events_are_saved_with_context_and_feed_kpis(
 # ---------------------------------------------------------------- 클레임
 def create_claim(client: TestClient, key: str = "c-1", **fields: Any) -> dict[str, Any]:
     payload = {
-        "buyer_id": "usr_1",
+        "buyer_id": "buy_0001",
         "customer_name": "김하늘",
         "order_id": "101",
         "type": "return",
@@ -206,7 +206,7 @@ def test_claim_ids_continue_and_duplicates_are_still_detected(
     boot(monkeypatch, repo)
     assert create_claim(client, key="c-2")["outcome"] == "duplicate_claim"  # 진행 중 클레임을 기억
     other = create_claim(
-        client, key="c-3", order_id="102", buyer_id="usr_2", type="cancel", reason="other"
+        client, key="c-3", order_id="102", buyer_id="buy_0002", type="cancel", reason="other"
     )
     assert other["output"]["id"] == first + 1
 
@@ -248,15 +248,15 @@ def test_compensation_sequence_and_results_continue_after_restart(
             key=key,
         )
 
-    first = request_compensation("comp-1", "usr_1")["output"]
+    first = request_compensation("comp-1", "buy_0001")["output"]
     assert first["sequence"] == 1
 
     boot(
         monkeypatch, repo
     )  # 재시작해도 번호가 1로 돌아가지 않는다 (마케팅은 SEQUENCE_GAP으로 막는다)
-    second = request_compensation("comp-2", "usr_2")["output"]
+    second = request_compensation("comp-2", "buy_0002")["output"]
     assert second["sequence"] == 2
-    again = request_compensation("comp-1", "usr_1")["output"]  # 같은 키는 이전 결과, 재전송 없음
+    again = request_compensation("comp-1", "buy_0001")["output"]  # 같은 키는 이전 결과, 재전송 없음
     assert again == first and [r.sequence for r in sent] == [1, 2]
 
 
@@ -326,7 +326,7 @@ def test_pg_full_flow_survives_restart(pg_repo: PgRepo, monkeypatch: pytest.Monk
     assert create_inquiry(client, key="k-1")["output"]["id"] == inquiry["id"]  # 멱등 결과도 DB에서
     assert (
         create_claim(
-            client, key="c-9", order_id="102", buyer_id="usr_2", type="cancel", reason="other"
+            client, key="c-9", order_id="102", buyer_id="buy_0002", type="cancel", reason="other"
         )["output"]["id"]
         == claim["id"] + 1
     )
@@ -390,11 +390,23 @@ def test_pg_migrates_a_legacy_claims_table_with_numeric_ids() -> None:
         row = conn.execute("SELECT order_id, buyer_id FROM claims").fetchone()
     assert columns["order_id"] == "text" and columns["buyer_id"] == "text"
     assert "user_id" not in columns
-    assert row == ("101", "usr_1")  # 기존 값이 문자열 형식으로 이어진다
+    assert row == ("101", "buy_0001")  # 기존 값이 문자열 형식으로 이어진다
+    # 잠시 쓰던 `usr_<번호>` 값도 다음 시작 때 `buy_<4자리>`로 고친다
+    with psycopg.connect(DSN, autocommit=True) as conn:
+        conn.execute(
+            "INSERT INTO claims VALUES (2, 'shop-demo', 'ctx_ui_0002', 'ord_0001', 'usr_5', "
+            "'needs_review', %s)",
+            [Jsonb({})],
+        )
+    PgRepo(DSN).close()
+    with psycopg.connect(DSN, autocommit=True) as conn:
+        fixed = conn.execute("SELECT buyer_id FROM claims WHERE claim_id = 2").fetchone()
+        conn.execute("DELETE FROM claims WHERE claim_id = 2")
+    assert fixed == ("buy_0005",)
 
     store = PersistentClaimStore(repo)
     claim = store.get(1)
-    assert claim is not None and (claim.order_id, claim.buyer_id) == ("101", "usr_1")
+    assert claim is not None and (claim.order_id, claim.buyer_id) == ("101", "buy_0001")
     assert claim.lines[0].order_item_id == "1"
     # 이전 뒤에도 문자열 ID 기록을 새로 저장하고 읽을 수 있다
     repo.upsert(
@@ -404,10 +416,10 @@ def test_pg_migrates_a_legacy_claims_table_with_numeric_ids() -> None:
             "tenant_id": "shop-demo",
             "context_id": "ctx_ui_0002",
             "order_id": "ord_0201",
-            "buyer_id": "usr_9",
+            "buyer_id": "buy_0009",
             "status": "needs_review",
         },
-        {**claim.model_dump(mode="json"), "id": 2, "order_id": "ord_0201", "buyer_id": "usr_9"},
+        {**claim.model_dump(mode="json"), "id": 2, "order_id": "ord_0201", "buyer_id": "buy_0009"},
     )
     assert PersistentClaimStore(repo).get(2).order_id == "ord_0201"  # type: ignore[union-attr]
     repo.close()
