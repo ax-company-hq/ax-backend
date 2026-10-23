@@ -168,6 +168,40 @@ def create_api_router(get_service: Callable[[], PlanningService]) -> APIRouter:
             result=result.output,
         )
 
+    @router.post("/requests/{request_id}/reject", response_model=None)
+    async def post_reject_request(request_id: str, request: Request) -> dict | JSONResponse:
+        """개선 초안 기각. 본문 `{decision_reason, alternatives_considered}` 둘 다 필수.
+
+        `POST /actions` + `{"type": "rejectDraft", ...}`와 같은 길이다. 이유·대안이 없으면
+        hr에 `decision_rejected`를 보내지 않고 400 `MISSING_DECISION_REASON`.
+        """
+        svc = get_service()
+        try:
+            body = await request.json()
+        except ValueError:
+            return _err(400, "INVALID_ACTION", "JSON이 아니다")
+        if not isinstance(body, dict):
+            return _err(400, "INVALID_ACTION", "본문은 객체여야 한다")
+        if not any(r.id == request_id for r in svc.state.requests):
+            return _err(404, "NOT_FOUND", f"요청 {request_id}가 없다")
+        try:
+            result = await svc.dispatch({**body, "type": "reject_draft", "request": request_id})
+        except ActionError as exc:
+            return _err(400, exc.code, exc.message)
+        except GateRefused as exc:
+            return _err(
+                409,
+                "GATE_REJECTED",
+                f"실행 관문이 {exc.action}을 허락하지 않아 실행하지 않았다 ({exc.decision.status})",
+            )
+        return _ok(
+            svc.snapshot(),
+            svc,
+            changed=result.changed,
+            outcome=result.outcome,
+            result=result.output,
+        )
+
     @router.post("/reset")
     def post_reset() -> dict:
         svc = get_service()

@@ -1,4 +1,4 @@
-"""planning A2A skill 핸들러 (시나리오 A 필수 3개).
+"""planning A2A skill 핸들러 (시나리오 A 필수 3개 + hr 연동 2개).
 
 - 입력은 계약 모델(`contracts/src/ax_contracts/schemas/planning.py`)로 검증하고, 출력도 계약 모델로
   만든 뒤 `output`에 넣는다. 형식을 새로 정의하지 않는다.
@@ -7,6 +7,8 @@
 - 상태를 바꾸는 `link_incident`는 서비스 안에서 `execute()`를 거친다. 관문이 거부하면 실행하지
   않고 `failed`(outcome `gate_rejected`)로 돌려준다.
 - 사람 버튼(기획서 확정·PR 머지·승급 승인)은 A2A로 받지 않는다. REST(`api.py`)로만 받는다.
+- hr 연동(`list_in_progress`·`verify_handover`, 계약 #103)은 읽기다. 담당자·영역 대응과 비교는
+  `domain/handover.py`의 코드 규칙으로만 한다. 인계 내용의 좋고 나쁨은 판단하지 않는다.
 """
 
 from __future__ import annotations
@@ -17,12 +19,18 @@ from ax_contracts.schemas import AgentRequest, AgentResult, Evidence, TaskStatus
 from ax_contracts.schemas.planning import (
     FindRelatedPrsInput,
     FindRelatedPrsOutput,
+    InProgressItem,
     LinkIncidentInput,
     LinkIncidentOutput,
+    ListInProgressInput,
+    ListInProgressOutput,
     RelatedPr,
+    VerifyHandoverInput,
+    VerifyHandoverOutput,
     VerifyRollbackTargetInput,
     VerifyRollbackTargetOutput,
 )
+from planning_agent.domain.handover import Item
 from planning_agent.domain.models import PR
 from planning_agent.domain.rules import ROLLBACK_LOOKBACK
 from planning_agent.domain.service import GateRefused
@@ -193,8 +201,117 @@ async def verify_rollback_target(request: AgentRequest) -> AgentResult:
     )
 
 
+def _items(rows: list[Item]) -> list[InProgressItem]:
+    return [
+        InProgressItem(
+            item_id=i.item_id,
+            kind=i.kind,  # type: ignore[arg-type]
+            title=i.title,
+            status=i.status,
+            owner_id=i.owner_id,
+            area=i.area,
+            updated_at=i.updated_at,
+        )
+        for i in rows
+    ]
+
+
+def _item_refs(rows: list[Item]) -> list[str]:
+    refs: list[str] = []
+    for i in rows:
+        refs.append(f"item:{i.item_id}")
+        refs.extend(r for r in i.refs if r not in refs)
+    return refs
+
+
+def _where(owner_id: str, area: str | None) -> str:
+    return f"owner_id = '{owner_id}'" + (f" AND area = '{area}'" if area else "")
+
+
+async def list_in_progress(request: AgentRequest) -> AgentResult:
+    """담당자·영역의 진행 중 배포·미완료 작업·열린 PR (read). 상태를 바꾸지 않는다."""
+    try:
+        inp = ListInProgressInput.model_validate(request.input)
+    except ValidationError as exc:
+        return _invalid(request, exc)
+    rows, at = await get_service().list_in_progress(
+        context_id=request.meta.context_id,
+        requester=_requester(request),
+        owner_id=inp.owner_id,
+        area=inp.area,
+    )
+    kinds = {k: sum(1 for i in rows if i.kind == k) for k in ("deployment", "ticket", "pr")}
+    summary = (
+        f"진행 중 항목 {len(rows)}건 (배포 확인 전 {kinds['deployment']}, "
+        f"미완료 작업 {kinds['ticket']}, 열린 PR {kinds['pr']})"
+        if rows
+        else f"확인할 수 없음: {inp.owner_id}의 진행 중 항목 없음"
+    )
+    return AgentResult(
+        meta=request.meta,
+        status=TaskStatus.COMPLETED,
+        output=ListInProgressOutput(items=_items(rows), collected_at=at).model_dump(mode="json"),
+        evidence=Evidence(
+            queries=[
+                f"tasks WHERE state != '완료' AND {_where(inp.owner_id, inp.area)}",
+                f"prs WHERE NOT merged AND {_where(inp.owner_id, inp.area)}",
+                "prs WHERE merged AND (linked incident follow-up open OR request not closed) "
+                f"AND {_where(inp.owner_id, inp.area)}",
+            ],
+            data_summary=summary,
+            ref_ids=_item_refs(rows),
+        ),
+    )
+
+
+async def verify_handover(request: AgentRequest) -> AgentResult:
+    """hr confirm_handover(B)의 교차검증 (read). 거절도 completed + rejected_by_review."""
+    try:
+        inp = VerifyHandoverInput.model_validate(request.input)
+    except ValidationError as exc:
+        return _invalid(request, exc)
+    check, at = await get_service().verify_handover(
+        context_id=request.meta.context_id,
+        requester=_requester(request),
+        handover_id=inp.handover_id,
+        owner_id=inp.owner_id,
+        area=inp.area,
+        handover_item_ids=inp.handover_item_ids,
+    )
+    approved = not check.missing
+    out = VerifyHandoverOutput(
+        approved=approved,
+        reason_code="complete" if approved else "missing_items",
+        missing=_items(check.missing),
+        stale_item_ids=check.stale_item_ids,
+        checked_at=at,
+    )
+    summary = (
+        f"{inp.handover_id}: 진행 중 {len(check.current)}건 중 누락 {len(check.missing)}건"
+        f", 이미 끝난 항목 {len(check.stale_item_ids)}건"
+    )
+    if check.unknown_item_ids:
+        summary += f" · 확인할 수 없음: {', '.join(check.unknown_item_ids)}"
+    return AgentResult(
+        meta=request.meta,
+        status=TaskStatus.COMPLETED,
+        outcome=None if approved else "rejected_by_review",
+        output=out.model_dump(mode="json"),
+        evidence=Evidence(
+            queries=[
+                f"list_in_progress({_where(inp.owner_id, inp.area)})",
+                f"missing = in_progress - handover_item_ids ({len(inp.handover_item_ids)}건)",
+            ],
+            data_summary=summary,
+            ref_ids=[f"handover:{inp.handover_id}"] + _item_refs(check.current),
+        ),
+    )
+
+
 HANDLERS = {
     "find_related_prs": find_related_prs,
     "link_incident": link_incident,
     "verify_rollback_target": verify_rollback_target,
+    "list_in_progress": list_in_progress,
+    "verify_handover": verify_handover,
 }

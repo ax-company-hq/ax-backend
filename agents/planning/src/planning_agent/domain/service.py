@@ -28,8 +28,10 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from ax_agent_template import config as template_config
 from ax_agent_template import execute as gate_module
 from ax_contracts.schemas import TENANT_ID_DEFAULT, Evidence, ExecuteDecision, RequestMeta
+from ax_contracts.schemas.record import RecordCase, RecordKind
 from planning_agent.domain.clock import Clock, StepClock
 from planning_agent.domain.docs import gather_blocks, next_block_id
+from planning_agent.domain.handover import HandoverCheck, Item, check_handover, in_progress
 from planning_agent.domain.models import (
     DEPT_NAME,
     PR,
@@ -237,6 +239,23 @@ class RequestParams(_Params):
     request: str
 
 
+class RejectDraftParams(_Params):
+    """개선 초안 기각. 이유·검토한 대안이 비면 hr에 보내지 않고 `MISSING_DECISION_REASON`."""
+
+    request: str
+    decision_reason: str = ""
+    alternatives_considered: list[str] = Field(default_factory=list)
+
+
+class RejectDecisionParams(_Params):
+    """기각한 안을 결정으로 남긴다 (예: 기획서 검토 중 버린 안)."""
+
+    spec: str
+    text: str
+    decision_reason: str = ""
+    alternatives_considered: list[str] = Field(default_factory=list)
+
+
 class EmptyParams(_Params):
     pass
 
@@ -297,6 +316,8 @@ ACTIONS: dict[str, tuple[str, type[_Params]]] = {
     "review_pr": ("_review_pr", PrParams),
     "merge_pr": ("_merge_pr", PrParams),
     "accept_draft": ("_accept_draft", RequestParams),
+    "reject_draft": ("_reject_draft", RejectDraftParams),
+    "reject_decision": ("_reject_decision", RejectDecisionParams),
     "approve_promotion": ("_approve_promotion", EmptyParams),
     "reject_promotion": ("_reject_promotion", EmptyParams),
     "post_message": ("_post_message", PostMessageParams),
@@ -542,6 +563,38 @@ class PlanningService:
 
     async def accept_draft(self, request: str) -> ActionResult:
         return await self.dispatch({"type": "accept_draft", "request": request})
+
+    async def reject_draft(
+        self,
+        request: str,
+        decision_reason: str = "",
+        alternatives_considered: list[str] | None = None,
+    ) -> ActionResult:
+        return await self.dispatch(
+            {
+                "type": "reject_draft",
+                "request": request,
+                "decision_reason": decision_reason,
+                "alternatives_considered": alternatives_considered or [],
+            }
+        )
+
+    async def reject_decision(
+        self,
+        spec: str,
+        text: str,
+        decision_reason: str = "",
+        alternatives_considered: list[str] | None = None,
+    ) -> ActionResult:
+        return await self.dispatch(
+            {
+                "type": "reject_decision",
+                "spec": spec,
+                "text": text,
+                "decision_reason": decision_reason,
+                "alternatives_considered": alternatives_considered or [],
+            }
+        )
 
     async def approve_promotion(self) -> ActionResult:
         return await self.dispatch({"type": "approve_promotion"})
@@ -1211,6 +1264,88 @@ class PlanningService:
         await self._apply(log)
         return approved, reason, related
 
+    async def list_in_progress(
+        self, *, context_id: str, requester: str, owner_id: str, area: str | None
+    ) -> tuple[list[Item], datetime]:
+        """담당자·영역의 진행 중 항목과 조회 시각 (read). 활동 로그만 남긴다."""
+        items = in_progress(self.state, owner_id, area)
+        t = self.clock()
+
+        async def log(s: State) -> None:
+            where = owner_id + (f" · {area}" if area else "")
+            ids = ", ".join(i.item_id for i in items) or "없음"
+            s.activity.append(
+                self._act(
+                    t,
+                    context_id,
+                    requester,
+                    "planning",
+                    "list_in_progress",
+                    "A2A",
+                    f"진행 중 항목 조회 ({where})",
+                    "read",
+                )
+            )
+            s.activity.append(
+                self._act(
+                    t,
+                    context_id,
+                    "planning",
+                    requester,
+                    "list_in_progress",
+                    "A2A",
+                    f"진행 중 항목 {len(items)}건 회신: {ids}",
+                    "read",
+                )
+            )
+
+        await self._apply(log)
+        return items, t
+
+    async def verify_handover(
+        self,
+        *,
+        context_id: str,
+        requester: str,
+        handover_id: str,
+        owner_id: str,
+        area: str | None,
+        handover_item_ids: list[str],
+    ) -> tuple[HandoverCheck, datetime]:
+        """hr confirm_handover(B)의 교차검증과 확인 시각 (read). 빠진 진행 중 항목만 본다."""
+        check = check_handover(self.state, owner_id, area, handover_item_ids)
+        t = self.clock()
+
+        async def log(s: State) -> None:
+            s.activity.append(
+                self._act(
+                    t,
+                    context_id,
+                    requester,
+                    "planning",
+                    "verify_handover",
+                    "A2A",
+                    f"인수인계 {handover_id} confirm_handover(B) 교차검증 요청",
+                    "read",
+                )
+            )
+            if check.missing:
+                ids = ", ".join(i.item_id for i in check.missing)
+                reply = f"거절 · 인계 목록에 빠진 진행 중 항목 {ids} (missing_items)"
+            else:
+                n = len(check.current)
+                reply = f"승인 · 진행 중 항목 {n}건 모두 인계 목록에 있음 (complete)"
+            if check.stale_item_ids:
+                reply += f" · 이미 끝난 항목 {', '.join(check.stale_item_ids)}"
+            s.activity.append(
+                self._act(
+                    t, context_id, "planning", requester, "verify_handover", "A2A", reply, "read"
+                )
+            )
+
+        await self._apply(log)
+        return check, t
+
     async def link_incident(
         self,
         *,
@@ -1349,11 +1484,42 @@ class PlanningService:
             )
             for i, p in enumerate(reqs)
         ]
-        await self._execute("confirm_spec", ctx, sp.id, f"{sp.id} 확정 (팀장 {TEAM_LEAD})")
+        # FR-SPEC-006: 인사 경고(warn)가 남은 문단을 둔 채 확정하면 "warn 무시 진행"을 감사 기록으로
+        # 남긴다 (execute params·record_case·활동 세 곳).
+        warn_ignored = [
+            {"para": p.id, "card": p.warn.card, "text": p.warn.text} for p in sp.paras if p.warn
+        ]
+        audit: str | None = None
+        if warn_ignored:
+            where = ", ".join(f"{w['para']}({w['card']})" for w in warn_ignored)
+            audit = f"warn 무시 진행 · {sp.id} {where} 경고를 둔 채 확정 (팀장 {TEAM_LEAD})"
+        confirm_text = f"{sp.id} 확정 (팀장 {TEAM_LEAD})" + (f" · {audit}" if audit else "")
+        await self._execute(
+            "confirm_spec",
+            ctx,
+            sp.id,
+            confirm_text,
+            {"warn_ignored": warn_ignored} if warn_ignored else None,
+        )
         split = f"요구사항 {len(reqs)}개 → 작업 {', '.join(t.id for t in tasks)}"
         await self._execute("split_tasks", ctx, sp.id, split, {"tasks": [t.id for t in tasks]})
         case = f"① kind spec_confirmed · {sp.id}"
-        await self._execute("record_case", ctx, f"{sp.id}:spec_confirmed", case)
+        record = RecordCase(
+            context_id=ctx,
+            tenant_id=self.tenant_id,
+            kind=RecordKind.SPEC_CONFIRMED,
+            summary=f"{sp.id} {sp.title} 확정" + (f" ({audit})" if audit else ""),
+            source_refs=[f"spec:{sp.id}"]
+            + [f"para:{sp.id}:{w['para']}" for w in warn_ignored]
+            + [f"card:{w['card']}" for w in warn_ignored],
+            author=AGENT_NAME,
+        )
+        case_params: dict[str, Any] = {"record_case": record.model_dump(mode="json")}
+        if warn_ignored:
+            case_params["warn_ignored"] = warn_ignored
+        await self._execute(
+            "record_case", ctx, f"{sp.id}:spec_confirmed", case, case_params, record.source_refs
+        )
         sp.status = "확정"
         s.tasks.extend(tasks)
         for r in s.requests:
@@ -1370,12 +1536,38 @@ class PlanningService:
                 f"팀장 {TEAM_LEAD}이 {sp.id} 확정 (사람 클릭 1)",
             )
         )
+        if audit:
+            s.activity.append(
+                self._act(
+                    self.clock(),
+                    ctx,
+                    "planning",
+                    "planning",
+                    "audit.warn_ignored",
+                    "execute",
+                    audit,
+                    "A",
+                )
+            )
         s.activity.append(
             self._act(self.clock(), ctx, "planning", "planning", "split_tasks", "A2A", split, "A")
         )
         s.activity.append(
             self._act(self.clock(), ctx, "planning", "hr", "record_case", "A2A", case, "A")
         )
+        if audit:
+            s.activity.append(
+                self._act(
+                    self.clock(),
+                    ctx,
+                    "planning",
+                    "hr",
+                    "record_case",
+                    "A2A",
+                    f"{case} · {audit}",
+                    "A",
+                )
+            )
         if req:
             s.activity.append(
                 self._act(
@@ -1565,6 +1757,164 @@ class PlanningService:
                 "A",
             )
         )
+
+    # ---- 기각 (hr record_case kind decision_rejected)
+
+    def _rejection_record(
+        self,
+        ctx: str,
+        summary: str,
+        decision_reason: str,
+        alternatives_considered: list[str],
+        source_refs: list[str],
+    ) -> RecordCase:
+        """`decision_rejected` 기록을 만든다. 이유·검토한 대안이 없으면 보내지 않고 오류.
+
+        hr `check_plan`이 "과거에 기각된 안"을 판정하는 재료라서 둘 다 필수로 둔다.
+        """
+        reason = decision_reason.strip()
+        alternatives = [a.strip() for a in alternatives_considered if a.strip()]
+        if not reason or not alternatives:
+            raise ActionError(
+                "MISSING_DECISION_REASON",
+                "decision_rejected에는 decision_reason과 alternatives_considered가 필요하다"
+                " (hr에 보내지 않았다)",
+            )
+        return RecordCase(
+            context_id=ctx,
+            tenant_id=self.tenant_id,
+            kind=RecordKind.DECISION_REJECTED,
+            summary=summary,
+            decision_reason=reason,
+            alternatives_considered=alternatives,
+            source_refs=source_refs,
+            author=AGENT_NAME,
+        )
+
+    async def _send_rejection(self, s: State, record: RecordCase, target: str) -> None:
+        """hr `record_case`(kind decision_rejected)를 execute로 보내고 활동에 남긴다."""
+        case = f"① kind decision_rejected · {target}"
+        await self._execute(
+            "record_case",
+            record.context_id,
+            f"{target}:decision_rejected",
+            case,
+            {"record_case": record.model_dump(mode="json")},
+            record.source_refs,
+        )
+        s.activity.append(
+            self._act(
+                self.clock(),
+                record.context_id,
+                "planning",
+                "hr",
+                "record_case",
+                "A2A",
+                f"{case} (이유: {record.decision_reason})",
+                "A",
+            )
+        )
+
+    async def _reject_draft(
+        self,
+        s: State,
+        request: str,
+        decision_reason: str,
+        alternatives_considered: list[str],
+    ) -> ActionResult | None:
+        """개선 초안 기각 → hr record_case(decision_rejected). 이유·대안이 없으면 하지 않는다."""
+        r = next((x for x in s.requests if x.id == request), None)
+        record = self._rejection_record(
+            r.context_id if r else f"req:{request}",
+            f"[기각한 안] {r.title if r else request}",
+            decision_reason,
+            alternatives_considered,
+            [f"req:{request}"],
+        )
+        if r is None or r.state != "접수":
+            return None
+        reason = record.decision_reason or ""
+        text = f"{r.id} 기각 (이유: {reason})"
+        await self._execute(
+            "review_ticket_draft", r.context_id, r.id, text, {"decision": "rejected"}
+        )
+        await self._send_rejection(s, record, r.id)
+        dec_id = f"D-{len(s.decisions)}"
+        s.decisions.append(
+            Decision(
+                id=dec_id,
+                spec=r.spec or "-",
+                text=f"[기각한 안] {r.title}",
+                reason=reason,
+                alternatives=", ".join(record.alternatives_considered),
+                from_=f"개선 초안 {r.id}",
+                sent_to_hr=True,
+            )
+        )
+        r.state = "기각"
+        s.activity.append(
+            self._act(
+                self.clock(),
+                r.context_id,
+                "planning",
+                "planning",
+                "review_ticket_draft",
+                "A2A",
+                text,
+                "A",
+            )
+        )
+        s.activity.append(
+            self._act(
+                self.clock(),
+                r.context_id,
+                "planning",
+                r.from_,
+                "get_request_status",
+                "A2A",
+                f'{r.id} "{r.title}" 기각 (이유: {reason})',
+                "read",
+            )
+        )
+        return ActionResult(
+            output={"request_id": r.id, "decision_id": dec_id, "record_kind": "decision_rejected"}
+        )
+
+    async def _reject_decision(
+        self,
+        s: State,
+        spec: str,
+        text: str,
+        decision_reason: str,
+        alternatives_considered: list[str],
+    ) -> ActionResult | None:
+        """기획서 검토 중 기각한 안을 결정으로 남기고 hr에 decision_rejected로 보낸다."""
+        sp = next((x for x in s.specs if x.id == spec), None)
+        req = self._request_of_spec(s, sp) if sp else None
+        ctx = req.context_id if req else f"spec:{spec}"
+        record = self._rejection_record(
+            ctx,
+            f"[기각한 안] {text.strip()}",
+            decision_reason,
+            alternatives_considered,
+            [f"spec:{spec}"],
+        )
+        if sp is None or not text.strip():
+            return None
+        dec_id = f"D-{len(s.decisions)}"
+        await self._send_rejection(s, record, dec_id)
+        s.decisions.append(
+            Decision(
+                id=dec_id,
+                spec=sp.id,
+                text=f"[기각한 안] {text.strip()}",
+                reason=record.decision_reason or "",
+                alternatives=", ".join(record.alternatives_considered),
+                from_=f"기획서 {sp.id}",
+                sent_to_hr=True,
+            )
+        )
+        return ActionResult(output={"decision_id": dec_id, "record_kind": "decision_rejected"})
 
     async def _approve_promotion(self, s: State) -> None:
         pol = s.auto_policy

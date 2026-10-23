@@ -45,7 +45,7 @@ DEPT_NAME: dict[str, str] = {
     "human": "사람",
 }
 
-ReqState = Literal["접수", "기획 중", "작업 중", "완료", "중복 연결"]
+ReqState = Literal["접수", "기획 중", "작업 중", "완료", "중복 연결", "기각"]
 TaskState = Literal["진행 중", "PR 검수", "머지 대기", "완료", "C 보류"]
 Review = Literal["통과", "불일치"]
 ActivityKind = Literal["A2A", "이벤트", "execute", "API", "사람"]
