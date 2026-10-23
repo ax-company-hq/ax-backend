@@ -28,6 +28,7 @@ from ax_contracts.schemas.record import Card
 from ax_dashboard_api import (
     claim_mapping,
     hr_client,
+    communications as communication_log,
     mock_actions,
     mock_data,
     mock_handover,
@@ -490,6 +491,15 @@ async def plan_checks(body: CheckPlanInput) -> dict:
         return ok(mock_hr.BOARD.check_plan(body.draft))
     out = await hr_client.call("check_plan", {"draft": body.draft.model_dump(mode="json")})
     return ok(CheckPlanOutput.model_validate(out))
+
+
+@router.get("/communications")
+def communications(dept: str | None = None, context_id: str | None = None) -> dict:
+    """부서별 소통 탭. 공통 로그의 A2A 요청·응답을 한 줄씩 보여 준다 (코드가 만든 필드만)."""
+    lines, truncated = communication_log.list_communications(dept, context_id)
+    body = ok(lines, total=len(lines))
+    body["meta"]["truncated"] = truncated
+    return body
 
 
 def _given(**filters: str | None) -> dict[str, str]:
