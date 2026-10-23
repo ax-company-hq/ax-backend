@@ -441,6 +441,13 @@ class TextBody(BaseModel):
     text: str = Field(min_length=1)
 
 
+class CandidateDecisionBody(BaseModel):
+    """후보 카드 결정. `approve`는 승인(active), `reject`는 폐기(retired)."""
+
+    decision: Literal["approve", "reject"]
+    note: str | None = None
+
+
 class AgentMessageBody(TextBody):
     draft_style: str | None = None
     draft_text: str | None = None
