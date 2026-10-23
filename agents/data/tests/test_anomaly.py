@@ -108,7 +108,10 @@ def test_detect_checked_too_many_none_is_insufficient():
     assert out.evidence["none_count"] == 2
     # 기준 비율은 설정 가능: 경계값(>=)도 부족으로 본다
     edge = [(T0, 100.0), (T0 + timedelta(minutes=5), None)]
-    assert detect_checked(edge, T0, T0 + timedelta(minutes=10), _history(), max_none_ratio=0.5).status == "insufficient_data"
+    assert (
+        detect_checked(edge, T0, T0 + timedelta(minutes=10), _history(), max_none_ratio=0.5).status
+        == "insufficient_data"
+    )
 
 
 def test_detect_checked_without_none_matches_detect():
