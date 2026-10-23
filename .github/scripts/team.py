@@ -82,6 +82,8 @@ class Team:
         self.hotfix_labelers: list[str] = data.get("hotfix_labelers", [])
         self.review_required_depts: list[str] = data.get("review_required_depts", [])
         self.wip: dict[str, int] = data.get("wip", {})
+        # 부서별 WIP 덮어쓰기 { <부서>: { open_bot_prs: N, in_progress_issues: M } } (없으면 wip)
+        self.wip_overrides: dict[str, dict[str, int]] = data.get("wip_overrides") or {}
         self.stale_hours: int = int(data.get("stale_hours", 48))
         self.contracts_affected: dict[str, list[str]] = data.get("contracts_affected", {})
         self.human_files: set[str] = set(data.get("human_files", []))
@@ -96,6 +98,16 @@ class Team:
             for owner in dept["owners"]:
                 if owner not in self.members:
                     raise TeamError(f"{dept_id}의 owner {owner}가 members에 없음")
+            token_owner = dept.get("token_owner")
+            if token_owner is not None and token_owner not in self.members:
+                raise TeamError(f"{dept_id}의 token_owner {token_owner}가 members에 없음")
+        for dept_id, limits in self.wip_overrides.items():
+            if dept_id not in self.depts:
+                raise TeamError(f"wip_overrides의 {dept_id}가 depts에 없음")
+            for key, value in (limits or {}).items():
+                valid = isinstance(value, int) and not isinstance(value, bool) and value >= 0
+                if key not in ("open_bot_prs", "in_progress_issues") or not valid:
+                    raise TeamError(f"wip_overrides {dept_id}.{key}가 올바르지 않음")
         for dept_id, revs in self.reviewers.items():
             for r in [dept_id, *revs]:
                 if r not in self.depts:
@@ -135,11 +147,22 @@ class Team:
         return None
 
     def owners(self, dept: str) -> list[str]:
+        """부서 담당 (리뷰어 배정·작성자 판단용). 실행 토큰·cap의 주인은 `token_owner`."""
         return self.depts[dept]["owners"]
 
+    def token_owner(self, dept: str) -> str:
+        """그 부서 Claude 실행의 토큰·하루 cap 주인. team.yml `token_owner`, 없으면 owners[0]."""
+        return self.depts[dept].get("token_owner") or self.owners(dept)[0]
+
     def owner_token(self, dept: str) -> str:
-        owner = self.owners(dept)[0]
-        return self.members[owner]["token"]
+        return self.members[self.token_owner(dept)]["token"]
+
+    def wip_limit(self, dept: str, key: str) -> int:
+        """부서의 WIP 한도 (open_bot_prs | in_progress_issues). wip_overrides가 wip보다 먼저."""
+        override = self.wip_overrides.get(dept) or {}
+        if key in override:
+            return int(override[key])
+        return int(self.wip.get(key, 0))
 
     def dept_of_branch(self, branch: str) -> str | None:
         if "/" not in branch:
@@ -541,8 +564,8 @@ def run_kind(title: str) -> str | None:
 
 
 def token_depts_of(team: Team, login: str) -> set[str]:
-    """그 사람이 실행 토큰 주인(owners의 첫 번째)인 부서. 프론트 부서 포함."""
-    depts = {d for d, info in team.depts.items() if info["owners"][0] == login}
+    """그 사람이 실행 토큰 주인(token_owner, 없으면 owners의 첫 번째)인 부서. 프론트 부서 포함."""
+    depts = {d for d in team.depts if team.token_owner(d) == login}
     depts |= {d for d, who in team.data.get("frontend_depts", {}).items() if who == login}
     return depts
 
@@ -564,7 +587,7 @@ def run_token_depts(team: Team, title: str) -> list[str]:
         dept = team.dept_of_branch(branch)
         if not dept:
             return []  # ci/·docs/ 같은 사람 경로 PR은 리뷰 생략
-        person = team.owners(dept)[0] if author == team.bot_login else author
+        person = team.token_owner(dept) if author == team.bot_login else author
         return team.reviewers_for([dept], person) if person in team.members else []
     return []
 
@@ -657,7 +680,7 @@ def usage_by_owner(team: Team, runs: list[tuple], ran: dict[str, list[str]] | No
         else:
             depts = run_token_depts(team, title)
         for dept in depts:
-            owner = team.owners(dept)[0] if dept in team.depts else fronts.get(dept)
+            owner = team.token_owner(dept) if dept in team.depts else fronts.get(dept)
             if owner:
                 counts[owner] = counts.get(owner, 0) + 1
     return counts

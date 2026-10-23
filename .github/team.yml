@@ -20,6 +20,7 @@ review_required_depts: [contracts, agent-template, safety, orchestrator]
 
 # 부서마다 동시에 진행할 수 있는 작성 수. 넘으면 새 작성을 시작하지 않고 wip-wait 라벨로 기다린다
 wip: { open_bot_prs: 2, in_progress_issues: 3 }
+# 부서별 덮어쓰기 (선택): wip_overrides: { <부서>: { open_bot_prs: N, in_progress_issues: M } }. 없으면 위 기본값
 
 # 매일 1회 정리: 이 시간보다 오래 변화가 없는 봇 PR·봇 이슈를 닫는다
 stale_hours: 48
@@ -29,7 +30,8 @@ stale_hours: 48
 core_paths: [.github/, .claude/, CODEOWNERS]
 core_notify: JangJaehyeonn
 
-# id: { folder, aliases, owners(첫 번째가 실행 토큰), env_prefix }
+# id: { folder, aliases, owners, token_owner(선택), env_prefix }
+# owners = 담당 (리뷰어 배정·작성자 판단). token_owner = 그 부서 Claude 실행의 토큰·cap 주인 (없으면 owners[0])
 depts:
   data: { folder: agents/data, owners: [JangJaehyeonn], env_prefix: DATA }
   memory: { folder: memory, owners: [JangJaehyeonn], env_prefix: MEMORY }
