@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 
-from ax_dashboard_api import claim_mapping, mock_actions, mock_data, support_client
+from ax_contracts.schemas.hr import HandoverAnswerRequest
+from ax_dashboard_api import claim_mapping, mock_actions, mock_data, mock_handover, support_client
 from ax_dashboard_api.envelope import ApiError, is_mock, ok, require_mock
 from ax_dashboard_api.schemas import (
     AgentMessageBody,
@@ -297,6 +298,36 @@ async def conversation_status(conversation_id: int, body: StatusBody) -> dict:
 @mock_only.post("/reviews/{review_id}/status")
 def review_status(review_id: int, body: ReviewStatusBody) -> dict:
     return ok(mock_actions.set_review_status(review_id, body.status))
+
+
+# ------------------------------------ 인사 탭: 인수인계 질문 (목 전용, hr skill이 생기면 A2A 연결)
+@mock_only.get("/handovers")
+def handovers() -> dict:
+    items = mock_handover.BOARD.list_handovers()
+    return ok(items, total=len(items))
+
+
+@mock_only.get("/handovers/{handover_id}")
+def handover(handover_id: str) -> dict:
+    return ok(mock_handover.BOARD.get(handover_id))
+
+
+@mock_only.get("/handover-questions")
+def handover_questions() -> dict:
+    """인계자의 답을 기다리는 질문 전체. 각 질문에 `context_id`가 있어 답변이 같은 사건으로 간다."""
+    items = mock_handover.BOARD.pending_questions()
+    return ok(items, total=len(items))
+
+
+@mock_only.post("/handover-questions/{question_id}/answer")
+def answer_handover_question(question_id: str, body: HandoverAnswerRequest) -> dict:
+    if body.question_id != question_id:
+        raise ApiError(422, "INVALID_REQUEST", "question_id: 경로와 본문이 다르다")
+    if not body.answer.strip():
+        raise ApiError(422, "INVALID_REQUEST", "answer: 답변이 비었다")
+    if not body.idempotency_key.strip():
+        raise ApiError(422, "INVALID_REQUEST", "idempotency_key: 필수다")
+    return ok(mock_handover.BOARD.answer(question_id, body.answer.strip(), body.idempotency_key))
 
 
 router.include_router(mock_only)
