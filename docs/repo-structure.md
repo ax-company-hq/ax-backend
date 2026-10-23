@@ -173,8 +173,8 @@ VITE_SHOP_API_URL=http://localhost:8010
 VITE_DASHBOARD_API_URL=http://localhost:8020
 ```
 
-- 각자 개발: 백엔드 `docker compose -f infra/compose.yml up`, 프론트 `npm run dev`
-- 전체 데모: 두 레포를 같은 폴더에 나란히 clone하고, `infra/compose.yml`에서 `../ax-frontend`를 서비스로 빌드
+- 각자 개발: 백엔드 `docker compose -f infra/compose.yml -f infra/compose.dev.yml up [서비스...]` (dev override가 서비스 포트를 호스트에 연다), 프론트 `npm run dev`
+- 전체 데모: 두 레포를 같은 폴더에 나란히 clone하고, `infra/compose.yml`의 `gateway`가 `../ax-frontend/nginx/Dockerfile`로 세 앱을 빌드해 한 포트(`AX_GATEWAY_PORT`, 기본 8080)로 서빙한다. 서버 PC 운영은 `docs/automation/dashboard-access.md`
 
 ## 프로젝트 종료 후 분리 (포트폴리오)
 
