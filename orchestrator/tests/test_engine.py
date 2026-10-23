@@ -27,7 +27,7 @@ async def test_scenario_a_completes(harness) -> None:
     assert inc.status == "resolved"
     assert all(s.status == "completed" for s in inc.steps.values())
     assert harness.events == ["incident.opened", "incident.resolved"]
-    assert inc.metrics["steps_total"] == 13
+    assert inc.metrics["steps_total"] == 14
 
 
 @pytest.mark.asyncio
@@ -222,3 +222,36 @@ async def test_record_case_carries_facts_not_fixed_text(harness) -> None:
     req = next(r for _, r in harness.fakes.calls if r.skill == "record_case")
     assert "publish_notice" in req.input["decision_reason"]
     assert req.input["alternatives_considered"]
+
+
+@pytest.mark.asyncio
+async def test_marketing_notice_follows_draft_then_publish_contract(harness) -> None:
+    await run(harness)
+    calls = [r for _, r in harness.fakes.calls if r.skill in ("draft_notice", "publish_notice")]
+    drafts = [r for r in calls if r.skill == "draft_notice"]
+    assert [d.input["kind"] for d in drafts] == ["incident_opened", "incident_resolved"]
+    assert set(drafts[0].input["facts"]) == {"component", "opened_at"}
+    publishes = [r for r in calls if r.skill == "publish_notice"]
+    assert [set(p.input) for p in publishes] == [{"draft_id"}, {"draft_id"}]
+    assert publishes[0].input["draft_id"] != publishes[1].input["draft_id"]
+
+
+@pytest.mark.asyncio
+async def test_link_incident_uses_pr_number_from_related_prs(harness) -> None:
+    await run(harness)
+    link = next(r for _, r in harness.fakes.calls if r.skill == "link_incident")
+    assert link.input["pr_numbers"] == [412, 418]
+
+
+@pytest.mark.asyncio
+async def test_human_approval_resume_is_not_counted_as_retry(harness) -> None:
+    harness.fakes.script("marketing", "issue_coupon", "hold")
+    harness.hold_timeout = 5
+    engine = await harness.start()
+    inc = new_incident()
+    task = asyncio.create_task(engine.run(inc, scenario_a()))
+    await wait_hold(inc, "coupon")
+    engine.decide_hold(inc, "coupon", True)
+    await task
+    assert inc.steps["coupon"].attempts == 1
+    assert inc.metrics["retries"] == 0
