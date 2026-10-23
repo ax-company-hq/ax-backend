@@ -1,0 +1,90 @@
+name: devroom-update
+
+# AX 개발실 갱신: 시나리오 A · 실서버 · 아침 리포트가 끝날 때, 30분마다, 수동으로 status.json을 새로 만들어
+# 서버 PC의 AX_DEVROOM_DIR에 둔다. 개발실 화면(devroom/index.html, :8090)이 60초마다 그 파일을 읽는다.
+# repo 변수 AX_DEVROOM이 on이 아니면 모든 job이 건너뛰어진다 (아무 동작 없음).
+# LLM을 쓰지 않고 cap에도 잡히지 않는다. GitHub 조회는 GITHUB_TOKEN 읽기 권한만 쓴다.
+#
+# 보안 (public 레포): 서버 PC에서 도는 워크플로이므로 real-run.yml과 같은 조건을 지킨다
+#  - 트리거는 workflow_run, schedule, workflow_dispatch뿐이다. pull_request 계열·issue 계열 트리거를 쓰지 않는다
+#  - workflow_run은 dev에서 push·schedule·수동으로 돈 실행만 받는다 (PR 실행·포크는 건너뜀)
+#  - 수동 실행은 code owner만 (guard job이 CODEOWNERS로 확인, 실패하면 서버 PC job이 시작되지 않는다)
+#  - checkout은 항상 dev 하나. 외부 코드는 서버 PC에 닿지 않는다
+#  - 워크플로에 secrets를 넣지 않고 환경변수를 출력하지 않는다
+#  - 이 라벨을 다른 워크플로가 쓰면 automation-tests가 실패한다 (real_guard.py check-runner-label)
+# 설치·끄는 법: docs/automation/dashboard-access.md, docs/automation/self-hosted-runner.md
+on:
+  workflow_run:
+    workflows: [scenario-a, real-run, morning]
+    types: [completed]
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  # 서버 PC 파일 하나를 쓰므로 직렬화한다. 대기 중인 실행은 최신 1개만 남는다
+  group: devroom-update
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    # 서버 PC job 전에 ubuntu에서 실행자를 확인한다. dev가 아닌 ref로 수동 실행하면 건너뛴다
+    if: >-
+      vars.AX_DEVROOM == 'on' && github.ref == 'refs/heads/dev' &&
+      (github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.head_branch == 'dev' &&
+      github.event.workflow_run.event != 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: dev
+          persist-credentials: false
+      - name: 실행자 확인 (수동 실행은 code owner만)
+        env:
+          ACTOR: ${{ github.triggering_actor }} # 재실행(re-run)한 사람
+          EVENT: ${{ github.event_name }}
+        run: python3 -I .github/scripts/real_guard.py check-actor --actor "$ACTOR" --event "$EVENT"
+      - name: 서버 PC 라벨 사용처 확인
+        run: python3 -I .github/scripts/real_guard.py check-runner-label
+
+  update:
+    needs: guard
+    if: >-
+      vars.AX_DEVROOM == 'on' && github.ref == 'refs/heads/dev' &&
+      (github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.head_branch == 'dev' &&
+      github.event.workflow_run.event != 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: [self-hosted, ax-server]
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: dev
+          persist-credentials: false
+          clean: true
+      - name: 실행자 재확인 (서버 PC에서 한 번 더, 재실행 우회 방지)
+        env:
+          ACTOR: ${{ github.triggering_actor }}
+          EVENT: ${{ github.event_name }}
+        run: python .github/scripts/real_guard.py check-actor --actor "$ACTOR" --event "$EVENT"
+      - name: 의존성
+        run: uv sync --all-packages --locked
+      - name: status.json 만들기 (artifact와 이슈·PR을 읽어 AX_DEVROOM_DIR에 저장)
+        env:
+          GH_TOKEN: ${{ github.token }} # 읽기 권한만 (위 permissions)
+          AX_DEVROOM: ${{ vars.AX_DEVROOM }}
+          AX_DEVROOM_DIR: ${{ vars.AX_DEVROOM_DIR }} # 서버 PC 폴더. devroom/compose.yml과 같은 값
+        run: uv run --locked --with-requirements .github/scripts/requirements.txt python .github/scripts/team.py dev-status
