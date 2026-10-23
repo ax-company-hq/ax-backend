@@ -76,7 +76,7 @@ def test_dept_of_branch(team: Team, branch: str, dept: str | None) -> None:
 
 
 def test_depts_of(team: Team) -> None:
-    assert set(team.depts_of("JangJaehyeonn")) == {"data", "memory"}
+    assert set(team.depts_of("JangJaehyeonn")) == {"data", "memory", "contracts"}
     assert set(team.depts_of("haakim7")) == {
         "hr", "orchestrator", "agent-template", "infra", "contracts"
     }
@@ -801,3 +801,79 @@ def test_guard_same_name_in_two_files_must_both_survive() -> None:
         [ch("agents/data/tests/test_a.py", "D"), ch("agents/data/tests/test_b.py")],
         lambda p: files[p][0], lambda p: files[p][1])
     assert any("테스트 삭제" in x and "test_smoke" in x for x in v)
+
+
+# ── contracts 영향 부서 · 사람 전용 파일 ───────────────────
+@pytest.mark.parametrize(
+    ("paths", "reviewers"),
+    [
+        (["contracts/src/ax_contracts/schemas/data.py"], ["data"]),
+        (["contracts/src/ax_contracts/schemas/hr.py",
+          "contracts/tests/test_hr.py", "contracts/README.md"], ["hr"]),  # tests·md는 무시
+        (["contracts/src/ax_contracts/schemas/record.py"], ["memory", "hr"]),
+        (["contracts/src/ax_contracts/data_access/shop_metric_series.py"], ["data", "shop-api"]),
+        # 표에 없는 공통 파일이 섞이면 공통 리뷰(agent-template + safety)를 더한다
+        (["contracts/src/ax_contracts/schemas/finance.py",
+          "contracts/src/ax_contracts/schemas/common.py"], ["finance", "agent-template", "safety"]),
+        (["contracts/src/ax_contracts/schemas/event.py"], ["agent-template", "safety"]),
+        (["contracts/tests/test_x.py"], ["agent-template", "safety"]),  # 테스트만이면 공통
+    ],
+)
+def test_contracts_reviewers_by_changed_file(team: Team, paths, reviewers) -> None:
+    assert team.contracts_reviewers(paths) == reviewers
+
+
+def test_contracts_reviewers_without_paths_is_default(team: Team) -> None:
+    assert team.contracts_reviewers(None) == ["agent-template", "safety"]
+
+
+def test_contracts_affected_reviewer_replaced_when_author_owns_it(team: Team) -> None:
+    # 재현(data 담당)이 data 계약을 바꾸면 data 자리는 대체된다
+    # (contracts_fallback=data도 재현 → fallback 순서)
+    got = team.reviewers_for(["contracts"], "JangJaehyeonn",
+                             ["contracts/src/ax_contracts/schemas/data.py"])
+    assert got and "data" not in got and "memory" not in got
+    assert team.reviewers_for(["contracts"], "bxbae",
+                              ["contracts/src/ax_contracts/schemas/data.py"]) == ["data"]
+
+
+@pytest.mark.parametrize("path", ["safety/src/ax_safety/rules/thresholds.toml",
+                                  "agents/finance/src/finance_agent/ai_review_policy.toml"])
+def test_human_files_are_human_paths(team: Team, path: str) -> None:
+    assert team.is_human_file(path) and team.dept_of_path(path) is None
+    c = team.classify([path])
+    assert c.human == [path] and not c.depts
+    # 봇은 못 바꾸고 사람은 바꿀 수 있다 (대신 code owner 승인)
+    dept = "safety" if path.startswith("safety") else "finance"
+    assert any("사람 승인 경로" in v for v in team.check_diff([ch(path)], [dept], "bot"))
+    assert team.check_diff([ch(path)], [dept], "human") == []
+    # 같은 폴더의 다른 파일은 여전히 부서 것
+    assert team.dept_of_path(path.rsplit("/", 1)[0] + "/other.py") == dept
+
+
+def test_human_files_must_be_inside_dept_folder(team: Team) -> None:
+    with pytest.raises(team_mod.TeamError):
+        Team({**team.data, "human_files": ["README.md"]})
+
+
+def test_contracts_affected_validates_depts(team: Team) -> None:
+    with pytest.raises(team_mod.TeamError):
+        Team({**team.data, "contracts_affected": {"src/x.py": ["nowhere"]}})
+
+
+def test_cap_counts_contracts_review_runs_from_jobs(team: Team, monkeypatch) -> None:
+    calls = []
+
+    def fake(path, *extra):
+        calls.append(path)
+        return {"jobs": [_job("claude:data:review", [("Claude Code 설치 (npm)", "success"),
+                                                      ("Claude (리뷰)", "success")])]}
+
+    monkeypatch.setattr(team_mod, "gh_api", fake)
+    runs = [cap_run("claude-review contracts/86-x-r0 by ax-company-hq-bot[bot]", "success", 7),
+            cap_run("claude-review data/1-x-r0 by ax-company-hq-bot[bot]", "success", 8)]
+    ran = team_mod.resolve_failed_runs(runs, {}, team)
+    assert ran == {"7": ["data"]} and len(calls) == 1  # data 브랜치 성공 run은 jobs 안 읽음
+    # contracts 리뷰는 실제 리뷰 부서(data → 재현)로, data 리뷰는 제목대로(finance → 태윤)
+    assert team_mod.usage_by_owner(team, runs, ran, "review") == {
+        "JangJaehyeonn": 1, "2taeyoon": 1}

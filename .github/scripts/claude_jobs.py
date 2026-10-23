@@ -354,7 +354,8 @@ def write_post(team: team_mod.Team, dept: str, workspace: Path, out_dir: Path) -
         raise JobError(f"result.json을 읽을 수 없음: {e}") from e
     prefixes = allowed_prefixes(team, dept)
     paths = changed_paths(workspace)
-    keep = [p for p in paths if p.startswith(prefixes) and not team.forbidden_name(p)]
+    keep = [p for p in paths if p.startswith(prefixes) and not team.forbidden_name(p)
+            and not team.is_human_file(p)]
     dropped = sorted(set(paths) - set(keep))
     git = ["git", "-C", str(workspace)]
     if keep:
@@ -646,7 +647,7 @@ def review_prep(team: team_mod.Team, pr_no: int) -> dict:
     person = review_author_person(team, pr["user"]["login"], pr["head"]["ref"])
     if not person:
         return {"skip": "브랜치에서 부서를 알 수 없음", "fail": True, "head_sha": head}
-    depts = team.reviewers_for(list(classified.depts), person)
+    depts = team.reviewers_for(list(classified.depts), person, classified.depts.get("contracts"))
     if not depts:
         return {"skip": "리뷰 부서 없음", "fail": True, "head_sha": head}
     # cap은 여기서 한 번만 계산해 matrix로 넘긴다 (리뷰어 잡마다 다시 조회하지 않음)

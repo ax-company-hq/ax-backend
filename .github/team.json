@@ -14,6 +14,45 @@
     }
   },
   "bot_login": "ax-company-hq-bot[bot]",
+  "contracts_affected": {
+    "data-access/": [
+      "data",
+      "shop-api"
+    ],
+    "openapi/": [
+      "shop-api",
+      "dashboard-api"
+    ],
+    "src/ax_contracts/data_access/common_log.py": [
+      "dashboard-api"
+    ],
+    "src/ax_contracts/data_access/shop_": [
+      "data",
+      "shop-api"
+    ],
+    "src/ax_contracts/schemas/data.py": [
+      "data"
+    ],
+    "src/ax_contracts/schemas/escalation.py": [
+      "orchestrator"
+    ],
+    "src/ax_contracts/schemas/finance.py": [
+      "finance"
+    ],
+    "src/ax_contracts/schemas/hr.py": [
+      "hr"
+    ],
+    "src/ax_contracts/schemas/infra.py": [
+      "dejafix"
+    ],
+    "src/ax_contracts/schemas/planning.py": [
+      "planning"
+    ],
+    "src/ax_contracts/schemas/record.py": [
+      "memory",
+      "hr"
+    ]
+  },
   "contracts_fallback": "data",
   "depts": {
     "agent-template": {
@@ -27,7 +66,8 @@
       "folder": "contracts",
       "owners": [
         "haakim7",
-        "2taeyoon"
+        "2taeyoon",
+        "JangJaehyeonn"
       ]
     },
     "dashboard-api": {
@@ -148,6 +188,10 @@
   "hotfix_labelers": [
     "JangJaehyeonn",
     "haakim7"
+  ],
+  "human_files": [
+    "agents/finance/src/finance_agent/ai_review_policy.toml",
+    "safety/src/ax_safety/rules/thresholds.toml"
   ],
   "human_path_exceptions": "docs/notes/",
   "members": {
