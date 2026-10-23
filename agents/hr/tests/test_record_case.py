@@ -56,6 +56,16 @@ def test_agent_card_matches_template_format() -> None:
     assert served["name"] == "hr"
 
 
+def test_record_case_echoes_input_and_is_deterministic(svc, client) -> None:
+    """결과가 요청의 결정 이유·대안을 그대로 돌려주고, 같은 요청은 같은 카드로 이어진다."""
+    first = client.post("/a2a", json=_body()).json()
+    second = client.post("/a2a", json=_body()).json()
+    for result in (first, second):
+        assert result["decision_reason"] == "중복 결제 위험을 줄이기 위해"
+        assert result["alternatives_considered"] == ["재시도 없음"]
+    assert second["output"]["card_id"] == first["output"]["card_id"]
+
+
 def test_record_case_creates_a_card(svc, client) -> None:
     first = client.post("/a2a", json=_body()).json()
     assert first["status"] == "completed"
