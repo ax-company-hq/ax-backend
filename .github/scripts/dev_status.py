@@ -32,6 +32,9 @@ import team as team_mod  # noqa: E402
 KST = timezone(timedelta(hours=9))
 SWITCH = "AX_DEVROOM"
 FEED_LIMIT = 50
+MAX_ARTIFACT_BYTES = 20_000_000  # 내려받는 zip 상한
+ALLOWED_RUN_EVENTS = ("push", "schedule", "workflow_dispatch")
+URL_PREFIXES = ("https://github.com/", "https://api.github.com/")
 HISTORY_LIMIT = 120
 TEXT_LIMIT = 120
 CHAT = re.compile(r"<!--\s*chat:\s*(.*?)\s*-->", re.S)
@@ -99,26 +102,74 @@ def read_json(path: Path | None) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def trusted_run(run: dict, repo: str) -> bool:
+    """같은 레포 dev의 push·schedule·수동 실행만 믿는다 (PR·포크 실행 artifact는 쓰지 않음)."""
+    head_repo = (run.get("head_repository") or {}).get("full_name")
+    return (head_repo == repo and run.get("event") in ALLOWED_RUN_EVENTS
+            and run.get("head_branch") == "dev")
+
+
+def safe_url(url: object) -> str | None:
+    return url if isinstance(url, str) and url.startswith(URL_PREFIXES) else None
+
+
+def scrub(node: object, limit_text: bool = False) -> object:
+    """url 키는 GitHub 주소만 남기고 나머지는 None (javascript: 등 차단)."""
+    if isinstance(node, dict):
+        return {k: safe_url(v) if k == "url" else scrub(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [scrub(v) for v in node]
+    return node
+
+
+def clean_fields(items: object, keys: tuple[str, ...], limit: int = TEXT_LIMIT) -> list[dict]:
+    out = []
+    for it in items if isinstance(items, list) else []:
+        if isinstance(it, dict):
+            out.append({k: (clean(v, limit) if k in keys and v is not None else v)
+                        for k, v in it.items()})
+    return out
+
+
+def sanitize_inputs(e2e: dict, morning: dict) -> None:
+    """artifact에서 온 글자 필드도 clean()을 거친다 (제자리 수정)."""
+    if isinstance(e2e.get("stages"), list):
+        e2e["stages"] = [
+            {**s, **{k: {**v, "note": clean(v["note"])} for k, v in s.items()
+                     if k in ("unit", "chain", "real") and isinstance(v, dict) and v.get("note")}}
+            for s in e2e["stages"] if isinstance(s, dict)]
+    if "people" in morning:
+        morning["people"] = clean_fields(morning["people"], ("who", "task", "detail"))
+    if "orc" in morning:
+        morning["orc"] = clean_fields(morning["orc"], ("title", "note"))
+    bn = morning.get("bottlenecks")
+    if isinstance(bn, dict):
+        bn["blocked"] = clean_fields(bn.get("blocked"), ("title", "detail"))
+        bn["caps"] = clean_fields(bn.get("caps"), ("name",))
+
+
 def fetch_artifact_json(repo: str, source: str) -> dict:
     """dev의 가장 최근 성공 실행의 artifact에서 JSON 한 개를 읽는다 (gh 읽기 전용). 없으면 {}."""
     workflow, name, member = SOURCES[source]
     try:
         runs = team_mod.gh_api(
             f"repos/{repo}/actions/workflows/{workflow}/runs"
-            "?status=success&branch=dev&per_page=1"
+            "?status=success&branch=dev&per_page=20"
         ) or {}
-        run = (runs.get("workflow_runs") or [None])[0]
+        run = next((r for r in runs.get("workflow_runs") or [] if trusted_run(r, repo)), None)
         if not run:
             return {}
         arts = team_mod.gh_api(f"repos/{repo}/actions/runs/{run['id']}/artifacts") or {}
         art = next((a for a in arts.get("artifacts", [])
                     if a.get("name") == name and not a.get("expired")), None)
-        if not art:
+        if not art or int(art.get("size_in_bytes") or 0) > MAX_ARTIFACT_BYTES:
             return {}
         raw = subprocess.run(
             ["gh", "api", f"repos/{repo}/actions/artifacts/{art['id']}/zip"],
             check=True, capture_output=True,
         ).stdout
+        if len(raw) > MAX_ARTIFACT_BYTES:
+            return {}
         with zipfile.ZipFile(io.BytesIO(raw)) as zf:
             hit = next((n for n in zf.namelist() if n.rsplit("/", 1)[-1] == member), None)
             if not hit or zf.getinfo(hit).file_size > 5_000_000:
@@ -373,10 +424,13 @@ def run(team: team_mod.Team, out_dir: Path, e2e_dir: Path | None = None,
     e2e = source("e2e", e2e_dir, "e2e-result.json")
     real = source("real", real_dir, "real-result.json")
     morning = source("morning", morning_dir, "morning.json")
+    sanitize_inputs(e2e, morning)
+    sanitize_inputs(real, {})
     if gh is None:
         gh = load_github(repo, now) if repo else {}
     target = out_dir / "status.json"
     status = build_status(team, now, e2e, real, morning, read_json(target), gh)
+    status = scrub(status)
     try:
         status = validate(status)
     except Exception as e:  # noqa: BLE001 - 잘못된 값으로 기존 파일을 덮지 않는다

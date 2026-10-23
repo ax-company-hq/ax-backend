@@ -50,7 +50,7 @@ jobs:
         env:
           ACTOR: ${{ github.triggering_actor }} # 재실행(re-run)한 사람
           EVENT: ${{ github.event_name }}
-        run: python3 -I .github/scripts/real_guard.py check-actor --actor "$ACTOR" --event "$EVENT"
+        run: python3 -I .github/scripts/real_guard.py check-actor --actor "$ACTOR" --event "$EVENT" --workflow devroom-update.yml
       - name: 서버 PC 라벨 사용처 확인
         run: python3 -I .github/scripts/real_guard.py check-runner-label
 
@@ -63,6 +63,9 @@ jobs:
       github.event.workflow_run.event != 'pull_request' &&
       github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: [self-hosted, ax-server]
+    defaults:
+      run:
+        shell: bash # Windows 서버 PC에서도 "$ACTOR" 같은 bash 문법이 그대로 동작하게
     timeout-minutes: 15
     permissions:
       contents: read
@@ -79,7 +82,7 @@ jobs:
         env:
           ACTOR: ${{ github.triggering_actor }}
           EVENT: ${{ github.event_name }}
-        run: python .github/scripts/real_guard.py check-actor --actor "$ACTOR" --event "$EVENT"
+        run: python .github/scripts/real_guard.py check-actor --actor "$ACTOR" --event "$EVENT" --workflow devroom-update.yml
       - name: 의존성
         run: uv sync --all-packages --locked
       - name: status.json 만들기 (artifact와 이슈·PR을 읽어 AX_DEVROOM_DIR에 저장)

@@ -41,12 +41,18 @@ def code_owners(path: Path) -> set[str]:
     return owners
 
 
-def actor_allowed(actor: str, event: str, owners: set[str]) -> tuple[bool, str]:
+DEVROOM_WORKFLOW = "devroom-update.yml"
+
+
+def actor_allowed(actor: str, event: str, owners: set[str],
+                  workflow: str | None = None) -> tuple[bool, str]:
     if event == "schedule":
         return True, "schedule 실행"
     if event == "workflow_run":
         # devroom-update만: dev의 자동화 워크플로가 끝났을 때 (PR·포크 실행은 워크플로 if가 거른다)
-        return True, "workflow_run 실행"
+        if workflow == DEVROOM_WORKFLOW:
+            return True, "workflow_run 실행"
+        return False, f"workflow_run은 {DEVROOM_WORKFLOW}만 허용: {workflow}"
     if event != "workflow_dispatch":
         return False, f"허용하지 않는 이벤트: {event}"
     if actor in owners:
@@ -116,7 +122,12 @@ def check_workflows(directory: Path) -> list[str]:
                 f"{path.name}: `{RUNNER_LABEL}` 라벨은 {sorted(ALLOWED_WORKFLOWS)}만 쓸 수 있다"
             )
             continue
-        bad = sorted(trigger_names(text) & set(FORBIDDEN_TRIGGERS))
+        triggers = trigger_names(text)
+        if "workflow_run" in triggers and path.name != DEVROOM_WORKFLOW:
+            violations.append(
+                f"{path.name}: 서버 PC 워크플로의 workflow_run은 {DEVROOM_WORKFLOW}만 쓸 수 있다"
+            )
+        bad = sorted(triggers & set(FORBIDDEN_TRIGGERS))
         if bad:
             violations.append(f"{path.name}: 서버 PC 워크플로에 금지된 트리거 {bad}")
     return violations
@@ -128,12 +139,15 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("check-actor")
     p.add_argument("--actor", required=True)
     p.add_argument("--event", required=True)
+    p.add_argument("--workflow", help="호출한 워크플로 파일 이름 (workflow_run 허용 판단)")
     p.add_argument("--codeowners", default=str(ROOT / ".github" / "CODEOWNERS"))
     p = sub.add_parser("check-runner-label")
     p.add_argument("--workflows", default=str(ROOT / ".github" / "workflows"))
     args = ap.parse_args(argv)
     if args.cmd == "check-actor":
-        ok, why = actor_allowed(args.actor, args.event, code_owners(Path(args.codeowners)))
+        ok, why = actor_allowed(
+            args.actor, args.event, code_owners(Path(args.codeowners)), args.workflow
+        )
         print(why)
         return 0 if ok else 1
     found = check_workflows(Path(args.workflows))

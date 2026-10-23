@@ -41,8 +41,10 @@ New-NetFirewallRule -DisplayName "AX gateway" -Direction Inbound -Protocol TCP -
 AX 개발실을 쓰면 8090도 연다 (`AX_DEVROOM_PORT`를 바꿨으면 그 포트).
 
 ```powershell
-New-NetFirewallRule -DisplayName "AX devroom" -Direction Inbound -Protocol TCP -LocalPort 8090 -Action Allow
+New-NetFirewallRule -DisplayName "AX devroom" -Direction Inbound -Protocol TCP -LocalPort 8090 -Action Allow -Profile Private
 ```
+
+개발실은 LAN·Tailscale만 접속한다 (프로필 Private). 공용 네트워크·인터넷에는 열지 않는다.
 
 ## 접속
 

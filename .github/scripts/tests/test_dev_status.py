@@ -337,7 +337,9 @@ def test_workflow_passes_runner_label_guard_and_actor_rules(tmp_path: Path) -> N
     assert guard.check_workflows(ROOT / ".github" / "workflows") == []
     assert guard.main(["check-runner-label"]) == 0
     owners = {"haakim7"}
-    assert guard.actor_allowed("anyone", "workflow_run", owners)[0]
+    assert guard.actor_allowed("anyone", "workflow_run", owners, "devroom-update.yml")[0]
+    assert not guard.actor_allowed("anyone", "workflow_run", owners)[0]
+    assert not guard.actor_allowed("anyone", "workflow_run", owners, "real-run.yml")[0]
     assert guard.actor_allowed("haakim7", "workflow_dispatch", owners)[0]
     assert not guard.actor_allowed("stranger", "workflow_dispatch", owners)[0]
     assert not guard.actor_allowed("haakim7", "pull_request", owners)[0]
@@ -355,3 +357,87 @@ def test_compose_is_separate_and_read_only() -> None:
     assert "restart: unless-stopped" in text
     assert re.search(r"\$\{AX_DEVROOM_DIR:\?[^}]*\}:/data:ro", text)
     assert not (ROOT / "infra" / "devroom.compose.yml").exists()
+
+
+
+def test_self_hosted_job_uses_bash_and_guard_gets_workflow_name() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    update = text.split("\n  update:\n", 1)[1]
+    assert re.search(r"defaults:\n\s+run:\n\s+shell: bash", update.split("steps:")[0])
+    assert text.count("--workflow devroom-update.yml") == 2
+
+
+def test_workflow_run_trigger_is_forbidden_on_other_server_workflows(tmp_path: Path) -> None:
+    runs_on = "jobs:\n  a:\n    runs-on: [self-hosted, ax-server]\n"
+    on = "on:\n  workflow_run:\n    workflows: [x]\n    types: [completed]\n"
+    (tmp_path / "real-run.yml").write_text(on + runs_on, encoding="utf-8")
+    assert any("workflow_run" in v for v in guard.check_workflows(tmp_path))
+    (tmp_path / "real-run.yml").unlink()
+    (tmp_path / "devroom-update.yml").write_text(on + runs_on, encoding="utf-8")
+    assert guard.check_workflows(tmp_path) == []
+
+
+def test_trusted_run_requires_same_repo_dev_and_allowed_event() -> None:
+    repo = "ax-company-hq/ax-backend"
+    ok = {"head_repository": {"full_name": repo}, "event": "push", "head_branch": "dev"}
+    assert ds.trusted_run(ok, repo)
+    assert ds.trusted_run({**ok, "event": "schedule"}, repo)
+    assert not ds.trusted_run({**ok, "event": "pull_request"}, repo)
+    assert not ds.trusted_run({**ok, "head_repository": {"full_name": "evil/fork"}}, repo)
+    assert not ds.trusted_run({**ok, "head_branch": "feature"}, repo)
+
+
+def test_fetch_artifact_skips_untrusted_runs_and_big_artifacts(monkeypatch) -> None:
+    repo = "ax-company-hq/ax-backend"
+    calls = []
+    repo_ref = {"full_name": repo}
+    runs = {"workflow_runs": [
+        {"id": 1, "event": "pull_request", "head_branch": "dev", "head_repository": repo_ref},
+        {"id": 2, "event": "push", "head_branch": "dev", "head_repository": repo_ref},
+    ]}
+
+    def fake_api(path, *extra):
+        calls.append(path)
+        if path.endswith("/artifacts"):
+            big = ds.MAX_ARTIFACT_BYTES + 1
+            return {"artifacts": [{"id": 9, "name": "e2e-result", "size_in_bytes": big}]}
+        return runs
+
+    monkeypatch.undo()
+    monkeypatch.setattr(ds.team_mod, "gh_api", fake_api)
+    monkeypatch.setattr(ds.subprocess, "run", lambda *a, **k: pytest.fail("내려받으면 안 됨"))
+    assert ds.fetch_artifact_json(repo, "e2e") == {}
+    assert any("/runs/2/artifacts" in c for c in calls)
+    assert not any("/runs/1/" in c for c in calls)
+
+
+def test_artifact_text_fields_are_cleaned(tmp_path: Path) -> None:
+    dirty = "비밀 ghp_abcdefghijklmnop1234 <!-- x --> " + "가" * 300
+    e2e = {**E2E, "stages": [{**stage(1, "pass", "pass"),
+                              "chain": {"state": "pass", "note": dirty}}]}
+    morning = {**MORNING,
+               "people": [{"who": "모두", "task": dirty, "detail": dirty, "state": "todo",
+                           "url": None}],
+               "orc": [{"id": "ORC-01", "title": dirty, "state": "todo", "note": dirty,
+                        "issue": None}]}
+    _, s = generate(tmp_path, e2e=e2e, morning=morning)
+    text = json.dumps(s, ensure_ascii=False)
+    assert "ghp_" not in text and "<!--" not in text
+    assert len(s["people"][0]["task"]) == 120 and len(s["orc"][0]["note"]) == 120
+    assert len(s["stages"][0]["chain"]["note"]) == 120
+
+
+def test_only_github_urls_survive(tmp_path: Path) -> None:
+    def person(task: str, url: str) -> dict:
+        return {"who": "모두", "task": task, "detail": None, "state": "todo", "url": url}
+
+    good = "https://github.com/ax-company-hq/ax-backend/issues/1"
+    morning = {**MORNING, "people": [person("a", "javascript:alert(1)"),
+                                     person("b", "https://evil.example/x"), person("c", good)]}
+    gh = {**GH, "issues": [{**issue(10, "t", ["needs-human"]), "html_url": "javascript:alert(2)"}]}
+    _, s = generate(tmp_path, gh=gh, morning=morning)
+    urls = [p["url"] for p in s["people"]] + [b["url"] for b in s["bottlenecks"]["blocked"]]
+    assert urls[2] == good
+    prefixes = ("https://github.com/", "https://api.github.com/")
+    assert all(u is None or u.startswith(prefixes) for u in urls + [f["url"] for f in s["feed"]])
+    assert "javascript:" not in json.dumps(s)
