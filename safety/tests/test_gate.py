@@ -6,9 +6,18 @@ from typing import Any
 
 import pytest
 
-from ax_contracts.schemas import HoldReason
+from ax_contracts.schemas import ExecuteRequest, HoldReason
 from ax_safety.gate import Gate
-from ax_safety.rules import ActionSpec, Rule, ThresholdTable, load_registry, load_thresholds
+from ax_safety.rules import (
+    ActionSpec,
+    AmountSpec,
+    Registry,
+    Rule,
+    ThresholdTable,
+    load_registry,
+    load_thresholds,
+)
+from ax_safety.store import Store
 
 
 def test_rule_files_load_and_match_agreed_values() -> None:
@@ -29,7 +38,10 @@ def test_rule_files_load_and_match_agreed_values() -> None:
         "refund_single": 100_000,
     }
     issue = registry.get("issue_coupon")
-    assert issue is not None and (issue.base_grade, issue.verifier) == ("B", "finance")
+    assert issue is not None and (issue.base_grade, issue.verifier) == ("A", None)
+    refund = registry.get("refund_request")
+    assert refund is not None and (refund.base_grade, refund.verifier) == ("A", None)
+    assert issue.amount is not None and refund.amount is not None  # 금액 규칙은 그대로
     assert registry.get("confirm_settlement").base_grade == "C"  # type: ignore[union-attr]
     for spec in registry.actions:  # 자기 검증 금지
         assert spec.verifier != spec.owner
@@ -76,16 +88,16 @@ async def test_grade_a_executes_immediately(gate: Gate, sent: Any, act) -> None:
 
 @pytest.mark.asyncio
 async def test_claimed_grade_is_ignored(gate: Gate, verifier: Any, coupon) -> None:
-    """① 등급은 규칙이 정한다: `claimed_grade="A"`여도 50,000원은 B, 400,000원은 C."""
-    small = await gate.execute(coupon(10, 5000, purpose_code="campaign", claimed_grade="A"))
-    assert (small.grade, small.status, small.verifier) == ("B", "executed", "finance")
+    """① 등급은 규칙이 정한다: `claimed_grade="C"`여도 50,000원은 A, `"A"`여도 400,000원은 C."""
+    small = await gate.execute(coupon(10, 5000, purpose_code="campaign", claimed_grade="C"))
+    assert (small.grade, small.status, small.verifier) == ("A", "executed", None)
     assert small.computed_amount == 50_000
-    assert len(verifier.tasks) == 1
+    assert verifier.tasks == []  # 쿠폰은 재무 교차검증을 하지 않는다 (재무 재설계)
 
     big = await gate.execute(coupon(20, 20_000, purpose_code="campaign", claimed_grade="A"))
     assert (big.grade, big.status, big.hold_reason) == ("C", "held", HoldReason.OVER_THRESHOLD)
     assert big.review_id and big.review_id.startswith("rev_")
-    assert len(verifier.tasks) == 1  # C는 검증자에게 보내지 않는다
+    assert verifier.tasks == []  # C는 검증자에게 보내지 않는다
 
 
 @pytest.mark.asyncio
@@ -147,10 +159,10 @@ async def test_unit_value_limit(gate: Gate, coupon) -> None:
 
 
 @pytest.mark.asyncio
-async def test_idempotent_replay(gate: Gate, verifier: Any, sent: Any, coupon) -> None:
+async def test_idempotent_replay(gate: Gate, verifier: Any, sent: Any, act) -> None:
     """④ 같은 멱등성 키 두 번 → 판정·검증·이벤트는 한 번, 두 번째는 이전 결과."""
-    first = await gate.execute(coupon(key="same"))
-    second = await gate.execute(coupon(key="same"))
+    first = await gate.execute(_seller_review(act, "same"))
+    second = await gate.execute(_seller_review(act, "same"))
     assert first == second
     assert len(verifier.tasks) == 1
     assert sent.types() == ["safety.action_executed"]
@@ -159,33 +171,56 @@ async def test_idempotent_replay(gate: Gate, verifier: Any, sent: Any, coupon) -
 
 @pytest.mark.parametrize("result", ["unavailable", "raise"])
 @pytest.mark.asyncio
-async def test_verifier_silence_never_executes(
-    gate: Gate, verifier: Any, result: str, coupon
-) -> None:
+async def test_verifier_silence_never_executes(gate: Gate, verifier: Any, result: str, act) -> None:
     """⑤ 검증자 무응답·오류 → 실행하지 않고 C(`verify_timeout`), fail-closed (SAF-08)."""
     verifier.result = result
-    decision = await gate.execute(coupon())
+    decision = await gate.execute(_seller_review(act, "silent"))
     assert (decision.grade, decision.status) == ("C", "held")
     assert decision.hold_reason == HoldReason.VERIFY_TIMEOUT
-    assert gate.store.executed_total("shop-demo", "issue_coupon") == 0
+    executed = [r for r in gate.store.list_executions() if r.decision.status == "executed"]
+    assert executed == []
 
 
 @pytest.mark.asyncio
-async def test_verifier_rejection(gate: Gate, verifier: Any, sent: Any, coupon) -> None:
+async def test_verifier_rejection(gate: Gate, verifier: Any, sent: Any, act) -> None:
     verifier.result = "rejected"
-    decision = await gate.execute(coupon())
+    decision = await gate.execute(_seller_review(act, "rejected"))
     assert (decision.status, decision.hold_reason) == ("rejected", HoldReason.VERIFY_REJECTED)
-    assert gate.store.list_reviews() == []  # 재무가 거절한 건은 보류 큐에 넣지 않는다
+    assert gate.store.list_reviews() == []  # 검증자가 거절한 건은 보류 큐에 넣지 않는다
     assert sent.types() == []
 
 
 @pytest.mark.asyncio
 async def test_verify_task_carries_code_amount_not_claims(
-    gate: Gate, verifier: Any, coupon
+    clock: Any, verifier: Any, sent: Any
 ) -> None:
-    await gate.execute(coupon(3, 5000, claimed_grade="A"))
+    """금액 규칙이 있는 B 액션의 검증자는 요청 쪽 숫자가 아니라 코드 계산 금액을 받는다.
+
+    쿠폰·환불이 A가 되어 실제 레지스트리에는 금액 있는 B 에이전트 검증 액션이 없으므로
+    테스트용 액션을 하나 더한 레지스트리로 확인한다.
+    """
+    extra = ActionSpec(
+        action="pay_bonus",
+        owner="hr",
+        base_grade="B",
+        verifier="finance",
+        verify_skill="verify_bonus",
+        amount=AmountSpec(count_field="count", unit_field="unit_value", claimed_fields=["total"]),
+    )
+    registry = Registry(actions=[*load_registry().actions, extra])
+    gate = Gate(registry, load_thresholds(), Store(), verifier, sent, now=clock)
+    request = ExecuteRequest(
+        action="pay_bonus",
+        requester="hr",
+        context_id="ctx_inc_0001",
+        idempotency_key="bonus-1",
+        params={"count": 3, "unit_value": 5000, "total": 15_000},
+        claimed_grade="A",
+    )
+    decision = await gate.execute(request)
+    assert (decision.grade, decision.status) == ("B", "executed")
     task = verifier.tasks[0]
-    assert (task.verifier, task.skill) == ("finance", "verify_amount")
+    assert (task.verifier, task.skill) == ("finance", "verify_bonus")
     assert task.input["computed_amount"] == 15_000
     assert task.input["threshold_version"] == 1
     assert task.timeout_seconds == 30
@@ -225,9 +260,10 @@ async def test_settlement_confirmation_is_always_held(gate: Gate, act) -> None:
 @pytest.mark.asyncio
 async def test_refund_threshold(gate: Gate, verifier: Any, act) -> None:
     small = await gate.execute(act("refund_request", "support", "r1", refund_amount=99_999))
-    assert (small.grade, small.status) == ("B", "executed")
+    assert (small.grade, small.status) == ("A", "executed")
     big = await gate.execute(act("refund_request", "support", "r2", refund_amount=100_000))
     assert big.status == "held"
+    assert verifier.tasks == []  # 환불은 재무 교차검증을 하지 않는다
 
 
 @pytest.mark.asyncio
@@ -261,11 +297,14 @@ async def test_review_auto_rejects_after_timeout(gate: Gate, clock: Any, sent: A
 
 
 @pytest.mark.asyncio
-async def test_every_decision_is_audited_with_context(gate: Gate, coupon) -> None:
-    """SAF-06: 접수·판정이 context_id와 함께 남는다."""
+async def test_every_decision_is_audited_with_context(gate: Gate, coupon, act) -> None:
+    """SAF-06: 접수·(검증)·판정이 context_id와 함께 남는다. 쿠폰은 A라 검증 단계가 없다."""
     await gate.execute(coupon())
     steps = [(e.step, e.context_id) for e in gate.store.list_audit("ctx_inc_0001")]
-    assert [s for s, _ in steps] == ["received", "verify_requested", "verify_result", "decided"]
+    assert [s for s, _ in steps] == ["received", "decided"]
+    await gate.execute(_seller_review(act, "audit"))
+    steps = [e.step for e in gate.store.list_audit("ctx_inc_0001")][2:]
+    assert steps == ["received", "verify_requested", "verify_result", "decided"]
 
 
 def test_threshold_rules_must_reference_registered_actions(verifier: Any, sent: Any) -> None:
@@ -543,8 +582,10 @@ async def test_support_claim_records_are_grade_a(gate: Gate, act, action: str) -
 
 
 @pytest.mark.asyncio
-async def test_claim_refund_still_needs_finance_check(gate: Gate, verifier: Any, act) -> None:
-    """클레임 환불 지급은 refund_request(B)로 재무가 검증한다."""
+async def test_claim_refund_is_grade_a_without_finance_check(
+    gate: Gate, verifier: Any, act
+) -> None:
+    """클레임 환불 지급은 refund_request(A). 한도 안이면 바로 실행되고 재무에 묻지 않는다."""
     decision = await gate.execute(
         act(
             "refund_request",
@@ -556,5 +597,62 @@ async def test_claim_refund_still_needs_finance_check(gate: Gate, verifier: Any,
             refund_amount=20_000,
         )
     )
-    assert (decision.grade, decision.status, decision.verifier) == ("B", "executed", "finance")
-    assert verifier.tasks[-1].input["params"]["claim_id"] == 1
+    assert (decision.grade, decision.status, decision.verifier) == ("A", "executed", None)
+    assert decision.computed_amount == 20_000
+    assert verifier.tasks == []
+
+
+@pytest.mark.asyncio
+async def test_grade_a_coupon_still_escalates_on_rules(gate: Gate, verifier: Any, coupon) -> None:
+    """A가 되어도 금액 규칙은 그대로: 총액 불일치·한도 초과·잘못된 금액 필드는 C."""
+    ok = await gate.execute(coupon(2, 5000, purpose_code="campaign", key="a-ok"))
+    assert (ok.grade, ok.status) == ("A", "executed")
+
+    mismatch = coupon(2, 5000, purpose_code="campaign", key="a-mismatch")
+    mismatch.params["claimed_total"] = 1_000
+    held = await gate.execute(mismatch)
+    assert (held.grade, held.status, held.hold_reason) == (
+        "C",
+        "held",
+        HoldReason.AMOUNT_MISMATCH,
+    )
+
+    over = await gate.execute(coupon(15, 20_000, purpose_code="campaign", key="a-over"))
+    assert (over.status, over.hold_reason) == ("held", HoldReason.OVER_THRESHOLD)
+
+    customer = await gate.execute(coupon(5, 10_000, key="a-customer"))  # 고객당 보상 5만 원
+    assert (customer.status, customer.hold_reason) == ("held", HoldReason.OVER_THRESHOLD)
+
+    bad = coupon(1, 5000, purpose_code="campaign", key="a-bad")
+    bad.params["unit_value"] = "5000"
+    invalid = await gate.execute(bad)
+    assert (invalid.status, invalid.hold_reason) == ("held", HoldReason.SCHEMA_INVALID)
+    assert verifier.tasks == []
+
+
+@pytest.mark.asyncio
+async def test_refund_amount_rules_still_apply(gate: Gate, verifier: Any, act) -> None:
+    """환불 A: 금액 필드가 없거나 정수가 아니면 C(`schema_invalid`), 10만 원 이상은 C."""
+    missing = await gate.execute(act("refund_request", "support", "rf-none", order_id="ord_1"))
+    assert (missing.status, missing.hold_reason) == ("held", HoldReason.SCHEMA_INVALID)
+    text = await gate.execute(act("refund_request", "support", "rf-str", refund_amount="9000"))
+    assert text.hold_reason == HoldReason.SCHEMA_INVALID
+    big = await gate.execute(act("refund_request", "support", "rf-big", refund_amount=150_000))
+    assert (big.grade, big.status, big.hold_reason) == ("C", "held", HoldReason.OVER_THRESHOLD)
+    review = gate.store.get_review(big.review_id or "")
+    assert review is not None and review.report["rules"][0]["key"] == "refund_single"
+    assert verifier.tasks == []
+
+
+def test_no_action_is_routed_to_finance_verify_amount() -> None:
+    """재무 재설계: verify_amount skill은 없어졌으니 레지스트리에서 부르는 액션도 없어야 한다."""
+    registry = load_registry()
+    assert [s.action for s in registry.actions if s.verify_skill == "verify_amount"] == []
+    assert [s.action for s in registry.actions if s.verifier == "finance"] == []
+    settle = registry.get("confirm_settlement")
+    assert settle is not None and (settle.owner, settle.base_grade) == ("finance", "C")
+
+
+def _seller_review(act: Any, key: str) -> ExecuteRequest:
+    """data가 교차검증하는 B 액션 (위험 점수 70 미만)."""
+    return act("seller_review", "finance", key, seller_id="sel_1", risk_score=20)
