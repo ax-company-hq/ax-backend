@@ -17,7 +17,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Header, Query, Request, Response
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field
 
 from ax_agent_template.config import set_agent_name
 from ax_agent_template.server import verify_token
@@ -54,6 +54,11 @@ class OrderLine(BaseModel):
 class OrderIn(BaseModel):
     buyer_id: str
     items: list[OrderLine]
+    points_used: int = Field(default=0, ge=0)  # 포인트 사용분(원). 품목 금액 비율로 나눠 기록한다
+
+
+class DeliveredIn(BaseModel):
+    delivered_at: AwareDatetime | None = None  # 비우면 지금(시연·시드용으로 지난 시각도 가능)
 
 
 class PaymentIn(BaseModel):
@@ -199,7 +204,9 @@ def create_app(db: Db | None = None, seed_data: bool = True) -> FastAPI:
 
     @app.post("/api/shop/orders", status_code=201)
     async def create_order(body: OrderIn) -> dict:
-        order = shop.create_order(body.buyer_id, [(i.product_id, i.qty) for i in body.items])
+        order = shop.create_order(
+            body.buyer_id, [(i.product_id, i.qty) for i in body.items], body.points_used
+        )
         await outbox.flush(database)
         return _ok(order)
 
@@ -215,6 +222,12 @@ def create_app(db: Db | None = None, seed_data: bool = True) -> FastAPI:
         order = shop.cancel(order_id, body.reason_code)
         await outbox.flush(database)
         return _ok(order)
+
+    @app.post("/api/shop/admin/orders/{order_id}/delivered")
+    async def mark_delivered(
+        order_id: str, body: DeliveredIn, _: str = Depends(_caller(INJECT_ALLOWED))
+    ) -> dict:
+        return _ok(shop.mark_delivered(order_id, body.delivered_at))
 
     @app.get("/api/shop/admin/faults")
     async def fault_state(_: str = Depends(_caller(INJECT_ALLOWED | RELEASE_ALLOWED))) -> dict:

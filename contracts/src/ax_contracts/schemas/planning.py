@@ -119,3 +119,34 @@ class VerifyHandoverOutput(AxModel):
         if self.approved != complete or complete != (not self.missing):
             raise ValueError("approved, reason_code, missing이 서로 맞지 않는다")
         return self
+
+
+# ---- 변경 요청 접수 (이슈 #172 요청, planning)
+#
+# - `create_ticket`: support·marketing·hr·data·orchestrator → planning, 등급 A.
+#   반복 문의 같은 근거로 기획개발에 변경 요청을 접수한다.
+# - `ctx_req_`는 planning이 발급한다. 같은 요청을 여러 부서가 보내면 하나로 묶어야 해서다.
+#   요청 부서는 돌려받은 `context_id`로 자기 쪽 문의와 요청을 연결한다.
+# - 결과 통지(머지 뒤 요청 부서 회신)는 원래 요청의 meta를 재사용하지 않고, 같은 `context_id`에
+#   `path`를 비운 새 요청으로 보낸다(LOOP_DETECTED 방지).
+# - `untrusted`: 고객 문의 원문은 넣지 않고 `evidence` 요약만 보낸다(필요하면 `untrusted.text`).
+
+
+class CreateTicketInput(AxModel):
+    title: str  # 바꿀 내용 한 줄
+    evidence: str  # 근거 요약 (예: 반복 문의 42건)
+    source_ref: str | None = None  # 요청 부서 쪽 참조 ID (예: 고객지원 문의 ID). 판정에 안 쓴다
+    evidence_ids: list[str] = Field(default_factory=list)  # 근거 ID
+
+
+class CreateTicketOutput(AxModel):
+    request_id: str  # REQ-n
+    context_id: str  # ctx_req_ (planning이 발급)
+    outcome: Literal["created", "linked_duplicate"]
+    duplicate_of: str | None = None  # 같은 요청이 이미 있으면 그 REQ ID
+
+    @model_validator(mode="after")
+    def _duplicate_is_consistent(self) -> CreateTicketOutput:
+        if (self.outcome == "linked_duplicate") != (self.duplicate_of is not None):
+            raise ValueError("duplicate_of는 outcome이 linked_duplicate일 때만 채운다")
+        return self

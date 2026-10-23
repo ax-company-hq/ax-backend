@@ -2,14 +2,27 @@
 # 이 파일을 바꾸면 `python .github/scripts/team.py export-json`으로 .github/team.json을 다시 만든다 (훅이 읽음, CI가 동기화 검사).
 
 members:
-  JangJaehyeonn: { name: 재현, token: CLAUDE_TOKEN_JAEHYEON, daily_cap: 20 }
-  2taeyoon: { name: 태윤, token: CLAUDE_TOKEN_TAEYOON, daily_cap: 20 }
-  haakim7: { name: 준하, token: CLAUDE_TOKEN_JUNHA, daily_cap: 20 }
-  NYejin: { name: 예진, token: CLAUDE_TOKEN_YEJIN, daily_cap: 20 }
-  bxbae: { name: 병환, token: CLAUDE_TOKEN_BYUNGHWAN, daily_cap: 20 }
-  areatmadm: { name: 재헌, token: CLAUDE_TOKEN_JAEHEON, daily_cap: 20 }
+  JangJaehyeonn: { name: 재현, token: CLAUDE_TOKEN_JAEHYEON, write_cap: 15, review_cap: 15 }
+  2taeyoon: { name: 태윤, token: CLAUDE_TOKEN_TAEYOON, write_cap: 15, review_cap: 15 }
+  haakim7: { name: 준하, token: CLAUDE_TOKEN_JUNHA, write_cap: 15, review_cap: 15 }
+  NYejin: { name: 예진, token: CLAUDE_TOKEN_YEJIN, write_cap: 15, review_cap: 15 }
+  bxbae: { name: 병환, token: CLAUDE_TOKEN_BYUNGHWAN, write_cap: 15, review_cap: 15 }
+  areatmadm: { name: 재헌, token: CLAUDE_TOKEN_JAEHEON, write_cap: 15, review_cap: 15 }
 
 bot_login: ax-company-hq-bot[bot]
+
+# 하루 Claude 실행 상한은 사람마다 작성(write_cap)·리뷰(review_cap)를 따로 센다 (UTC 날짜 기준)
+
+# 에이전트 리뷰(agent-review)는 이 부서를 건드렸거나 부서 2개 이상에 걸친 PR에만 돈다.
+# 공유 폴더(contracts, agent-template)와 안전 레이어(safety)·통합 에이전트(orchestrator)는 단독 PR도 리뷰.
+# 그 밖의 부서 하나 안에서만 바뀐 PR은 guards가 agent-review를 "not required"로 success 처리한다
+review_required_depts: [contracts, agent-template, safety, orchestrator]
+
+# 부서마다 동시에 진행할 수 있는 작성 수. 넘으면 새 작성을 시작하지 않고 wip-wait 라벨로 기다린다
+wip: { open_bot_prs: 2, in_progress_issues: 3 }
+
+# 매일 1회 정리: 이 시간보다 오래 변화가 없는 봇 PR·봇 이슈를 닫는다
+stale_hours: 48
 
 # id: { folder, aliases, owners(첫 번째가 실행 토큰), env_prefix }
 depts:
@@ -27,10 +40,10 @@ depts:
   dashboard-api: { folder: dashboard-api, owners: [bxbae], env_prefix: DASHBOARD }
   marketing: { folder: agents/marketing, owners: [areatmadm], env_prefix: MARKETING }
   shop-api: { folder: shop-api, owners: [areatmadm], env_prefix: SHOP }
-  contracts: { folder: contracts, owners: [haakim7, 2taeyoon] } # env_prefix 없음 → MOCK 변수 안 씀
+  contracts: { folder: contracts, owners: [haakim7, 2taeyoon, JangJaehyeonn] } # env_prefix 없음 → MOCK 변수 안 씀
 
 # ax-frontend 부서의 실행 토큰 주인 (cap-ok가 두 레포 잡을 같은 사람에게 합산)
-frontend_depts: { shop-web: areatmadm, dashboard-web: bxbae }
+frontend_depts: { shop-web: areatmadm, dashboard-web: bxbae, planning-web: NYejin }
 
 # 바뀐 부서 → 리뷰 부서 (docs/automation-spec.md "리뷰어 배정")
 reviewers:
@@ -50,6 +63,22 @@ reviewers:
   shop-api: [data]
   contracts: [agent-template, safety]
 
+# contracts PR의 리뷰 부서: 바뀐 계약 파일을 쓰는 부서 (contracts/ 기준 경로 접두사 → 부서).
+# 표에 없는 공통 파일(common·event·message·execute·agent_card·ids 등)은 reviewers.contracts가 본다.
+# contracts/tests/·*.md는 리뷰 부서를 정하는 데 쓰지 않는다. 깨지는 변경은 contracts-compat(필수 체크)이 막는다
+contracts_affected:
+  src/ax_contracts/schemas/data.py: [data]
+  src/ax_contracts/schemas/finance.py: [finance]
+  src/ax_contracts/schemas/hr.py: [hr]
+  src/ax_contracts/schemas/planning.py: [planning]
+  src/ax_contracts/schemas/infra.py: [dejafix]
+  src/ax_contracts/schemas/record.py: [memory, hr]
+  src/ax_contracts/schemas/escalation.py: [orchestrator]
+  src/ax_contracts/data_access/shop_: [data, shop-api]
+  src/ax_contracts/data_access/common_log.py: [dashboard-api]
+  data-access/: [data, shop-api]
+  openapi/: [shop-api, dashboard-api]
+
 # 리뷰 부서 담당이 작성자와 같으면 이 순서에서 겹치지 않는 첫 부서로 바꾼다
 fallback_order: [orchestrator, data, finance, planning, support, marketing]
 # contracts 리뷰 자리가 작성자 본인이면 그 자리는 이 부서가 맡는다
@@ -67,6 +96,12 @@ shared_rules:
 bot_branches:
   revert/: { review: skip, compat: skip, paths: reverted }
   openapi/sync-: { review: skip, compat: skip, paths: [contracts/openapi/] }
+
+# 부서 폴더 안에 있지만 사람만 바꾸는 파일 (기준표·AI 재량 한도). human_paths로 취급:
+# 에이전트는 못 바꾸고(folder-guard·guard-folder 훅), 사람 PR은 CODEOWNERS 승인이 필요하다
+human_files:
+  - agents/finance/src/finance_agent/ai_review_policy.toml
+  - safety/src/ax_safety/rules/thresholds.toml
 
 # 깊이와 상관없이 부서 폴더 안에 생기면 안 되는 이름
 # (대소문자·끝의 점/공백 무시. .gitattributes는 export-ignore로 safe-test 사본을 바꿀 수 있어 막음)

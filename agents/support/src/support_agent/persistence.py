@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from ax_contracts.schemas.common import TENANT_ID_DEFAULT
+from support_agent.change_requests import ChangeRequestLink, ChangeRequestStore
 from support_agent.claim_schemas import Claim
 from support_agent.claims import ClaimStore
 from support_agent.compensation import SequenceLedger
@@ -45,7 +46,8 @@ TABLES: tuple[Table, ...] = (
     Table("inquiries", ("inquiry_id",), ("tenant_id", "context_id", "status", "updated_at")),
     Table("inquiry_results", ("tenant_id", "idempotency_key"), ("context_id",)),
     Table("draft_events", ("event_id",), ("tenant_id", "context_id", "inquiry_id")),
-    Table("claims", ("claim_id",), ("tenant_id", "context_id", "order_id", "user_id", "status")),
+    Table("claims", ("claim_id",), ("tenant_id", "context_id", "order_id", "buyer_id", "status")),
+    Table("change_requests", ("tenant_id", "context_id", "inquiry_id"), ("status",)),
     Table("compensation_sequences", ("tenant_id", "context_id")),
     Table("compensation_results", ("tenant_id", "idempotency_key"), ("context_id",)),
 )
@@ -55,14 +57,30 @@ COLUMN_TYPES = {
     "inquiry_id": "bigint",
     "event_id": "bigint",
     "claim_id": "bigint",
-    "order_id": "bigint",
-    "user_id": "bigint",
     "updated_at": "timestamptz",
 }
 
 
 def column_type(column: str) -> str:
     return COLUMN_TYPES.get(column, "text")
+
+
+# 주문·구매자 ID가 숫자였던 예전 `claims` 테이블을 문자열 열로 옮긴다 (`user_id` → `buyer_id`).
+# 새로 만든 테이블에는 아무 일도 하지 않고, 여러 번 실행해도 안전하다. 예전 기록의 `doc`은
+# `Claim` 모델이 읽을 때 문자열로 바꿔 준다 (`claim_schemas.EntityId`).
+LEGACY_CLAIMS_MIGRATION = """DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema()
+             AND table_name = 'claims' AND column_name = 'user_id') THEN
+    ALTER TABLE claims RENAME COLUMN user_id TO buyer_id;
+    ALTER TABLE claims ALTER COLUMN buyer_id TYPE text USING 'usr_' || buyer_id::text;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema()
+             AND table_name = 'claims' AND column_name = 'order_id'
+             AND data_type = 'bigint') THEN
+    ALTER TABLE claims ALTER COLUMN order_id TYPE text USING order_id::text;
+  END IF;
+END $$;"""
 
 
 def schema_sql() -> str:
@@ -75,6 +93,7 @@ def schema_sql() -> str:
         statements.append(
             f"CREATE TABLE IF NOT EXISTS {table.name} (\n" + ",\n".join(columns) + "\n);"
         )
+    statements.append(LEGACY_CLAIMS_MIGRATION)
     statements.append("CREATE INDEX IF NOT EXISTS claims_status_idx ON claims (tenant_id, status);")
     statements.append(
         "CREATE INDEX IF NOT EXISTS inquiries_status_idx ON inquiries (tenant_id, status);"
@@ -259,7 +278,7 @@ class PersistentClaimStore(ClaimStore):
                 "tenant_id": claim.tenant_id,
                 "context_id": claim.context_id,
                 "order_id": claim.order_id,
-                "user_id": claim.user_id,
+                "buyer_id": claim.buyer_id,
                 "status": claim.status,
             },
             claim.model_dump(mode="json"),
@@ -272,6 +291,30 @@ class PersistentClaimStore(ClaimStore):
     def set_status(self, claim: Claim, status: str, action: str, **detail: Any) -> Claim:
         # 호출한 쪽이 먼저 바꿔 둔 필드(메모·검수·지급 기록)도 이때 함께 저장된다
         return self._save(super().set_status(claim, status, action, **detail))
+
+
+class PersistentChangeRequestStore(ChangeRequestStore):
+    """문의와 기획개발 변경 요청의 연결을 DB에 둔다. `_put` 한 곳에서만 쓰면 된다."""
+
+    def __init__(self, repo: Repo) -> None:
+        super().__init__()
+        self._repo = repo
+        for doc in repo.load("change_requests"):
+            link = ChangeRequestLink.model_validate(doc)
+            self._links[(link.context_id, link.inquiry_id)] = link
+
+    def _put(self, link: ChangeRequestLink) -> ChangeRequestLink:
+        self._repo.upsert(
+            "change_requests",
+            {
+                "tenant_id": link.tenant_id,
+                "context_id": link.context_id,
+                "inquiry_id": link.inquiry_id,
+                "status": link.status,
+            },
+            link.model_dump(mode="json"),
+        )
+        return super()._put(link)  # DB 쓰기에 성공한 뒤에 캐시에 넣는다
 
 
 class PersistentSequenceLedger(SequenceLedger):
@@ -322,3 +365,8 @@ def build_claim_store() -> ClaimStore:
 def build_sequence_ledger() -> SequenceLedger:
     repo = get_repo()
     return PersistentSequenceLedger(repo) if repo else SequenceLedger()
+
+
+def build_change_request_store() -> ChangeRequestStore:
+    repo = get_repo()
+    return PersistentChangeRequestStore(repo) if repo else ChangeRequestStore()

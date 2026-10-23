@@ -123,7 +123,7 @@ def trace_of(s: State, pr_id: str, line: CodeLine | None = None) -> list[TraceSt
             )
         )
     if spec:
-        auto = " · 간단 요청 규칙으로 자동 확정" if spec.auto else ""
+        auto = " · 자동 확정 (사람 확정 없음)" if spec.auto else ""
         steps.append(
             TraceStep(
                 kind="기획서",

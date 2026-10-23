@@ -92,7 +92,7 @@ async def create_claim(request: AgentRequest) -> AgentResult:
     if isinstance(parsed, AgentResult):
         return parsed
     order = orders.get_order(parsed.order_id)
-    if order is None or order.user_id != parsed.user_id:
+    if order is None or order.buyer_id != parsed.buyer_id:
         return h._done(
             request, {"message": f"주문 {parsed.order_id}를 찾을 수 없다"}, outcome="not_found"
         )
@@ -116,7 +116,7 @@ async def create_claim(request: AgentRequest) -> AgentResult:
         items=wanted,
         evidence_count=parsed.evidence_count,
         unsealed=parsed.unsealed,
-        prior_claims=CLAIMS.count_for_user(parsed.user_id),
+        prior_claims=CLAIMS.count_for_buyer(parsed.buyer_id),
         now=datetime.now(UTC),
     )
 
@@ -261,13 +261,20 @@ async def process_claim_queue(request: AgentRequest) -> AgentResult:
                 "idempotency_key": f"{claim.context_id}:refund_request:claim:{claim.id}",
             }
         )
+        # 보류되면 담당자가 이 요약을 본다 (safety가 앞 200자를 보류 기록에 담는다). 고객 이름·메모
+        # 같은 외부 입력은 넣지 않고 코드가 아는 사실(금액·ID·유형·사유 코드)만 쓴다.
+        summary = (
+            f"환불 {claim.expected_refund:,}원 · 클레임 {claim.id} · 주문 {claim.order_id}"
+            f" · {claim.type}/{claim.reason}"
+        )
         decision = await execute(
             "refund_request",
             {
                 "claim_id": claim.id,
                 "order_id": claim.order_id,
-                "buyer_id": f"usr_{claim.user_id}",
+                "buyer_id": claim.buyer_id,
                 "refund_amount": claim.expected_refund,
+                "summary": summary,
             },
             meta,
             Evidence(

@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -45,12 +45,13 @@ DEPT_NAME: dict[str, str] = {
     "human": "사람",
 }
 
-ReqState = Literal["접수", "기획 중", "작업 중", "완료", "중복 연결"]
+ReqState = Literal["접수", "기획 중", "작업 중", "완료", "중복 연결", "기각"]
 TaskState = Literal["진행 중", "PR 검수", "머지 대기", "완료", "C 보류"]
 Review = Literal["통과", "불일치"]
 ActivityKind = Literal["A2A", "이벤트", "execute", "API", "사람"]
 Grade = Literal["A", "B", "C", "read"]
 BlockKind = Literal["h2", "p", "todo", "ref"]
+AutoWait = Literal["답 대기", "교차검증 대기", "사람 확인"]
 
 
 class DomainModel(BaseModel):
@@ -78,6 +79,9 @@ class Request(DomainModel):
     spec: str | None = None
     duplicate_of: str | None = None
     auto: AutoCheck | None = None  # 간단 요청 판정 결과 (create_ticket으로 들어온 것만)
+    # 요청 부서 쪽 참조 ID (예: 고객지원 문의 inq_12). 저장만 하고 판정(중복·간단 요청)에 안 쓴다
+    source_ref: str | None = None
+    evidence_ids: list[str] = Field(default_factory=list)  # 요청 부서가 보낸 근거 ID
 
 
 class ParaWarn(DomainModel):
@@ -91,6 +95,25 @@ class Para(DomainModel):
     text: str
     warn: ParaWarn | None = None  # 인사 ② check_plan 결과
     incident: str | None = None  # 장애 표시 (link_incident)
+    paths: list[str] = Field(default_factory=list)  # 바꿀 파일 경로 (비면 역추적 규칙으로 정함)
+
+
+class AutoReview(DomainModel):
+    """자동 확정·자동 머지를 하지 않고 멈춘 이유 (대기열 항목).
+
+    - `state`: 답 대기(질문 남음) · 교차검증 대기(#171 규칙에 걸림, safety 보류 포함) ·
+      사람 확인(되돌릴 수 없는 영역)
+    - `rules`: 걸린 #171 규칙 키. `params`: 판정에 쓴 execute params (코드 계산 값)
+    - `gate_status`·`review_id`: safety가 보류·거절했을 때 그 결과 (planning 사전 판정은 통과)
+    판단은 기존 사람 버튼(`confirmSpec`·`mergePr`)으로 한다. 실제 교차검증자 연결은 safety 협의 뒤.
+    """
+
+    state: AutoWait
+    rules: list[str] = Field(default_factory=list)
+    params: dict[str, Any] = Field(default_factory=dict)
+    at: UtcDatetime
+    gate_status: str | None = None
+    review_id: str | None = None
 
 
 class Spec(DomainModel):
@@ -104,7 +127,8 @@ class Spec(DomainModel):
     question: str | None = None
     basis: list[str] = Field(default_factory=list)
     human_sentences: int = 0
-    auto: bool = False  # 간단 요청 규칙으로 사람 확정 없이 처리됨
+    auto: bool = False  # 간단 요청 규칙·자동 확정 규칙으로 사람 확정 없이 처리됨
+    auto_review: AutoReview | None = None  # 자동 확정을 멈춘 이유 (확정되면 비움)
 
 
 class Task(DomainModel):
@@ -136,7 +160,8 @@ class PR(DomainModel):
     merged: bool
     merged_at: UtcDatetime | None = None
     changed_paths: list[str] = Field(default_factory=list)
-    auto: bool = False  # 간단 요청 규칙으로 자동 머지됨
+    auto: bool = False  # 간단 요청 규칙·자동 머지 규칙으로 자동 머지됨
+    auto_review: AutoReview | None = None  # 자동 머지를 멈춘 이유 (머지되면 비움)
 
 
 class Message(DomainModel):

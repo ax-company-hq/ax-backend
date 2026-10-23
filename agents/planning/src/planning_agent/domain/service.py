@@ -28,8 +28,20 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from ax_agent_template import config as template_config
 from ax_agent_template import execute as gate_module
 from ax_contracts.schemas import TENANT_ID_DEFAULT, Evidence, ExecuteDecision, RequestMeta
+from ax_contracts.schemas.record import RecordCase, RecordKind
+from planning_agent.domain.autocheck import (
+    WAIT_CROSS_CHECK,
+    Check,
+    planned_area,
+    planned_paths,
+    pr_check,
+    pr_wait_state,
+    spec_check,
+    spec_wait_state,
+)
 from planning_agent.domain.clock import Clock, StepClock
 from planning_agent.domain.docs import gather_blocks, next_block_id
+from planning_agent.domain.handover import HandoverCheck, Item, check_handover, in_progress
 from planning_agent.domain.models import (
     DEPT_NAME,
     PR,
@@ -37,6 +49,7 @@ from planning_agent.domain.models import (
     AutoLog,
     AutoPolicy,
     AutoProposal,
+    AutoReview,
     AutoRun,
     Decision,
     Doc,
@@ -237,6 +250,23 @@ class RequestParams(_Params):
     request: str
 
 
+class RejectDraftParams(_Params):
+    """개선 초안 기각. 이유·검토한 대안이 비면 hr에 보내지 않고 `MISSING_DECISION_REASON`."""
+
+    request: str
+    decision_reason: str = ""
+    alternatives_considered: list[str] = Field(default_factory=list)
+
+
+class RejectDecisionParams(_Params):
+    """기각한 안을 결정으로 남긴다 (예: 기획서 검토 중 버린 안)."""
+
+    spec: str
+    text: str
+    decision_reason: str = ""
+    alternatives_considered: list[str] = Field(default_factory=list)
+
+
 class EmptyParams(_Params):
     pass
 
@@ -292,11 +322,14 @@ ACTIONS: dict[str, tuple[str, type[_Params]]] = {
     "send": ("_send", SendParams),
     "mark_read": ("_mark_read", ToParams),
     "confirm_spec": ("_confirm_spec", SpecParams),
+    "check_spec": ("_check_spec", SpecParams),
     "answer_question": ("_answer_question", AnswerParams),
     "generate_prs": ("_generate_prs", SpecParams),
     "review_pr": ("_review_pr", PrParams),
     "merge_pr": ("_merge_pr", PrParams),
     "accept_draft": ("_accept_draft", RequestParams),
+    "reject_draft": ("_reject_draft", RejectDraftParams),
+    "reject_decision": ("_reject_decision", RejectDecisionParams),
     "approve_promotion": ("_approve_promotion", EmptyParams),
     "reject_promotion": ("_reject_promotion", EmptyParams),
     "post_message": ("_post_message", PostMessageParams),
@@ -502,6 +535,24 @@ class PlanningService:
         digits = re.sub(r"\D", "", ref)
         return next((p for p in s.prs if digits and p.number == int(digits)), None)
 
+    def _hold(
+        self,
+        target: Spec | PR,
+        state: str,
+        check: Check,
+        decision: ExecuteDecision | None = None,
+    ) -> AutoReview:
+        """자동 확정·자동 머지를 멈추고 대기열에 올린다 (판단은 기존 사람 버튼)."""
+        target.auto_review = AutoReview(
+            state=state,
+            rules=list(check.rules),
+            params=dict(check.params),
+            at=self.clock(),
+            gate_status=decision.status if decision else None,
+            review_id=decision.review_id if decision else None,
+        )
+        return target.auto_review
+
     # ---- 화면 액션 진입점
 
     async def dispatch(self, action: dict) -> ActionResult:
@@ -528,6 +579,9 @@ class PlanningService:
     async def confirm_spec(self, spec: str) -> ActionResult:
         return await self.dispatch({"type": "confirm_spec", "spec": spec})
 
+    async def check_spec(self, spec: str) -> ActionResult:
+        return await self.dispatch({"type": "check_spec", "spec": spec})
+
     async def answer_question(self, spec: str, text: str) -> ActionResult:
         return await self.dispatch({"type": "answer_question", "spec": spec, "text": text})
 
@@ -542,6 +596,38 @@ class PlanningService:
 
     async def accept_draft(self, request: str) -> ActionResult:
         return await self.dispatch({"type": "accept_draft", "request": request})
+
+    async def reject_draft(
+        self,
+        request: str,
+        decision_reason: str = "",
+        alternatives_considered: list[str] | None = None,
+    ) -> ActionResult:
+        return await self.dispatch(
+            {
+                "type": "reject_draft",
+                "request": request,
+                "decision_reason": decision_reason,
+                "alternatives_considered": alternatives_considered or [],
+            }
+        )
+
+    async def reject_decision(
+        self,
+        spec: str,
+        text: str,
+        decision_reason: str = "",
+        alternatives_considered: list[str] | None = None,
+    ) -> ActionResult:
+        return await self.dispatch(
+            {
+                "type": "reject_decision",
+                "spec": spec,
+                "text": text,
+                "decision_reason": decision_reason,
+                "alternatives_considered": alternatives_considered or [],
+            }
+        )
 
     async def approve_promotion(self) -> ActionResult:
         return await self.dispatch({"type": "approve_promotion"})
@@ -742,11 +828,25 @@ class PlanningService:
         return ActionResult(outcome=None if ok else "rejected_by_review", output={"approved": ok})
 
     async def _register_ticket(
-        self, s: State, frm: str, title: str, ctx_req: str, t: datetime, seq: int
+        self,
+        s: State,
+        frm: str,
+        title: str,
+        ctx_req: str,
+        t: datetime,
+        seq: int,
+        *,
+        evidence: str | None = None,
+        source_ref: str | None = None,
+        evidence_ids: list[str] | None = None,
+        req_id: str | None = None,
     ) -> ActionResult:
-        """create_ticket: 같은 제목이면 중복 연결, 아니면 등록 후 간단 요청 판정."""
+        """create_ticket: 같은 제목이면 중복 연결, 아니면 등록 후 간단 요청 판정.
+
+        `source_ref`·`evidence_ids`는 저장만 한다 (중복·간단 요청 판정에 쓰지 않는다).
+        """
         dup_id = find_duplicate(s.requests, title)
-        req_id = f"REQ-{20 + seq}"
+        req_id = req_id or f"REQ-{20 + seq}"
         auto = None if dup_id else check_simple(title, s.auto_policy)
         text = (
             f'"{title}" → 같은 요청 {dup_id}에 연결 (linked_duplicate)'
@@ -763,10 +863,12 @@ class PlanningService:
             from_=frm,
             via="create_ticket",
             title=title,
-            evidence=f"{DEPT_NAME[frm]} 시뮬레이터에서 보냄",
+            evidence=evidence or f"{DEPT_NAME[frm]} 시뮬레이터에서 보냄",
             state="중복 연결" if dup_id else "접수",
             duplicate_of=dup_id,
             auto=auto,
+            source_ref=source_ref,
+            evidence_ids=list(evidence_ids or []),
         )
         s.requests.append(req)
         s.activity.append(
@@ -863,6 +965,15 @@ class PlanningService:
             )
         )
         step("planning", "planning", "write_spec", "A2A", spec_text, "A")
+        # 자동 확정도 confirm_spec 관문을 거친다 (#171 규칙 키, 값은 기획서에서 코드로 계산)
+        spec_rules = spec_check(s.specs[-1])
+        await self._execute(
+            "confirm_spec",
+            ctx,
+            spec_id,
+            f"{spec_id} 간단 요청 규칙으로 자동 확정",
+            {**spec_rules.params, "auto": True},
+        )
 
         await self._execute("split_tasks", ctx, task_id, f"R1 → 작업 {task_id}", {"spec": spec_id})
         s.tasks.append(
@@ -908,7 +1019,30 @@ class PlanningService:
         step("planning", "planning", "review_pr", "A2A", review_text, "A")
 
         merge_text = f"{pr_id} 간단 요청 규칙·검수·CI 통과 → 자동 머지 허용"
-        await self._execute("merge_pr", ctx, pr_id, merge_text, {"auto": True})
+        merge_rules = pr_check(s, pr)
+        try:
+            await self._execute(
+                "merge_pr", ctx, pr_id, merge_text, {**merge_rules.params, "auto": True}
+            )
+        except GateRefused as exc:
+            # safety가 보류·거절하면 PR은 열어 두고 교차검증 대기로 둔다 (판단은 사람 머지 버튼)
+            self._hold(pr, WAIT_CROSS_CHECK, merge_rules, exc.decision)
+            for x in s.tasks:
+                if x.id == task_id:
+                    x.state = "머지 대기"
+            for r in s.requests:
+                if r.id == req.id:
+                    r.spec = spec_id
+                    r.state = "작업 중"
+            step(
+                "planning",
+                req.from_,
+                "get_request_status",
+                "A2A",
+                f"{req.id} {pr_id} 자동 머지 보류 ({exc.decision.status}) → 교차검증 대기",
+                "read",
+            )
+            return
         step("planning", "safety", "execute(merge_pr)", "execute", merge_text, "B")
         merged_act = step(
             "planning", "shop", "github_merge_pull", "API", f"{pr_id} 자동 머지 → dev 배포"
@@ -1211,6 +1345,157 @@ class PlanningService:
         await self._apply(log)
         return approved, reason, related
 
+    async def list_in_progress(
+        self, *, context_id: str, requester: str, owner_id: str, area: str | None
+    ) -> tuple[list[Item], datetime]:
+        """담당자·영역의 진행 중 항목과 조회 시각 (read). 활동 로그만 남긴다."""
+        items = in_progress(self.state, owner_id, area)
+        t = self.clock()
+
+        async def log(s: State) -> None:
+            where = owner_id + (f" · {area}" if area else "")
+            ids = ", ".join(i.item_id for i in items) or "없음"
+            s.activity.append(
+                self._act(
+                    t,
+                    context_id,
+                    requester,
+                    "planning",
+                    "list_in_progress",
+                    "A2A",
+                    f"진행 중 항목 조회 ({where})",
+                    "read",
+                )
+            )
+            s.activity.append(
+                self._act(
+                    t,
+                    context_id,
+                    "planning",
+                    requester,
+                    "list_in_progress",
+                    "A2A",
+                    f"진행 중 항목 {len(items)}건 회신: {ids}",
+                    "read",
+                )
+            )
+
+        await self._apply(log)
+        return items, t
+
+    async def verify_handover(
+        self,
+        *,
+        context_id: str,
+        requester: str,
+        handover_id: str,
+        owner_id: str,
+        area: str | None,
+        handover_item_ids: list[str],
+    ) -> tuple[HandoverCheck, datetime]:
+        """hr confirm_handover(B)의 교차검증과 확인 시각 (read). 빠진 진행 중 항목만 본다."""
+        check = check_handover(self.state, owner_id, area, handover_item_ids)
+        t = self.clock()
+
+        async def log(s: State) -> None:
+            s.activity.append(
+                self._act(
+                    t,
+                    context_id,
+                    requester,
+                    "planning",
+                    "verify_handover",
+                    "A2A",
+                    f"인수인계 {handover_id} confirm_handover(B) 교차검증 요청",
+                    "read",
+                )
+            )
+            if check.missing:
+                ids = ", ".join(i.item_id for i in check.missing)
+                reply = f"거절 · 인계 목록에 빠진 진행 중 항목 {ids} (missing_items)"
+            else:
+                n = len(check.current)
+                reply = f"승인 · 진행 중 항목 {n}건 모두 인계 목록에 있음 (complete)"
+            if check.stale_item_ids:
+                reply += f" · 이미 끝난 항목 {', '.join(check.stale_item_ids)}"
+            s.activity.append(
+                self._act(
+                    t, context_id, "planning", requester, "verify_handover", "A2A", reply, "read"
+                )
+            )
+
+        await self._apply(log)
+        return check, t
+
+    async def create_ticket(
+        self,
+        *,
+        context_id: str,
+        requester: str,
+        title: str,
+        evidence: str,
+        source_ref: str | None,
+        evidence_ids: list[str],
+        idempotency_key: str,
+    ) -> ActionResult:
+        """변경 요청 접수 (A, #174). 같은 요청이 있으면 묶고(linked_duplicate), 없으면 새 REQ와
+        `ctx_req_`를 발급한다(created). 같은 idempotency_key의 두 번째 요청은 이전 결과를 돌려준다.
+
+        - 중복 판정은 기존 도메인 규칙(`find_duplicate`, 같은 제목)만 쓴다. `source_ref`·
+          `evidence_ids`는 저장만 한다.
+        - 묶이면 원래 요청의 `context_id`를 돌려준다 (요청 부서는 그 사건에 문의를 잇는다).
+        - 결과 통지는 같은 `context_id`에 `path`를 비운 새 요청으로 보낸다(합의). 요청 부서의 수신
+          skill이 아직 없어 지금은 활동 기록(get_request_status)까지만 남긴다.
+        - 요청을 보낸 A2A `context_id`는 활동 근거로만 남기고 사건 ID로 쓰지 않는다.
+        """
+        cached = self._idempotent.get(idempotency_key)
+        if cached is not None:
+            return ActionResult(changed=False, outcome=cached.outcome, output=dict(cached.output))
+
+        async def run(s: State) -> ActionResult:
+            seq = s.seq + 1
+            s.seq = seq
+            t = self.clock()
+            dup_id = find_duplicate(s.requests, title)
+            original = next((r for r in s.requests if r.id == dup_id), None) if dup_id else None
+            used_ctx = {r.context_id for r in s.requests}
+            n = 20 + seq
+            while f"ctx_req_{n:04d}" in used_ctx:
+                n += 1
+            ctx_req = original.context_id if original else f"ctx_req_{n:04d}"
+            used_ids = {r.id for r in s.requests}
+            m = 20 + seq
+            while f"REQ-{m}" in used_ids:
+                m += 1
+            frm = requester if requester in DEPT_NAME else "orchestrator"
+            result = await self._register_ticket(
+                s,
+                frm,
+                title,
+                ctx_req,
+                t,
+                seq,
+                evidence=evidence,
+                source_ref=source_ref,
+                evidence_ids=evidence_ids,
+                req_id=f"REQ-{m}",
+            )
+            req_id = result.output["request_id"]
+            return ActionResult(
+                outcome="linked_duplicate" if dup_id else "created",
+                output={
+                    "request_id": req_id,
+                    "context_id": ctx_req,
+                    "duplicate_of": dup_id,
+                    "auto": result.output.get("auto"),
+                    "via_context_id": context_id,
+                },
+            )
+
+        result = await self._apply(run)
+        self._idempotent[idempotency_key] = result
+        return result
+
     async def link_incident(
         self,
         *,
@@ -1329,11 +1614,64 @@ class PlanningService:
         s.activity.append(
             self._act(self.clock(), ctx, "planning", "hr", "record_case", "A2A", case, "A")
         )
+        # 질문이 닫혔으면 자동 확정 규칙을 다시 본다 (통과하면 확정·작업 분할, 아니면 대기열)
+        await self._try_auto_confirm(s, sp)
 
     async def _confirm_spec(self, s: State, spec: str) -> None:
+        """사람 확정 버튼 (교차검증 대기·답 대기 건의 판단도 여기서 한다)."""
         sp = next((x for x in s.specs if x.id == spec), None)
         if sp is None or sp.status == "확정":
             return
+        await self._do_confirm(s, sp, spec_check(sp), auto=False)
+
+    async def _check_spec(self, s: State, spec: str) -> ActionResult | None:
+        """자동 확정 규칙을 다시 본다 (예: 인사 경고가 풀린 뒤). 통과하면 확정, 아니면 대기열."""
+        sp = next((x for x in s.specs if x.id == spec), None)
+        if sp is None or sp.status == "확정":
+            return None
+        confirmed = await self._try_auto_confirm(s, sp)
+        review = sp.auto_review
+        return ActionResult(
+            outcome="auto_confirmed" if confirmed else "waiting",
+            output={"spec": sp.id, "state": None if confirmed else review and review.state},
+        )
+
+    async def _try_auto_confirm(self, s: State, sp: Spec) -> bool:
+        """질문 0·경고 0·근거 1 이상·되돌릴 수 없음 0이면 자동 확정하고 작업 분할로 간다.
+
+        아니면 확정하지 않고 "답 대기"(질문 남음) 또는 "교차검증 대기"로 둔다.
+        safety가 confirm_spec을 보류·거절해도 "교차검증 대기" (앞선 단계는 그대로 남는다)."""
+        if sp.status == "확정":
+            return False
+        req = self._request_of_spec(s, sp)
+        ctx = req.context_id if req else f"spec:{sp.id}"
+        check = spec_check(sp)
+        if check.ok:
+            try:
+                await self._do_confirm(s, sp, check, auto=True)
+                return True
+            except GateRefused as exc:
+                if exc.action != "confirm_spec":
+                    raise
+                hold = self._hold(sp, WAIT_CROSS_CHECK, check, exc.decision)
+        else:
+            hold = self._hold(sp, spec_wait_state(check), check)
+        why = ", ".join(hold.rules) or f"safety {hold.gate_status}"
+        s.activity.append(
+            self._act(
+                hold.at,
+                ctx,
+                "planning",
+                "planning",
+                "auto_review",
+                "execute",
+                f"{sp.id} 자동 확정 안 함 → {hold.state} ({why})",
+                "A",
+            )
+        )
+        return False
+
+    async def _do_confirm(self, s: State, sp: Spec, check: Check, *, auto: bool) -> None:
         req = self._request_of_spec(s, sp)
         ctx = req.context_id if req else f"spec:{sp.id}"
         reqs = [p for p in sp.paras if p.kind == "req"]
@@ -1349,33 +1687,117 @@ class PlanningService:
             )
             for i, p in enumerate(reqs)
         ]
-        await self._execute("confirm_spec", ctx, sp.id, f"{sp.id} 확정 (팀장 {TEAM_LEAD})")
+        # FR-SPEC-006: 인사 경고(warn)가 남은 문단을 둔 채 확정하면 "warn 무시 진행"을 감사 기록으로
+        # 남긴다 (execute params·record_case·활동 세 곳). 경고 수는 #171 `warnings`로도 보낸다.
+        warn_ignored = [
+            {"para": p.id, "card": p.warn.card, "text": p.warn.text} for p in sp.paras if p.warn
+        ]
+        audit: str | None = None
+        if warn_ignored:
+            where = ", ".join(f"{w['para']}({w['card']})" for w in warn_ignored)
+            audit = f"warn 무시 진행 · {sp.id} {where} 경고를 둔 채 확정 (팀장 {TEAM_LEAD})"
+        c = check.params
+        rule_text = (
+            f"질문 {c['open_questions']}·경고 {c['warnings']}·근거 {c['basis_count']}"
+            f"·되돌릴 수 없음 {c['irreversible_count']}"
+        )
+        if auto:
+            confirm_text = f"{sp.id} 자동 확정 ({rule_text} → confirm_spec 규칙 통과, 사후 감사)"
+        else:
+            confirm_text = f"{sp.id} 확정 (팀장 {TEAM_LEAD})" + (f" · {audit}" if audit else "")
+        params: dict[str, Any] = {**check.params, "auto": auto}
+        if warn_ignored:
+            params["warn_ignored"] = warn_ignored
+        await self._execute("confirm_spec", ctx, sp.id, confirm_text, params)
         split = f"요구사항 {len(reqs)}개 → 작업 {', '.join(t.id for t in tasks)}"
         await self._execute("split_tasks", ctx, sp.id, split, {"tasks": [t.id for t in tasks]})
-        case = f"① kind spec_confirmed · {sp.id}"
-        await self._execute("record_case", ctx, f"{sp.id}:spec_confirmed", case)
+        case = f"① kind spec_confirmed · {sp.id}" + (" (자동 확정)" if auto else "")
+        if auto:
+            summary = f"{sp.id} {sp.title} 자동 확정 (사후 감사 대상)"
+        else:
+            summary = f"{sp.id} {sp.title} 확정" + (f" ({audit})" if audit else "")
+        record = RecordCase(
+            context_id=ctx,
+            tenant_id=self.tenant_id,
+            kind=RecordKind.SPEC_CONFIRMED,
+            summary=summary,
+            decision_reason=f"confirm_spec 규칙 통과: {rule_text}" if auto else None,
+            source_refs=[f"spec:{sp.id}"]
+            + [f"para:{sp.id}:{w['para']}" for w in warn_ignored]
+            + [f"card:{w['card']}" for w in warn_ignored],
+            author=AGENT_NAME,
+        )
+        case_params: dict[str, Any] = {"record_case": record.model_dump(mode="json")}
+        if warn_ignored:
+            case_params["warn_ignored"] = warn_ignored
+        await self._execute(
+            "record_case", ctx, f"{sp.id}:spec_confirmed", case, case_params, record.source_refs
+        )
         sp.status = "확정"
+        sp.auto_review = None
+        if auto:
+            sp.auto = True
         s.tasks.extend(tasks)
         for r in s.requests:
             if r.spec == sp.id:
                 r.state = "작업 중"
-        s.activity.append(
-            self._act(
-                self.clock(),
-                ctx,
-                "human",
-                "planning",
-                "기획서 확정",
-                "사람",
-                f"팀장 {TEAM_LEAD}이 {sp.id} 확정 (사람 클릭 1)",
+        if auto:
+            s.activity.append(
+                self._act(
+                    self.clock(),
+                    ctx,
+                    "planning",
+                    "planning",
+                    "audit.auto_confirmed",
+                    "execute",
+                    confirm_text,
+                    "A",
+                )
             )
-        )
+        else:
+            s.activity.append(
+                self._act(
+                    self.clock(),
+                    ctx,
+                    "human",
+                    "planning",
+                    "기획서 확정",
+                    "사람",
+                    f"팀장 {TEAM_LEAD}이 {sp.id} 확정 (사람 클릭 1)",
+                )
+            )
+        if audit:
+            s.activity.append(
+                self._act(
+                    self.clock(),
+                    ctx,
+                    "planning",
+                    "planning",
+                    "audit.warn_ignored",
+                    "execute",
+                    audit,
+                    "A",
+                )
+            )
         s.activity.append(
             self._act(self.clock(), ctx, "planning", "planning", "split_tasks", "A2A", split, "A")
         )
         s.activity.append(
             self._act(self.clock(), ctx, "planning", "hr", "record_case", "A2A", case, "A")
         )
+        if audit:
+            s.activity.append(
+                self._act(
+                    self.clock(),
+                    ctx,
+                    "planning",
+                    "hr",
+                    "record_case",
+                    "A2A",
+                    f"{case} · {audit}",
+                    "A",
+                )
+            )
         if req:
             s.activity.append(
                 self._act(
@@ -1398,11 +1820,19 @@ class PlanningService:
         req = self._request_of_spec(s, sp) if sp else None
         ctx = req.context_id if req else f"spec:{spec}"
         n = len(s.prs) + 30
+        reqs = [p for p in sp.paras if p.kind == "req"] if sp else []
+        created: list[PR] = []
         for i, t in enumerate(todo):
             number = n + i
             review = "불일치" if i == 1 else "통과"
-            paths = "shop-api/cart/" if i == 0 else "shop-web/checkout/"
+            paths = planned_area(i)
             lines, files = (86, 3) if i == 0 else (41, 2)
+            para = next((p for p in reqs if p.id == t.para), None)
+            changed = (
+                planned_paths(sp, para, reqs.index(para))
+                if sp and para
+                else changed_paths_for(t.spec, t.para, paths)
+            )
             pr = PR(
                 id=f"PR #{number}",
                 number=number,
@@ -1412,7 +1842,7 @@ class PlanningService:
                 reviews=[review],
                 gate=PrGate(result="통과", lines=lines, files=files, paths=paths),
                 merged=False,
-                changed_paths=changed_paths_for(t.spec, t.para, paths),
+                changed_paths=changed,
             )
             gen_text = f"{pr.id} 변경 {lines}줄·{files}파일·{paths} → 코드 규칙 통과"
             await self._execute(
@@ -1425,6 +1855,7 @@ class PlanningService:
             review_text = f"{pr.id} 검수 {review}{' (완료 기준 C2)' if review == '불일치' else ''}"
             await self._execute("review_pr", ctx, f"{pr.id}:r1", review_text)
             s.prs.append(pr)
+            created.append(pr)
             t.state = "머지 대기" if review == "통과" else "PR 검수"
             s.activity.append(
                 self._act(
@@ -1446,7 +1877,7 @@ class PlanningService:
                     "shop",
                     "github_create_pull",
                     "API",
-                    f"{pr.id} 생성 ({pr.branch}, 라벨 generated-pr, 자동 머지 제외)",
+                    f"{pr.id} 생성 ({pr.branch}, 라벨 generated-pr)",
                 )
             )
             s.activity.append(
@@ -1455,15 +1886,16 @@ class PlanningService:
                 )
             )
         s.first_pr_minutes.append(52)
+        # 검수 통과 PR은 merge_pr 규칙(#171)에 안 걸리면 자동 머지, 걸리면 대기열
+        for pr in created:
+            await self._try_auto_merge(s, pr)
 
     async def _review_pr(self, s: State, pr: str | int) -> None:
         p = self._find_pr(s, pr)
         if p is None:
             return
         task = next((t for t in s.tasks if t.id == p.task), None)
-        sp = next((x for x in s.specs if task and x.id == task.spec), None)
-        req = self._request_of_spec(s, sp) if sp else None
-        ctx = req.context_id if req else f"pr:{p.number}"
+        ctx = self._ctx_of_pr(s, p)
         text = f"{p.id} 수정 커밋 후 재검수 통과"
         await self._execute("review_pr", ctx, f"{p.id}:r{len(p.reviews) + 1}", text)
         p.reviews.append("통과")
@@ -1472,21 +1904,92 @@ class PlanningService:
         s.activity.append(
             self._act(self.clock(), ctx, "planning", "planning", "review_pr", "A2A", text, "A")
         )
+        await self._try_auto_merge(s, p)
 
     async def _merge_pr(self, s: State, pr: str | int) -> None:
+        """사람 머지 버튼 (교차검증 대기·사람 확인 건의 판단도 여기서 한다)."""
         p = self._find_pr(s, pr)
         if p is None or p.merged:
             return
+        await self._do_merge(s, p, pr_check(s, p), auto=False)
+
+    async def _try_auto_merge(self, s: State, p: PR) -> bool:
+        """마지막 검수 통과 + merge_pr 규칙에 안 걸리면 자동 머지.
+
+        걸리면 "교차검증 대기", 되돌릴 수 없는 영역이면 "사람 확인"으로 두고 머지하지 않는다.
+        safety가 merge_pr을 보류·거절해도 "교차검증 대기" (PR 생성·검수는 그대로 남는다)."""
+        if p.merged or not p.reviews or p.reviews[-1] != "통과":
+            return False
+        check = pr_check(s, p)
+        if check.ok:
+            try:
+                await self._do_merge(s, p, check, auto=True)
+                return True
+            except GateRefused as exc:
+                if exc.action != "merge_pr":
+                    raise
+                hold = self._hold(p, WAIT_CROSS_CHECK, check, exc.decision)
+        else:
+            hold = self._hold(p, pr_wait_state(check), check)
+        why = ", ".join(hold.rules) or f"safety {hold.gate_status}"
+        s.activity.append(
+            self._act(
+                hold.at,
+                self._ctx_of_pr(s, p),
+                "planning",
+                "planning",
+                "auto_review",
+                "execute",
+                f"{p.id} 자동 머지 안 함 → {hold.state} ({why})",
+                "B",
+            )
+        )
+        return False
+
+    def _ctx_of_pr(self, s: State, p: PR) -> str:
+        task = next((t for t in s.tasks if t.id == p.task), None)
+        sp = next((x for x in s.specs if task and x.id == task.spec), None)
+        req = self._request_of_spec(s, sp) if sp else None
+        return req.context_id if req else f"pr:{p.number}"
+
+    async def _do_merge(self, s: State, p: PR, check: Check, *, auto: bool) -> None:
         task = next((t for t in s.tasks if t.id == p.task), None)
         spec_id = task.spec if task else None
         sp = next((x for x in s.specs if x.id == spec_id), None)
         req = self._request_of_spec(s, sp) if sp else None
         ctx = req.context_id if req else f"pr:{p.number}"
-        await self._execute(
-            "merge_pr", ctx, p.id, f"팀장 {TEAM_LEAD}이 {p.id} 머지", {"auto": False}
+        c = check.params
+        rule_text = (
+            f"{c['changed_lines']}줄·{c['changed_files']}파일·검수 불일치 "
+            f"{c['review_mismatch_count']}·장애 연결 {c['linked_incident_count']}"
+            f"·되돌릴 수 없음 {c['irreversible_count']}"
         )
-        case = f"① kind pr_merged · {p.id}"
-        await self._execute("record_case", ctx, f"{p.id}:pr_merged", case)
+        if auto:
+            merge_text = f"{p.id} 자동 머지 ({rule_text} → merge_pr 규칙 통과, 사후 감사)"
+        else:
+            merge_text = f"팀장 {TEAM_LEAD}이 {p.id} 머지"
+        await self._execute("merge_pr", ctx, p.id, merge_text, {**check.params, "auto": auto})
+        case = f"① kind pr_merged · {p.id}" + (" (자동 머지)" if auto else "")
+        if auto:
+            record = RecordCase(
+                context_id=ctx,
+                tenant_id=self.tenant_id,
+                kind=RecordKind.PR_MERGED,
+                summary=f"{p.id} {p.title} 자동 머지 (사후 감사 대상)",
+                decision_reason=f"merge_pr 규칙 통과: {rule_text}",
+                source_refs=[f"pr:{p.number}"],
+                author=AGENT_NAME,
+            )
+            await self._execute(
+                "record_case",
+                ctx,
+                f"{p.id}:pr_merged",
+                case,
+                {"record_case": record.model_dump(mode="json")},
+                record.source_refs,
+            )
+        else:
+            await self._execute("record_case", ctx, f"{p.id}:pr_merged", case)
         if task:
             task.state = "완료"
         all_done = bool(spec_id) and all(t.state == "완료" for t in s.tasks if t.spec == spec_id)
@@ -1502,17 +2005,37 @@ class PlanningService:
         t = self.clock()
         p.merged = True
         p.merged_at = t
-        s.activity.append(
-            self._act(
-                t,
-                ctx,
-                "human",
-                "planning",
-                "PR 머지",
-                "사람",
-                f"팀장 {TEAM_LEAD}이 {p.id} 머지 (사람 클릭)",
+        p.auto_review = None
+        if auto:
+            p.auto = True
+            s.activity.append(
+                self._act(
+                    t, ctx, "planning", "safety", "execute(merge_pr)", "execute", merge_text, "B"
+                )
             )
-        )
+            s.activity.append(
+                self._act(
+                    self.clock(),
+                    ctx,
+                    "planning",
+                    "shop",
+                    "github_merge_pull",
+                    "API",
+                    f"{p.id} 자동 머지 → dev 배포",
+                )
+            )
+        else:
+            s.activity.append(
+                self._act(
+                    t,
+                    ctx,
+                    "human",
+                    "planning",
+                    "PR 머지",
+                    "사람",
+                    f"팀장 {TEAM_LEAD}이 {p.id} 머지 (사람 클릭)",
+                )
+            )
         s.activity.append(
             self._act(self.clock(), ctx, "planning", "hr", "record_case", "A2A", case, "A")
         )
@@ -1565,6 +2088,164 @@ class PlanningService:
                 "A",
             )
         )
+
+    # ---- 기각 (hr record_case kind decision_rejected)
+
+    def _rejection_record(
+        self,
+        ctx: str,
+        summary: str,
+        decision_reason: str,
+        alternatives_considered: list[str],
+        source_refs: list[str],
+    ) -> RecordCase:
+        """`decision_rejected` 기록을 만든다. 이유·검토한 대안이 없으면 보내지 않고 오류.
+
+        hr `check_plan`이 "과거에 기각된 안"을 판정하는 재료라서 둘 다 필수로 둔다.
+        """
+        reason = decision_reason.strip()
+        alternatives = [a.strip() for a in alternatives_considered if a.strip()]
+        if not reason or not alternatives:
+            raise ActionError(
+                "MISSING_DECISION_REASON",
+                "decision_rejected에는 decision_reason과 alternatives_considered가 필요하다"
+                " (hr에 보내지 않았다)",
+            )
+        return RecordCase(
+            context_id=ctx,
+            tenant_id=self.tenant_id,
+            kind=RecordKind.DECISION_REJECTED,
+            summary=summary,
+            decision_reason=reason,
+            alternatives_considered=alternatives,
+            source_refs=source_refs,
+            author=AGENT_NAME,
+        )
+
+    async def _send_rejection(self, s: State, record: RecordCase, target: str) -> None:
+        """hr `record_case`(kind decision_rejected)를 execute로 보내고 활동에 남긴다."""
+        case = f"① kind decision_rejected · {target}"
+        await self._execute(
+            "record_case",
+            record.context_id,
+            f"{target}:decision_rejected",
+            case,
+            {"record_case": record.model_dump(mode="json")},
+            record.source_refs,
+        )
+        s.activity.append(
+            self._act(
+                self.clock(),
+                record.context_id,
+                "planning",
+                "hr",
+                "record_case",
+                "A2A",
+                f"{case} (이유: {record.decision_reason})",
+                "A",
+            )
+        )
+
+    async def _reject_draft(
+        self,
+        s: State,
+        request: str,
+        decision_reason: str,
+        alternatives_considered: list[str],
+    ) -> ActionResult | None:
+        """개선 초안 기각 → hr record_case(decision_rejected). 이유·대안이 없으면 하지 않는다."""
+        r = next((x for x in s.requests if x.id == request), None)
+        record = self._rejection_record(
+            r.context_id if r else f"req:{request}",
+            f"[기각한 안] {r.title if r else request}",
+            decision_reason,
+            alternatives_considered,
+            [f"req:{request}"],
+        )
+        if r is None or r.state != "접수":
+            return None
+        reason = record.decision_reason or ""
+        text = f"{r.id} 기각 (이유: {reason})"
+        await self._execute(
+            "review_ticket_draft", r.context_id, r.id, text, {"decision": "rejected"}
+        )
+        await self._send_rejection(s, record, r.id)
+        dec_id = f"D-{len(s.decisions)}"
+        s.decisions.append(
+            Decision(
+                id=dec_id,
+                spec=r.spec or "-",
+                text=f"[기각한 안] {r.title}",
+                reason=reason,
+                alternatives=", ".join(record.alternatives_considered),
+                from_=f"개선 초안 {r.id}",
+                sent_to_hr=True,
+            )
+        )
+        r.state = "기각"
+        s.activity.append(
+            self._act(
+                self.clock(),
+                r.context_id,
+                "planning",
+                "planning",
+                "review_ticket_draft",
+                "A2A",
+                text,
+                "A",
+            )
+        )
+        s.activity.append(
+            self._act(
+                self.clock(),
+                r.context_id,
+                "planning",
+                r.from_,
+                "get_request_status",
+                "A2A",
+                f'{r.id} "{r.title}" 기각 (이유: {reason})',
+                "read",
+            )
+        )
+        return ActionResult(
+            output={"request_id": r.id, "decision_id": dec_id, "record_kind": "decision_rejected"}
+        )
+
+    async def _reject_decision(
+        self,
+        s: State,
+        spec: str,
+        text: str,
+        decision_reason: str,
+        alternatives_considered: list[str],
+    ) -> ActionResult | None:
+        """기획서 검토 중 기각한 안을 결정으로 남기고 hr에 decision_rejected로 보낸다."""
+        sp = next((x for x in s.specs if x.id == spec), None)
+        req = self._request_of_spec(s, sp) if sp else None
+        ctx = req.context_id if req else f"spec:{spec}"
+        record = self._rejection_record(
+            ctx,
+            f"[기각한 안] {text.strip()}",
+            decision_reason,
+            alternatives_considered,
+            [f"spec:{spec}"],
+        )
+        if sp is None or not text.strip():
+            return None
+        dec_id = f"D-{len(s.decisions)}"
+        await self._send_rejection(s, record, dec_id)
+        s.decisions.append(
+            Decision(
+                id=dec_id,
+                spec=sp.id,
+                text=f"[기각한 안] {text.strip()}",
+                reason=record.decision_reason or "",
+                alternatives=", ".join(record.alternatives_considered),
+                from_=f"기획서 {sp.id}",
+                sent_to_hr=True,
+            )
+        )
+        return ActionResult(output={"decision_id": dec_id, "record_kind": "decision_rejected"})
 
     async def _approve_promotion(self, s: State) -> None:
         pol = s.auto_policy

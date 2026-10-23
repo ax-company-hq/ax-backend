@@ -32,15 +32,30 @@ def test_agent_card_format_and_served() -> None:
     card = load_card()
     assert (card.name, card.owner, card.url) == ("planning", "예진", "http://planning:8101/a2a")
     skills = {s.id: s for s in card.skills}
-    assert set(skills) == {"find_related_prs", "link_incident", "verify_rollback_target"}
+    required = {"find_related_prs", "link_incident", "verify_rollback_target"}
+    hr_links = {"list_in_progress", "verify_handover"}
+    intake = {"create_ticket"}  # 부서 변경 요청 접수 (#174)
+    assert set(skills) == required | hr_links | intake
+    assert skills["create_ticket"].grade == "A"
+    assert skills["create_ticket"].allowed_requesters == [
+        "support",
+        "marketing",
+        "hr",
+        "data",
+        "orchestrator",
+    ]
     assert skills["find_related_prs"].grade == "read"
     assert skills["link_incident"].grade == "A"
     assert skills["verify_rollback_target"].grade == "read"
+    assert skills["list_in_progress"].grade == "read"
+    assert skills["verify_handover"].grade == "read"
     assert skills["find_related_prs"].allowed_requesters == ["orchestrator", "infra", "data"]
     assert skills["link_incident"].allowed_requesters == ["orchestrator", "infra"]
     assert skills["verify_rollback_target"].allowed_requesters == ["safety"]
+    assert skills["list_in_progress"].allowed_requesters == ["hr", "orchestrator"]
+    assert skills["verify_handover"].allowed_requesters == ["safety"]
     for skill in card.skills:
-        assert skill.priority == "required"
+        assert skill.priority == ("required" if skill.id in required | intake else "recommended")
         assert skill.verifier is None
         for ref in (skill.input_schema, skill.output_schema):
             path, name = ref.split("#")
@@ -222,6 +237,7 @@ def test_state_changes_go_through_execute(service) -> None:
     assert actions == [
         "create_ticket",
         "write_spec",
+        "confirm_spec",
         "split_tasks",
         "generate_pr",
         "review_pr",
@@ -254,13 +270,19 @@ def test_gate_refusal_means_nothing_runs(service, monkeypatch, send) -> None:
 
 def test_gate_refusal_in_merge_keeps_pr_open(service, monkeypatch) -> None:
     asyncio.run(service.confirm_spec("SPEC-7"))
-    asyncio.run(service.generate_prs("SPEC-7"))
 
     async def reject_merge(request) -> ExecuteDecision:
         status = "rejected" if request.action == "merge_pr" else "executed"
         return ExecuteDecision(execution_id="exe_test", grade="B", status=status)
 
     monkeypatch.setattr(gate_module, "_send_to_safety", reject_merge)
+    # 자동 머지가 관문에서 거절되면 PR은 열어 두고 교차검증 대기 (PR 생성은 그대로)
+    asyncio.run(service.generate_prs("SPEC-7"))
+    pr = next(p for p in service.state.prs if p.id == "PR #31")
+    assert not pr.merged and pr.merged_at is None
+    assert pr.auto_review is not None
+    assert (pr.auto_review.state, pr.auto_review.gate_status) == ("교차검증 대기", "rejected")
+    # 사람 머지도 관문이 거절하면 실행하지 않는다
     with pytest.raises(GateRefused):
         asyncio.run(service.merge_pr("PR #31"))
     pr = next(p for p in service.state.prs if p.id == "PR #31")
