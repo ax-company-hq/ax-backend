@@ -1,13 +1,14 @@
 """finance skill 입출력 (재무 구성안 4-2, 공통 구성안 12장).
 
 다른 부서와 함께 쓰는 `VerifyAmountInput`·`VerifyAmountOutput`·`VerifyReason`,
-`ReviewHoldInput`·`ReviewHoldOutput`은 contracts가 원본이다.
+`ReviewHoldInput`·`ReviewHoldOutput`, `ReviewThresholdChangeInput`·`ReviewThresholdChangeOutput`은
+contracts가 원본이다.
 금액은 모두 정수 원이다.
 """
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import Field
 
@@ -86,21 +87,9 @@ ReviewHoldOutput = _contract.ReviewHoldOutput
 
 
 # ---------------------------------- review_threshold_change (safety → finance, 기준 바꾸기 판단)
-class ThresholdReviewInput(AxModel):
-    """안전 장치 범위 안의 기준 바꾸기 요청. 숫자·`stats`는 safety가 코드로 센 값이다.
-
-    요청한 사람이 쓴 이유는 `untrusted.reason_untrusted_text`로 오며 판단에 쓰지 않는다.
-    """
-
-    change_id: str
-    key: str
-    current_value: int | None = None
-    new_value: int
-    baseline: int | None = None
-    stats: dict[str, Any] = Field(default_factory=dict)
-
-
-class ThresholdReviewOutput(AxModel):
-    decision: Literal["approve", "reject", "escalate"]
-    reason_code: str
-    explanation: str
+# 안전 레이어와 함께 쓰는 형식이라 contracts가 원본이다. 여기서는 다시 내보내기만 한다.
+# `ThresholdReviewInput`·`ThresholdReviewOutput`은 예전 이름이라 같은 모델을 가리키게 둔다.
+ReviewThresholdChangeInput = _contract.ReviewThresholdChangeInput
+ReviewThresholdChangeOutput = _contract.ReviewThresholdChangeOutput
+ThresholdReviewInput = ReviewThresholdChangeInput
+ThresholdReviewOutput = ReviewThresholdChangeOutput
