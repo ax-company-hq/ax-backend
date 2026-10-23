@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 
+from support_agent import languages
 from support_agent.schemas import Finding, Validation
 
 # ---------------------------------------------------------------- 개인정보
@@ -40,6 +41,37 @@ PROMISE = re.compile(
             r"(꼭|100\s?%)\s?(환불|보상|배상)",
             # 환불받으실 수 있습니다 (가능 여부 확인 중이라는 말은 "있는지"라서 걸리지 않는다)
             r"(환불|보상|배상)(을)?\s?받(으실|으시|을)\s?수\s?있(습니다|어요|으세요)",
+        ]
+    )
+)
+# 영어·일본어·중국어 약속 표현. 지원 언어(`languages.SUPPORTED`)마다 같은 뜻의 단정·약속을 막는다.
+PROMISE_EN = re.compile(
+    "|".join(
+        [
+            r"\b(refunds?|compensation|reimbursement)\b.{0,20}\b(guarantee\w*|promise\w*|definitely|certainly|absolutely)\b",
+            r"\b(guarantee\w*|promise\w*|definitely|certainly|absolutely)\b.{0,20}\b(refund|compensat\w*|reimburs\w*)",
+            r"\b(we|i)\s?(will|'ll|shall)\s+(definitely\s+|certainly\s+|surely\s+)?(refund|reimburse|compensate|credit)\b",
+            r"\byou\s?(will|'ll)\s+(definitely\s+|certainly\s+)?(get|receive)\s+(a\s+|your\s+)?(full\s+)?(refund|compensation)\b",
+            r"\b100\s?%\s+(refund|compensation)",
+        ]
+    ),
+    re.IGNORECASE,
+)
+PROMISE_JA = re.compile(
+    "|".join(
+        [
+            r"(返金|補償|賠償).{0,8}(お約束|保証|確約|必ず|間違いなく)",
+            r"(必ず|絶対に|間違いなく).{0,8}(返金|補償|賠償)",
+            r"(返金|補償|賠償)(を)?(いたします|致します|します|させていただきます)",
+        ]
+    )
+)
+PROMISE_ZH = re.compile(
+    "|".join(
+        [
+            r"(退款|退費|赔偿|賠償|补偿|補償).{0,8}(保证|保證|一定|承诺|承諾|确保|確保|肯定)",
+            r"(一定|保证|保證|肯定|承诺|承諾|确保|確保).{0,6}(退款|退費|赔偿|賠償|补偿|補償)",
+            r"(会|會|将|將)(为您|為您|给您|給您)?(退款|退費|赔偿|賠償|补偿|補償)",
         ]
     )
 )
@@ -99,7 +131,24 @@ def check_reply(text: str) -> Validation:
     findings: list[Finding] = []
     if not text.strip():
         findings.append(Finding(code="empty_reply", level="error", message="답변이 비어 있다"))
-    if PROMISE.search(text):
+    language = languages.detect(text)
+    if language == "other":  # 가드가 약속 표현을 검사하지 못하는 문자는 내보내지 않는다
+        findings.append(
+            Finding(
+                code="unsupported_language",
+                level="error",
+                message="자동 검사를 지원하지 않는 언어(한국어·영어·일본어·중국어만 가능)",
+            )
+        )
+    elif language == "en" and languages.ACCENTED_LATIN.search(text):
+        findings.append(
+            Finding(
+                code="language_not_verified",
+                level="warning",
+                message="영어 외 라틴 문자 언어일 수 있어 약속 표현을 검사하지 못함, 직접 확인",
+            )
+        )
+    if any(p.search(text) for p in (PROMISE, PROMISE_EN, PROMISE_JA, PROMISE_ZH)):
         findings.append(
             Finding(code="promise_refund", level="error", message="환불·보상을 단정해서 약속함")
         )
