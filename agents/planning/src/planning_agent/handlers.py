@@ -236,11 +236,22 @@ async def create_ticket(request: AgentRequest) -> AgentResult:
 
 
 async def verify_rollback_target(request: AgentRequest) -> AgentResult:
-    """infra rollback_deployment(B)의 교차검증 (read). 거절도 completed + rejected_by_review."""
+    """infra rollback_deployment(B)의 교차검증 (read). 거절도 completed + rejected_by_review.
+
+    입력은 계약 `VerifyRollbackTargetInput` 또는 safety 검토 형식(`SafetyReviewInput`) 둘 다 받는다.
+    출력은 계약 `VerifyRollbackTargetOutput`이고 safety는 `approved == true`일 때만 승인으로 본다.
+    """
     try:
-        inp = VerifyRollbackTargetInput.model_validate(request.input)
+        inp, execution_id = _rollback_input(request.input)
     except ValidationError as exc:
         return _invalid(request, exc)
+    except ValueError as exc:
+        return AgentResult(
+            meta=request.meta,
+            status=TaskStatus.FAILED,
+            outcome="invalid_input",
+            output={"message": str(exc)},
+        )
     approved, reason, rows = await get_service().verify_rollback_target(
         context_id=request.meta.context_id,
         requester=_requester(request),
@@ -267,7 +278,7 @@ async def verify_rollback_target(request: AgentRequest) -> AgentResult:
             data_summary=(
                 f"{inp.service} {inp.target_version}: {reason}, 구간 안 머지 PR {len(related)}건"
             ),
-            ref_ids=_refs(related),
+            ref_ids=([f"execution:{execution_id}"] if execution_id else []) + _refs(related),
         ),
     )
 
@@ -345,6 +356,8 @@ class SafetyReviewInput(BaseModel):
     `{execution_id, action, requester, params, computed_amount, threshold_version}`.
     hr `confirm_handover`의 params는 `handover_id`·`owner_id`·`area`·`item_ids`(또는
     `handover_item_ids`)·`completeness_percent` 등이다. 완성도는 safety 규칙이 보므로 쓰지 않는다.
+    infra `rollback_deployment`의 params는 `service`·`from_version`·`to_version`에
+    `deployed_at`·`incident_opened_at`이 더해진 것이다(`verify_rollback_target`).
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -376,6 +389,31 @@ def _handover_input(raw: dict[str, Any]) -> tuple[VerifyHandoverInput, str | Non
         "handover_item_ids": items,
     }
     return VerifyHandoverInput.model_validate(converted), review.execution_id
+
+
+ROLLBACK_ACTIONS = ("rollback_deployment",)
+
+
+def _rollback_input(raw: dict[str, Any]) -> tuple[VerifyRollbackTargetInput, str | None]:
+    """계약 형식이면 그대로, safety 검토 형식이면 계약 입력으로 바꾼다. (입력, execution_id).
+
+    infra `rollback_deployment` params(`RollbackDeploymentParams`)의 `from_version`이 되돌릴
+    대상 배포, 즉 계약의 `target_version`이다. `deployed_at`·`incident_opened_at`은 params에
+    같은 이름으로 와야 하고, 없으면 판정하지 않는다(failed → safety 보류).
+    """
+    if "execution_id" not in raw or "params" not in raw:
+        return VerifyRollbackTargetInput.model_validate(raw), None
+    review = SafetyReviewInput.model_validate(raw)
+    if review.action not in ROLLBACK_ACTIONS:
+        raise ValueError(f"verify_rollback_target가 검증하지 않는 액션: {review.action}")
+    p = review.params
+    converted = {
+        "service": p.get("service"),
+        "target_version": p.get("target_version") or p.get("from_version"),
+        "deployed_at": p.get("deployed_at"),
+        "incident_opened_at": p.get("incident_opened_at"),
+    }
+    return VerifyRollbackTargetInput.model_validate(converted), review.execution_id
 
 
 async def verify_handover(request: AgentRequest) -> AgentResult:
