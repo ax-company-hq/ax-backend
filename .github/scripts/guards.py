@@ -26,6 +26,8 @@ import team as team_mod  # noqa: E402
 
 CONTEXTS = ("folder-guard", "test-guard", "dev-health", "agent-review")
 MARKER = "<!-- guards:{sha} -->"
+NOT_REQUIRED = "not required — 부서 폴더 안 변경 (리뷰 생략)"
+HINT_LINES = 8  # 재대기 힌트에 넣을 위반 줄 수
 
 
 @dataclass
@@ -118,20 +120,24 @@ def decide(
     else:
         plan.status("dev-health", "success", "dev 초록")
 
-    # 리뷰 생략 대상: 봇 브랜치(review: skip) 또는 human_paths만 바꾼 사람 PR
+    # 리뷰 생략 대상: 봇 브랜치(review: skip), human_paths만 바꾼 사람 PR,
+    # 부서 하나 안에서만 바뀐 PR (공유 부서·부서 2개 이상이 아니면 CI·관문만으로 머지)
+    c = team.classify([ch.path for ch in changes])
     if rule and rule[1].get("review") == "skip":
         plan.status("agent-review", "success", f"리뷰 생략 ({rule[0]})")
-    elif not is_bot:
-        c = team.classify([ch.path for ch in changes])
-        if not c.depts and not c.shared:
-            note = "리뷰 생략 (human_paths만 변경, code owner 리뷰)"
-            plan.status("agent-review", "success", note)
+    elif not is_bot and not c.depts and not c.shared:
+        note = "리뷰 생략 (human_paths만 변경, code owner 리뷰)"
+        plan.status("agent-review", "success", note)
+    elif c.depts and not team.review_required(c):
+        plan.status("agent-review", "success", NOT_REQUIRED)
 
     if is_bot and not rule and (problems or test_violations) and pr.issue:
         reason = (
             "다른 폴더 변경은 to:<부서> 요청으로 분리" if problems else "테스트 삭제·약화"
         )
-        plan.requeue = {"issue": pr.issue, "reason": f"관문 실패 — {reason}"}
+        hint = [*problems, *test_violations][:HINT_LINES]
+        detail = "\n".join(f"- {h}" for h in hint)
+        plan.requeue = {"issue": pr.issue, "reason": f"관문 실패 — {reason}\n\n힌트:\n{detail}"}
 
     lines = []
     if problems:
@@ -205,7 +211,8 @@ def cmd_plan(args) -> int:
         mb = team_mod.merge_base("HEAD", pr.head_sha)
         changes = team_mod.diff_changes(mb, pr.head_sha)
         test_violations = team_mod.find_test_weakening(
-            changes, lambda p: team_mod.show(mb, p), lambda p: team_mod.show(pr.head_sha, p)
+            changes, lambda p: team_mod.show(mb, p), lambda p: team_mod.show(pr.head_sha, p),
+            team,
         )
     plan = decide(
         team, pr, args.action, changes, test_violations,
@@ -261,6 +268,10 @@ def cmd_apply(args) -> int:
         rq = plan["requeue"]
         result = team_mod.requeue(repo, team, rq["issue"], rq["reason"], pr=n, head_sha=sha)
         print(f"requeue #{rq['issue']}: {result}")
+        # 첫 실패(retry-1)면 힌트를 읽고 다시 작성하게 바로 실행한다.
+        # 두 번째면 needs-human에서 멈춘다
+        if result == "retry-1":
+            print(team_mod.dispatch_write(repo, team, rq["issue"]))
     return 0
 
 

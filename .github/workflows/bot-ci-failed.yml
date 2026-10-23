@@ -1,0 +1,56 @@
+name: bot-ci-failed
+
+# 봇 부서 PR의 ci가 실패하면: 실패 요약을 힌트로 이슈에 남기고 PR 닫기·브랜치 삭제·재대기 (docs/automation-spec.md 11장).
+# 첫 실패는 retry-1로 바로 다시 작성, 같은 이슈 두 번째 실패는 needs-human.
+# dev 자체가 빨간불이면(모든 PR이 같이 실패) 아무것도 하지 않는다.
+# PR 코드는 checkout·실행하지 않는다 (dev 정의만, 로그는 API로 읽기만).
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  group: bot-ci-failed-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  requeue:
+    if: >-
+      vars.AX_AUTOMATION == 'on' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    environment: bot
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: dev, persist-credentials: false, sparse-checkout: .github }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: team.py 의존성
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet --require-hashes -r .github/scripts/requirements.txt
+      - name: ax-bot token
+        id: bot
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ secrets.AX_BOT_APP_ID }}
+          private-key: ${{ secrets.AX_BOT_PRIVATE_KEY }}
+          permission-issues: write
+          permission-pull-requests: write
+          permission-contents: write
+          permission-actions: write
+      - name: 힌트 · 닫기 · 재대기
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          DEV_RED: ${{ vars.AX_DEV_RED }}
+        run: |
+          "$RUNNER_TEMP/venv/bin/python" -I .github/scripts/claude_jobs.py ci-failed \
+            --run-id "$RUN_ID" --head-sha "$HEAD_SHA" --branch "$BRANCH" --dev-red "${DEV_RED:-off}"

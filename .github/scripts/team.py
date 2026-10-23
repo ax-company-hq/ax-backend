@@ -12,8 +12,9 @@ PR 코드는 git으로 읽기만 하고 실행하지 않는다 (test-guard도 as
   classify <base> <head>                     바뀐 경로를 부서·human_paths·shared로 나눈 JSON
   reviewers-for <base> <head> <author_person>
   arbiter-for <author_dept> <reviewer_dept...>
-  test-guard <base> <head>
-  cap-ok <login> [--day YYYY-MM-DD]          오늘 Claude 잡 수 < daily_cap이면 0
+  test-guard <base> <head>                   부서별 합계로 테스트 약화 검사
+  review-required <base> <head>              에이전트 리뷰 대상이면 0 (공유 부서·부서 2개 이상)
+  cap-ok <login> --kind write|review [--day YYYY-MM-DD]   오늘 그 종류 Claude 잡 수 < 상한이면 0
   requeue <issue> <reason> [--pr N --head-sha S] [--run-id R]   (GITHUB_REPOSITORY, GH_TOKEN=ax-bot)
   export-json [--check]                      .github/team.json 생성 (--check: 동기화 검사만)
 """
@@ -78,6 +79,9 @@ class Team:
         self.bot_branches: dict[str, dict] = data.get("bot_branches", {})
         self.forbidden_in_dept: list[str] = data.get("forbidden_in_dept", [])
         self.hotfix_labelers: list[str] = data.get("hotfix_labelers", [])
+        self.review_required_depts: list[str] = data.get("review_required_depts", [])
+        self.wip: dict[str, int] = data.get("wip", {})
+        self.stale_hours: int = int(data.get("stale_hours", 48))
         self._validate()
 
     @classmethod
@@ -96,6 +100,13 @@ class Team:
         for d in [*self.fallback_order, *filter(None, [self.contracts_fallback])]:
             if d not in self.depts:
                 raise TeamError(f"fallback 부서 {d}가 depts에 없음")
+        for d in self.review_required_depts:
+            if d not in self.depts:
+                raise TeamError(f"review_required_depts의 {d}가 depts에 없음")
+        for login, m in self.members.items():
+            for kind in CAP_KINDS:
+                if not isinstance(m.get(f"{kind}_cap"), int):
+                    raise TeamError(f"{login}의 {kind}_cap이 정수가 아님")
 
     # ── 사람·부서 ─────────────────────────────────────────
     def is_member(self, login: str) -> bool:
@@ -276,6 +287,15 @@ class Team:
                     result.append(slot)
         return result
 
+    def review_required(self, classified: Classified) -> bool:
+        """에이전트 리뷰가 필요한 PR인가: review_required_depts를 건드렸거나 부서 2개 이상.
+
+        부서 하나 안에서만 바뀐 PR(+ uv.lock·human_paths)은 리뷰 없이 CI·관문으로 머지한다.
+        human_paths는 code owner 승인이 따로 걸린다.
+        """
+        depts = set(classified.depts)
+        return bool(depts & set(self.review_required_depts)) or len(depts) >= 2
+
     def arbiter_for(self, author_dept: str, reviewer_depts: list[str]) -> str:
         used = {author_dept, *reviewer_depts}
         people = {p for d in used for p in self.owners(d)}
@@ -323,27 +343,37 @@ def count_tests_and_asserts(source: str) -> tuple[int, int]:
     return len(tests), sum(_count_asserts(t) for t in tests)
 
 
-def find_test_weakening(changes: list[Change], read_base, read_head) -> list[str]:
-    """tests 삭제, test_ 함수 수 감소, assert 50% 이상 감소를 찾는다."""
+HUMAN_TESTS = "(사람 경로)"
+
+
+def find_test_weakening(changes: list[Change], read_base, read_head,
+                        team: Team | None = None) -> list[str]:
+    """부서별 합계로 테스트 약화를 찾는다: test_ 함수 수 감소, 테스트 함수 안 assert 수 감소.
+
+    파일을 나누거나 옮겨도 같은 부서 안 합계가 줄지 않으면 통과한다
+    (파일 삭제만으로는 실패하지 않음).
+    team이 없으면 전체를 한 묶음으로 본다. 부서 폴더 밖 테스트는 "(사람 경로)" 한 묶음.
+    """
     violations: list[str] = []
-    base_tests = head_tests = base_asserts = head_asserts = 0
+    totals: dict[str, list[int]] = {}  # 묶음 → [base 테스트, head 테스트, base assert, head assert]
     for c in changes:
         if not is_test_path(c.path):
             continue
-        if c.status == "D":
-            violations.append(f"{c.path}: 테스트 파일 삭제")
         try:
             b = count_tests_and_asserts(read_base(c.path)) if c.status != "A" else (0, 0)
             h = count_tests_and_asserts(read_head(c.path)) if c.status != "D" else (0, 0)
         except (SyntaxError, ValueError, RecursionError, MemoryError) as e:
             violations.append(f"{c.path}: 파싱 실패 ({type(e).__name__})")
             continue
-        base_tests, head_tests = base_tests + b[0], head_tests + h[0]
-        base_asserts, head_asserts = base_asserts + b[1], head_asserts + h[1]
-        if c.status == "M" and b[1] > 0 and h[1] * 2 <= b[1]:
-            violations.append(f"{c.path}: 테스트 함수 안 assert {b[1]} → {h[1]} (50% 이상 감소)")
-    if head_tests < base_tests:
-        violations.append(f"test_ 함수 수 감소: {base_tests} → {head_tests}")
+        group = (team.dept_of_path(c.path) if team else None) or HUMAN_TESTS
+        t = totals.setdefault(group, [0, 0, 0, 0])
+        t[0], t[1], t[2], t[3] = t[0] + b[0], t[1] + h[0], t[2] + b[1], t[3] + h[1]
+    for group, (bt, ht, ba, ha) in sorted(totals.items()):
+        where = f"{group}: " if team else ""
+        if ht < bt:
+            violations.append(f"{where}test_ 함수 수 감소 {bt} → {ht} (부서 합계)")
+        if ha < ba:
+            violations.append(f"{where}테스트 함수 안 assert 감소 {ba} → {ha} (부서 합계)")
     return violations
 
 
@@ -386,6 +416,8 @@ def show(rev: str, path: str) -> str:
 #   claude-request:            "claude-request to:<부서> by <라벨 붙인 사람>"
 #   claude-review:             "claude-review <PR 브랜치> by <PR 작성자>"
 #                              → 리뷰 부서는 reviewers_for로 계산해서 센다
+CAP_KINDS = ("write", "review")
+
 CLAUDE_RUN_WORKFLOWS = {
     "ax-company-hq/ax-backend": ("_claude-write.yml", "claude-request.yml", "claude-review.yml"),
     "ax-company-hq/ax-frontend": (),  # F-1단계에서 Claude 워크플로가 생기면 추가
@@ -393,6 +425,15 @@ CLAUDE_RUN_WORKFLOWS = {
 WRITE_TITLE = re.compile(r"^claude:([a-z0-9-]+):[a-z-]+(?: |$)")
 REQUEST_TITLE = re.compile(r"^claude-request to:([a-z0-9-]+) by (\S+)$")
 REVIEW_TITLE = re.compile(r"^claude-review (\S+) by (\S+)$")
+
+
+def run_kind(title: str) -> str | None:
+    """run 제목 → 상한 종류 (작성 write / 리뷰 review)."""
+    if WRITE_TITLE.match(title) or REQUEST_TITLE.match(title):
+        return "write"
+    if REVIEW_TITLE.match(title):
+        return "review"
+    return None
 
 
 def token_depts_of(team: Team, login: str) -> set[str]:
@@ -480,18 +521,18 @@ def resolve_failed_runs(runs: list[tuple], cache: dict[str, list[str]]) -> dict[
     return cache
 
 
-def usage_by_owner(team: Team, runs: list[tuple], ran: dict[str, list[str]] | None = None
-                   ) -> dict[str, int]:
+def usage_by_owner(team: Team, runs: list[tuple], ran: dict[str, list[str]] | None = None,
+                   kind: str | None = None) -> dict[str, int]:
     """(repo, run_id, display_title, conclusion) 목록 → 토큰 주인별 Claude 잡 수.
 
-    skipped run은 세지 않는다. 실패·취소 run은 ran(실제로 Claude 단계가 돈 부서)으로 센다.
-    ran에 없으면 제목 기준으로 센다 (보수적으로).
+    kind(write|review)를 주면 그 종류 run만 센다. skipped run은 세지 않는다.
+    실패·취소 run은 ran(실제로 Claude 단계가 돈 부서)으로 센다. ran에 없으면 제목 기준 (보수적으로).
     """
     ran = ran or {}
     counts: dict[str, int] = {}
     fronts = team.data.get("frontend_depts", {})
     for _repo, run_id, title, conclusion in runs:
-        if conclusion == "skipped":
+        if conclusion == "skipped" or (kind and run_kind(title) != kind):
             continue
         if conclusion in FAILED_CONCLUSIONS and str(run_id) in ran:
             depts = [team.resolve_dept(d) or d for d in ran[str(run_id)]]
@@ -526,23 +567,31 @@ def todays_claude_runs(day: str) -> list[tuple]:
     return runs
 
 
-def cap_status(team: Team, owners: list[str], day: str | None = None) -> dict[str, dict]:
-    """토큰 주인별 {used, cap, ok}. run 목록을 읽지 못하면 전부 ok=False (fail-closed)."""
+def cap_status(team: Team, owners: list[str], kind: str, day: str | None = None
+               ) -> dict[str, dict]:
+    """토큰 주인별 {used, cap, ok}. kind는 write|review (작성·리뷰 상한을 따로 센다).
+
+    run 목록을 읽지 못하면 전부 ok=False (fail-closed).
+    """
+    if kind not in CAP_KINDS:
+        raise TeamError(f"cap 종류는 write|review: {kind}")
     day = day or datetime.now(UTC).strftime("%Y-%m-%d")
     try:
         runs = todays_claude_runs(day)
         ran = resolve_failed_runs(runs, load_cap_cache())
         save_cap_cache(ran)
-        usage = usage_by_owner(team, runs, ran)
+        usage = usage_by_owner(team, runs, ran, kind)
     except subprocess.CalledProcessError:
         return {o: {"used": None, "cap": None, "ok": False, "reason": "cap 확인 실패"}
                 for o in owners}
+    label = "작성" if kind == "write" else "리뷰"
     out = {}
     for o in owners:
-        cap = int(team.members.get(o, {}).get("daily_cap", 0))
+        cap = int(team.members.get(o, {}).get(f"{kind}_cap", 0))
         used = usage.get(o, 0)
+        name = team.members.get(o, {}).get("name", o)
         out[o] = {"used": used, "cap": cap, "ok": used < cap,
-                  "reason": f"{team.members.get(o, {}).get('name', o)} 오늘 {used}/{cap}"}
+                  "reason": f"{name} 오늘 {label} {used}/{cap}"}
     return out
 
 
@@ -601,19 +650,17 @@ def post_comment(repo: str, issue: int, body: str) -> None:
 
 
 # ── requeue (모든 재대기는 이 함수 하나로) ───────────────────
-RETRY_LABELS = ("retry-1", "retry-2", "retry-3")
+RETRY_LABELS = ("retry-1", "retry-2", "retry-3")  # retry-2·3은 옛 라벨 (있으면 needs-human으로)
+NEEDS_HUMAN = "needs-human"
 
 
 def next_retry_labels(labels: list[str]) -> tuple[list[str], list[str]]:
-    """(붙일 라벨, 뗄 라벨). retry-1 → 2 → 3, 3 다음은 blocked."""
+    """(붙일 라벨, 뗄 라벨). 첫 실패는 retry-1, 같은 이슈가 두 번째 실패하면 needs-human."""
     current = [lb for lb in RETRY_LABELS if lb in labels]
     remove = ["in-progress", *current]
     if not current:
         return ["retry-1"], remove
-    level = RETRY_LABELS.index(current[-1]) + 1
-    if level >= len(RETRY_LABELS):
-        return ["blocked"], remove
-    return [RETRY_LABELS[level]], remove
+    return [NEEDS_HUMAN], remove
 
 
 def requeue_key(pr: int | None, head_sha: str | None, issue: int, run_id: str | None) -> str:
@@ -646,7 +693,7 @@ def requeue(repo: str, team: Team, issue: int, reason: str, pr: int | None = Non
     issue_info = gh_api(f"repos/{repo}/issues/{issue}")
     labels = [lb["name"] for lb in issue_info["labels"]]
     add, remove = next_retry_labels(labels)
-    if issue_info["state"] == "closed":  # blocked여도 열어 둬야 사람이 본다
+    if issue_info["state"] == "closed":  # needs-human이어도 열어 둬야 사람이 본다
         gh_api(f"repos/{repo}/issues/{issue}", "-X", "PATCH", "-f", "state=open")
     for lb in remove:
         if lb in labels:
@@ -655,8 +702,43 @@ def requeue(repo: str, team: Team, issue: int, reason: str, pr: int | None = Non
     gh_api(f"repos/{repo}/issues/{issue}/labels", "-X", "POST",
            *[x for lb in add for x in ("-f", f"labels[]={lb}")])
     where = f" (PR #{pr} 닫음)" if pr else ""
-    post_comment(repo, issue, f"{marker}\n재대기{where}: {reason}\n→ {', '.join(add)}")
+    tail = ("\n같은 이슈가 두 번 실패해 자동 재시도를 멈춥니다. 사람이 확인한 뒤 "
+            "needs-human 라벨을 떼고 to: 라벨을 다시 붙이면 재개합니다."
+            if NEEDS_HUMAN in add else "")
+    post_comment(repo, issue, f"{marker}\n재대기{where}: {reason}\n→ {', '.join(add)}{tail}")
     return ",".join(add)
+
+
+WRITE_WORKFLOW = "_claude-write.yml"
+
+
+def write_target(team: Team, labels: list[str]) -> tuple[str, str] | None:
+    """이슈 라벨 → (부서, 작성 모드). to:<부서>는 request, dept:<부서>는 task."""
+    for prefix, mode in (("to:", "request"), ("dept:", "task")):
+        for lb in labels:
+            if lb.startswith(prefix) and lb[len(prefix):] in team.depts:
+                return lb[len(prefix):], mode
+    return None
+
+
+def dispatch_write(repo: str, team: Team, issue: int) -> str:
+    """이슈를 다시 작성하게 _claude-write를 실행한다 (ax-bot 토큰, actions: write).
+
+    run 제목이 claude:<부서>:<모드> #<이슈>라 cap이 작성으로 센다. 실패해도 예외를 올리지 않는다
+    (재대기는 이미 끝났고, 사람이 to: 라벨을 다시 붙이면 된다).
+    """
+    try:
+        info = gh_api(f"repos/{repo}/issues/{issue}") or {}
+        target = write_target(team, [lb["name"] for lb in info.get("labels", [])])
+        if not target:
+            return f"#{issue}: to:/dept: 라벨이 없어 다시 실행하지 않음"
+        dept, mode = target
+        gh_api(f"repos/{repo}/actions/workflows/{WRITE_WORKFLOW}/dispatches", "-X", "POST",
+               "-f", "ref=dev", "-f", f"inputs[dept]={dept}", "-f", f"inputs[mode]={mode}",
+               "-f", f"inputs[issue]={issue}")
+        return f"#{issue}: {dept}:{mode} 다시 실행"
+    except subprocess.CalledProcessError:
+        return f"::warning::#{issue}: 다시 실행하지 못함 (재대기만 됨)"
 
 
 # ── CLI ──────────────────────────────────────────────────
@@ -673,7 +755,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--depts", default="")
     p.add_argument("--author-kind", required=True, choices=["human", "bot"])
     p.add_argument("--branch")
-    for name in ("classify", "test-guard"):
+    for name in ("classify", "test-guard", "review-required"):
         p = sub.add_parser(name)
         p.add_argument("base")
         p.add_argument("head")
@@ -687,6 +769,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("export-json").add_argument("--check", action="store_true")
     p = sub.add_parser("cap-ok")
     p.add_argument("login")
+    p.add_argument("--kind", required=True, choices=CAP_KINDS)
     p.add_argument("--day", help="UTC 날짜 YYYY-MM-DD (기본 오늘)")
     p = sub.add_parser("requeue")
     p.add_argument("issue", type=int)
@@ -738,7 +821,7 @@ def main(argv: list[str] | None = None) -> int:
         if not team.is_member(args.login):
             print(f"팀원이 아님: {args.login}", file=sys.stderr)
             return 1
-        st = cap_status(team, [args.login], args.day)[args.login]
+        st = cap_status(team, [args.login], args.kind, args.day)[args.login]
         print(st["reason"])
         return 0 if st["ok"] else 1
     if cmd == "requeue":
@@ -751,6 +834,10 @@ def main(argv: list[str] | None = None) -> int:
     if cmd == "classify":
         print(json.dumps(team.classify([c.path for c in changes]).to_json(), ensure_ascii=False))
         return 0
+    if cmd == "review-required":
+        required = team.review_required(team.classify([c.path for c in changes]))
+        print("true" if required else "false")
+        return 0 if required else 1
     if cmd == "check-diff":
         depts = [d for d in (team.resolve_dept(x) for x in args.depts.split(",") if x) if d]
         violations = team.check_diff(changes, depts, args.author_kind, args.branch)
@@ -764,7 +851,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     else:  # test-guard
         violations = find_test_weakening(
-            changes, lambda p: show(mb, p), lambda p: show(args.head, p)
+            changes, lambda p: show(mb, p), lambda p: show(args.head, p), team
         )
     for v in violations:
         print(v)

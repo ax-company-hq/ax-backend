@@ -1,0 +1,47 @@
+name: wip-resume
+
+# 봇 부서 PR이 머지·닫히면 그 부서의 wip-wait 이슈 1개를 다시 작성하게 한다 (docs/automation-spec.md 11장).
+# PR 코드는 checkout하지 않는다.
+on:
+  pull_request_target:
+    types: [closed]
+    branches: [dev]
+
+permissions: {}
+
+concurrency:
+  group: wip-resume
+  cancel-in-progress: false
+
+jobs:
+  resume:
+    if: >-
+      vars.AX_AUTOMATION == 'on' &&
+      github.event.pull_request.user.login == 'ax-company-hq-bot[bot]'
+    runs-on: ubuntu-latest
+    environment: bot
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: dev, persist-credentials: false, sparse-checkout: .github }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: team.py 의존성
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet --require-hashes -r .github/scripts/requirements.txt
+      - name: ax-bot token
+        id: bot
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ secrets.AX_BOT_APP_ID }}
+          private-key: ${{ secrets.AX_BOT_PRIVATE_KEY }}
+          permission-issues: write
+          permission-actions: write
+      - name: 재개
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          "$RUNNER_TEMP/venv/bin/python" -I .github/scripts/claude_jobs.py wip-resume --branch "$BRANCH"

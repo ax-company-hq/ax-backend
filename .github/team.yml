@@ -2,14 +2,26 @@
 # 이 파일을 바꾸면 `python .github/scripts/team.py export-json`으로 .github/team.json을 다시 만든다 (훅이 읽음, CI가 동기화 검사).
 
 members:
-  JangJaehyeonn: { name: 재현, token: CLAUDE_TOKEN_JAEHYEON, daily_cap: 20 }
-  2taeyoon: { name: 태윤, token: CLAUDE_TOKEN_TAEYOON, daily_cap: 20 }
-  haakim7: { name: 준하, token: CLAUDE_TOKEN_JUNHA, daily_cap: 20 }
-  NYejin: { name: 예진, token: CLAUDE_TOKEN_YEJIN, daily_cap: 20 }
-  bxbae: { name: 병환, token: CLAUDE_TOKEN_BYUNGHWAN, daily_cap: 20 }
-  areatmadm: { name: 재헌, token: CLAUDE_TOKEN_JAEHEON, daily_cap: 20 }
+  JangJaehyeonn: { name: 재현, token: CLAUDE_TOKEN_JAEHYEON, write_cap: 15, review_cap: 15 }
+  2taeyoon: { name: 태윤, token: CLAUDE_TOKEN_TAEYOON, write_cap: 15, review_cap: 15 }
+  haakim7: { name: 준하, token: CLAUDE_TOKEN_JUNHA, write_cap: 15, review_cap: 15 }
+  NYejin: { name: 예진, token: CLAUDE_TOKEN_YEJIN, write_cap: 15, review_cap: 15 }
+  bxbae: { name: 병환, token: CLAUDE_TOKEN_BYUNGHWAN, write_cap: 15, review_cap: 15 }
+  areatmadm: { name: 재헌, token: CLAUDE_TOKEN_JAEHEON, write_cap: 15, review_cap: 15 }
 
 bot_login: ax-company-hq-bot[bot]
+
+# 하루 Claude 실행 상한은 사람마다 작성(write_cap)·리뷰(review_cap)를 따로 센다 (UTC 날짜 기준)
+
+# 에이전트 리뷰(agent-review)는 이 부서를 건드렸거나 부서 2개 이상에 걸친 PR에만 돈다.
+# 부서 하나 안에서만 바뀐 PR은 guards가 agent-review를 "not required"로 success 처리한다
+review_required_depts: [contracts, agent-template]
+
+# 부서마다 동시에 진행할 수 있는 작성 수. 넘으면 새 작성을 시작하지 않고 wip-wait 라벨로 기다린다
+wip: { open_bot_prs: 2, in_progress_issues: 3 }
+
+# 매일 1회 정리: 이 시간보다 오래 변화가 없는 봇 PR·봇 이슈를 닫는다
+stale_hours: 48
 
 # id: { folder, aliases, owners(첫 번째가 실행 토큰), env_prefix }
 depts:

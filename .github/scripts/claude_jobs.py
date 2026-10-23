@@ -10,6 +10,10 @@ Claude가 도는 잡은 결과물(패치·JSON)만 만든다. GitHub에 쓰는 �
   review-prep   --pr N --out-dir DIR                                            (bot)
   review-apply  --pr N --verdict-dir DIR --plan FILE                            (bot)
   check-result FILE · check-verdict FILE --head-sha S
+  max-turns     --file EXECUTION_JSON --limit N     (claude 잡: 턴 한도에 걸렸는지 → max_turns 출력)
+  ci-failed     --run-id R --head-sha S --branch B  (bot: 봇 PR ci 실패 → 힌트 남기고 닫고 재대기)
+  wip-resume    [--branch B]                        (bot: 자리가 난 부서의 wip-wait 이슈 1개 재개)
+  stale-sweep                                       (bot: 48시간 멈춘 봇 PR·이슈 정리 + report 이슈)
 """
 
 from __future__ import annotations
@@ -21,13 +25,19 @@ import os
 import re
 import subprocess
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import team as team_mod  # noqa: E402
 
 MODES_WRITE = ("task", "request")  # address·ci-fix·arbiter-fix는 2단계
-BLOCK_LABELS = {"external", "blocked", "obsolete", "in-progress", "quota"}
+BLOCK_LABELS = {"external", "blocked", "obsolete", "in-progress", "quota", "needs-human",
+                "needs-split"}
+WIP_LABEL = "wip-wait"
+SPLIT_LABEL = "needs-split"
+STALE_LABEL = "stale"
+MAX_WRITE_TURNS = 30  # _claude-write.yml의 --max-turns와 같게
 MAX_TITLE = 120
 MAX_BODY = 20_000
 MAX_PATCH_BYTES = 2_000_000
@@ -160,12 +170,17 @@ def write_prep(team: team_mod.Team, dept: str, mode: str, issue_no: int, actor: 
         raise JobError("이슈 작성자가 팀원·봇이 아님")
     if hop_of(issue.get("body") or "") > MAX_HOP:
         raise JobError("hop이 3을 넘음")
-    linked = open_prs_for_issue(issue_no, team)
+    open_prs = api(f"repos/{repo()}/pulls?state=open&per_page=100") or []
+    linked = linked_prs(open_prs, issue_no, team)
     if linked:
         raise JobError(f"#{issue_no}에 연결된 열린 PR이 있음: #{linked[0]}")
+    busy = api(f"repos/{repo()}/issues?state=open&labels=in-progress&per_page=100") or []
+    wait = wip_check(team, dept, open_prs, busy)
+    if wait:
+        raise JobError(f"wip: {wait}")
     token_secret = team.owner_token(dept)
     owner = team.owners(dept)[0]
-    st = team_mod.cap_status(team, [owner])[owner]  # run 목록 3회 조회
+    st = team_mod.cap_status(team, [owner], "write")[owner]  # run 목록 3회 조회
     if st["used"] is None:
         raise JobError("cap을 확인하지 못해 실행하지 않음 (fail-closed)")
     if not st["ok"]:
@@ -202,12 +217,71 @@ def strip_closing_keywords(text: str) -> str:
     return CLOSING.sub(lambda m: f"관련 {m.group(3)}", text)
 
 
-def open_prs_for_issue(issue_no: int, team: team_mod.Team) -> list[int]:
+def linked_prs(prs: list[dict], issue_no: int, team: team_mod.Team) -> list[int]:
     """그 이슈에 연결된 열린 봇 PR (봇만 쓰는 표시로 찾는다)."""
-    prs = api(f"repos/{repo()}/pulls?state=open&per_page=100") or []
     marker = ISSUE_MARKER.format(n=issue_no)
     return [p["number"] for p in prs
             if p["user"]["login"] == team.bot_login and marker in (p.get("body") or "")]
+
+
+def pr_issue(pr: dict) -> int | None:
+    """봇 PR의 연결 이슈. 봇만 쓰는 표시 <!-- ax-issue:N -->만 믿는다."""
+    m = re.search(r"<!-- ax-issue:(\d+) -->", pr.get("body") or "")
+    return int(m.group(1)) if m else None
+
+
+def is_dept_bot_pr(team: team_mod.Team, pr: dict) -> str | None:
+    """봇이 연 부서 브랜치 PR이면 그 부서 (revert/·openapi/sync- 같은 봇 브랜치는 제외)."""
+    branch = (pr.get("head") or {}).get("ref", "")
+    if (pr.get("user") or {}).get("login") != team.bot_login or team.bot_branch_rule(branch):
+        return None
+    return team.dept_of_branch(branch)
+
+
+# ── WIP 제한 ─────────────────────────────────────────────
+def wip_check(team: team_mod.Team, dept: str, open_prs: list[dict],
+              in_progress: list[dict]) -> str | None:
+    """새 작성을 시작하면 부서 한도를 넘는지. 넘으면 이유, 아니면 None.
+
+    열린 봇 PR(부서 브랜치) 수가 open_bot_prs 이상이거나, 진행 중(in-progress) to:/dept: 이슈 수가
+    in_progress_issues 이상이면 기다린다.
+    """
+    max_prs = int(team.wip.get("open_bot_prs", 0))
+    max_issues = int(team.wip.get("in_progress_issues", 0))
+    prs = [p for p in open_prs if is_dept_bot_pr(team, p) == dept]
+    mine = {f"to:{dept}", f"dept:{dept}"}
+    issues = [i for i in in_progress
+              if "pull_request" not in i and mine & set(labels_of(i))]
+    if max_prs and len(prs) >= max_prs:
+        return f"{dept} 열린 봇 PR {len(prs)}/{max_prs} — 하나가 머지·닫히면 자동으로 시작합니다."
+    if max_issues and len(issues) >= max_issues:
+        return (f"{dept} 진행 중 이슈 {len(issues)}/{max_issues} — 하나가 끝나면 자동으로 "
+                "시작합니다.")
+    return None
+
+
+def wip_resume(team: team_mod.Team, depts: list[str] | None = None) -> list[str]:
+    """자리가 난 부서마다 wip-wait 이슈 1개를 재개한다 (priority 먼저, 그다음 번호 순)."""
+    waiting = api(f"repos/{repo()}/issues?state=open&labels={WIP_LABEL}&per_page=100") or []
+    waiting = [i for i in waiting if "pull_request" not in i]
+    if not waiting:
+        return []
+    open_prs = api(f"repos/{repo()}/pulls?state=open&per_page=100") or []
+    busy = api(f"repos/{repo()}/issues?state=open&labels=in-progress&per_page=100") or []
+    by_dept: dict[str, list[dict]] = {}
+    for i in waiting:
+        target = team_mod.write_target(team, labels_of(i))
+        if target and (depts is None or target[0] in depts):
+            by_dept.setdefault(target[0], []).append(i)
+    done = []
+    for dept, items in sorted(by_dept.items()):
+        if wip_check(team, dept, open_prs, busy):
+            continue
+        items.sort(key=lambda i: ("priority" not in labels_of(i), i["number"]))
+        # wip-wait는 작성이 실제로 시작될 때(_claude-write in-progress 단계) 뗀다.
+        # 실행이 대기열에서 취소돼도 라벨이 남아 다음 재개 때 다시 잡힌다
+        done.append(team_mod.dispatch_write(repo(), team, items[0]["number"]))
+    return done
 
 
 # ── write: post (claude 잡 안, Claude 실행 뒤) ──────────────
@@ -521,7 +595,7 @@ def review_prep(team: team_mod.Team, pr_no: int) -> dict:
         if (s.get("creator") or {}).get("login") == team.bot_login and s["context"] in (
             "agent-review", "folder-guard"
         ) and s["state"] == "success" and s.get("description", "").startswith(
-            ("hotfix", "리뷰 생략")
+            ("hotfix", "리뷰 생략", "not required")
         ):
             return {"skip": f"{s['context']}: {s['description']}"}
     team_mod.git("fetch", "--no-tags", "-q", "origin", f"+refs/pull/{pr_no}/head:refs/ax/pr")
@@ -530,6 +604,8 @@ def review_prep(team: team_mod.Team, pr_no: int) -> dict:
     classified = team.classify([c.path for c in changes])
     if not classified.depts and not classified.shared:
         return {"skip": "human_paths만 변경 (guards가 처리)"}
+    if classified.depts and not team.review_required(classified):
+        return {"skip": "not required — 부서 폴더 안 변경 (guards가 처리)"}
     person = review_author_person(team, pr["user"]["login"], pr["head"]["ref"])
     if not person:
         return {"skip": "브랜치에서 부서를 알 수 없음", "fail": True, "head_sha": head}
@@ -537,7 +613,7 @@ def review_prep(team: team_mod.Team, pr_no: int) -> dict:
     if not depts:
         return {"skip": "리뷰 부서 없음", "fail": True, "head_sha": head}
     # cap은 여기서 한 번만 계산해 matrix로 넘긴다 (리뷰어 잡마다 다시 조회하지 않음)
-    caps = team_mod.cap_status(team, sorted({team.owners(d)[0] for d in depts}))
+    caps = team_mod.cap_status(team, sorted({team.owners(d)[0] for d in depts}), "review")
     reviewers = []
     for d in depts:
         owner = team.owners(d)[0]
@@ -640,6 +716,185 @@ def required_checks() -> list[str] | None:
     return list(contexts) if isinstance(contexts, list) else None
 
 
+# ── 턴 한도 → 작업 분할 ───────────────────────────────────
+def hit_max_turns(path: Path | None, limit: int = MAX_WRITE_TURNS) -> bool:
+    """claude-code-action 실행 파일(execution_file)의 result가 턴 한도에 걸렸는지."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))  # type: ignore[arg-type]
+    except (OSError, TypeError, ValueError):
+        return False
+    items = data if isinstance(data, list) else [data]
+    for it in reversed(items):
+        if isinstance(it, dict) and it.get("type") == "result":
+            try:
+                turns = int(it.get("num_turns") or 0)
+            except (TypeError, ValueError):
+                turns = 0
+            return it.get("subtype") == "error_max_turns" or turns > limit
+    return False
+
+
+SPLIT_MARKER = "<!-- needs-split:{run} -->"
+
+
+def mark_needs_split(team: team_mod.Team, issue_no: int) -> str:
+    """재대기하지 않고 사람이 작업을 나누게 한다."""
+    run = os.environ.get("GITHUB_RUN_ID", "")
+    remove_label(issue_no, "in-progress")
+    add_labels(issue_no, [SPLIT_LABEL])
+    comment(issue_no, f"{SPLIT_MARKER.format(run=run)}\n**작업 분할 필요** — "
+            f"작성 에이전트가 턴 한도({MAX_WRITE_TURNS})를 넘었습니다. "
+            "한 번에 하기에 큰 작업입니다.\n"
+            "이 이슈를 더 작은 작업 여러 개로 나눠 각각 to:<부서> 이슈로 올려 주세요. "
+            "나눈 뒤 이 이슈는 닫으면 됩니다. (자동 재시도하지 않음)")
+    return "needs-split"
+
+
+# ── 봇 PR ci 실패 → 힌트 남기고 닫고 재대기 ─────────────────
+ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+LOG_PREFIX = re.compile(r"^\S+\t[^\t]*\t")  # gh run view --log-failed: "잡\t단계\t"
+STAMP = re.compile(r"^\ufeff?\d{4}-\d\d-\d\dT[\d:.]+Z ?")
+LOG_NOISE = ("##[group]", "##[endgroup]", "[command]", "shell:", "env:", "Post job", "Cleaning up")
+LOG_KEEP = re.compile(
+    r"FAILED|^E\s|Error|error|-->|^\s*\d+ \||assert|Found \d+ error|깨짐|^\s+- |"
+    r"^[A-Z]\d{3}\s|Traceback|failed|ERROR")
+MAX_HINT_LINES = 40
+MAX_HINT_CHARS = 3000
+
+
+def summarize_ci_log(text: str) -> str:
+    """실패한 ci 단계 로그에서 고칠 때 필요한 줄만 뽑는다 (실패 테스트, 오류 위치, ruff 코드)."""
+    lines = []
+    for raw in text.splitlines():
+        line = STAMP.sub("", ANSI.sub("", LOG_PREFIX.sub("", raw))).rstrip()
+        if not line.strip() or line.lstrip().startswith(LOG_NOISE) or "DeprecationWarning" in line:
+            continue
+        if "^[[" in line:  # 단계 스크립트 원문 출력 (색 코드가 글자로 찍힌 줄)
+            continue
+        lines.append(line)
+    keep = [x for x in lines if LOG_KEEP.search(x)] or lines[-20:]
+    seen, out = set(), []
+    for x in keep:
+        if x not in seen:
+            seen.add(x)
+            out.append(x)
+    body = "\n".join(out[-MAX_HINT_LINES:]).replace("`" * 3, "'" * 3)
+    return body[-MAX_HINT_CHARS:] or "(실패 로그 요약을 만들지 못함 — ci 실행 로그를 보세요)"
+
+
+def dev_ci_red() -> bool:
+    """dev push ci의 가장 최근 완료 실행이 실패면 True (그때는 봇 PR을 닫지 않는다)."""
+    data = api(f"repos/{repo()}/actions/workflows/ci.yml/runs?branch=dev&event=push"
+               "&status=completed&per_page=1") or {}
+    runs = data.get("workflow_runs", [])
+    return bool(runs) and runs[0].get("conclusion") == "failure"
+
+
+def ci_failed(team: team_mod.Team, run_id: str, head_sha: str, branch: str,
+              dev_red_var: bool) -> str:
+    """봇 부서 PR의 ci가 실패하면 실패 요약을 힌트로 남기고 PR을 닫고 재대기한다.
+
+    dev 자체가 빨간불이면(모든 PR이 같이 실패) 아무것도 하지 않는다.
+    첫 실패는 retry-1로 바로 다시 작성, 같은 이슈 두 번째 실패는 needs-human.
+    """
+    if dev_red_var or dev_ci_red():
+        return "dev 빨간불 — 봇 PR을 닫지 않음 (dev가 고쳐지면 ci를 다시 돌린다)"
+    owner = repo().split("/")[0]
+    prs = api(f"repos/{repo()}/pulls?state=open&head={owner}:{branch}&per_page=10") or []
+    pr = next((x for x in prs if x["head"]["sha"] == head_sha), None)
+    if not pr:
+        return "열린 PR이 없거나 head가 바뀜"
+    if not is_dept_bot_pr(team, pr):
+        return "봇 부서 PR이 아님"
+    issue_no = pr_issue(pr)
+    if not issue_no:
+        return "연결 이슈 표시가 없음"
+    log = gh("run", "view", run_id, "-R", repo(), "--log-failed", check=False)
+    hint = summarize_ci_log(log)
+    reason = f"ci 실패 (PR #{pr['number']}) — 힌트:\n```\n{hint}\n```"
+    result = team_mod.requeue(repo(), team, issue_no, reason, pr=pr["number"], head_sha=head_sha)
+    if result == "retry-1":
+        return f"{result}; {team_mod.dispatch_write(repo(), team, issue_no)}"
+    return result
+
+
+# ── 매일 정리: 48시간 멈춘 봇 PR·이슈 ───────────────────────
+STALE_SKIP_LABELS = {"report", "incident", "in-progress"}
+REPORT_PREFIX = "[report] 정리"
+
+
+def parse_time(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def list_pages(path: str, pages: int = 10) -> list[dict]:
+    out: list[dict] = []
+    for page in range(1, pages + 1):
+        items = api(f"{path}&per_page=100&page={page}") or []
+        out += items
+        if len(items) < 100:
+            break
+    return out
+
+
+def stale_targets(team: team_mod.Team, prs: list[dict], issues: list[dict],
+                  now: datetime) -> tuple[list[dict], list[dict]]:
+    """stale_hours보다 오래 변화가 없는 봇 부서 PR, 봇이 만든 이슈."""
+    cutoff = now - timedelta(hours=team.stale_hours)
+    old_prs = [p for p in prs if is_dept_bot_pr(team, p) and parse_time(p["updated_at"]) < cutoff]
+    old_issues = [
+        i for i in issues
+        if "pull_request" not in i and (i.get("user") or {}).get("login") == team.bot_login
+        and not STALE_SKIP_LABELS & set(labels_of(i)) and parse_time(i["updated_at"]) < cutoff
+    ]
+    return old_prs, old_issues
+
+
+def stale_sweep(team: team_mod.Team, now: datetime | None = None) -> str:
+    now = now or datetime.now(UTC)
+    prs = api(f"repos/{repo()}/pulls?state=open&per_page=100") or []
+    issues = list_pages(f"repos/{repo()}/issues?state=open")
+    old_prs, old_issues = stale_targets(team, prs, issues, now)
+    hours = team.stale_hours
+    lines = []
+    for pr in old_prs:
+        n = pr["number"]
+        comment(n, f"{hours}시간 넘게 변화가 없어 닫습니다 (매일 정리).")
+        api(f"repos/{repo()}/pulls/{n}", "-X", "PATCH", "-f", "state=closed")
+        gh("api", "-X", "DELETE", f"repos/{repo()}/git/refs/heads/{pr['head']['ref']}",
+           check=False)
+        issue_no = pr_issue(pr)
+        if issue_no:
+            remove_label(issue_no, "in-progress")
+            add_labels(issue_no, [team_mod.NEEDS_HUMAN])
+            comment(issue_no, f"연결된 PR #{n}이 {hours}시간 넘게 멈춰 닫았습니다. "
+                    "사람이 확인한 뒤 needs-human 라벨을 떼고 to: 라벨을 다시 붙이면 재개합니다.")
+        lines.append(f"- PR #{n} {pr['title']}" + (f" (이슈 #{issue_no} → needs-human)"
+                                                    if issue_no else ""))
+    for i in old_issues:
+        n = i["number"]
+        comment(n, f"{hours}시간 넘게 변화가 없어 닫습니다 (매일 정리). "
+                "필요하면 다시 열고 to: 라벨을 붙여 주세요.")
+        add_labels(n, [STALE_LABEL])
+        api(f"repos/{repo()}/issues/{n}", "-X", "PATCH", "-f", "state=closed",
+            "-f", "state_reason=not_planned")
+        lines.append(f"- 이슈 #{n} {i['title']}")
+    resumed = wip_resume(team)
+    day = now.strftime("%Y-%m-%d")
+    body = [f"{hours}시간 넘게 변화가 없던 봇 PR·이슈 정리 ({day} UTC)", ""]
+    body += lines or ["- 닫은 것 없음"]
+    if resumed:
+        body += ["", "**wip-wait 재개**", *[f"- {r}" for r in resumed]]
+    for old in issues:
+        if old.get("title", "").startswith(REPORT_PREFIX) and (old.get("user") or {}).get(
+                "login") == team.bot_login:
+            api(f"repos/{repo()}/issues/{old['number']}", "-X", "PATCH", "-f", "state=closed")
+    new = api(f"repos/{repo()}/issues", "-X", "POST", "-f", f"title={REPORT_PREFIX} {day}",
+              "-f", "body=" + "\n".join(body), "-f", "labels[]=report")
+    return (f"PR {len(old_prs)}·이슈 {len(old_issues)} 닫음, 재개 {len(resumed)}, "
+            f"report #{new['number']}")
+
+
 # ── CLI ──────────────────────────────────────────────────
 def main(argv: list[str] | None = None) -> int:  # noqa: C901 - 단계별 분기
     ap = argparse.ArgumentParser(prog="claude_jobs.py")
@@ -668,6 +923,18 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - 단계별 분기
     p = sub.add_parser("write-finalize")
     p.add_argument("--issue", type=int, required=True)
     p.add_argument("--reason", required=True)
+    p.add_argument("--max-turns", default="false")
+    p = sub.add_parser("max-turns")
+    p.add_argument("--file", type=Path)
+    p.add_argument("--limit", type=int, default=MAX_WRITE_TURNS)
+    p = sub.add_parser("ci-failed")
+    p.add_argument("--run-id", required=True)
+    p.add_argument("--head-sha", required=True)
+    p.add_argument("--branch", required=True)
+    p.add_argument("--dev-red", default="off")
+    p = sub.add_parser("wip-resume")
+    p.add_argument("--branch", default="")
+    sub.add_parser("stale-sweep")
     p = sub.add_parser("claude-settings")
     p.add_argument("--dept", required=True)
     p.add_argument("--trusted", type=Path, required=True)
@@ -717,8 +984,32 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - 단계별 분기
                               args.patch, args.report))
             return 0
         if args.cmd == "write-finalize":
-            print(team_mod.requeue(repo(), team, args.issue, args.reason,
-                                   run_id=os.environ.get("GITHUB_RUN_ID")))
+            if args.max_turns == "true":
+                print(mark_needs_split(team, args.issue))
+                return 0
+            result = team_mod.requeue(repo(), team, args.issue, args.reason,
+                                      run_id=os.environ.get("GITHUB_RUN_ID"))
+            print(result)
+            if result == "retry-1":  # 첫 실패는 한 번 더 시도, 두 번째는 needs-human
+                print(team_mod.dispatch_write(repo(), team, args.issue))
+            return 0
+        if args.cmd == "max-turns":
+            hit = hit_max_turns(args.file, args.limit)
+            set_output(max_turns="true" if hit else "false")
+            return 0
+        if args.cmd == "ci-failed":
+            print(ci_failed(team, args.run_id, args.head_sha, args.branch, args.dev_red == "on"))
+            return 0
+        if args.cmd == "wip-resume":
+            dept = team.dept_of_branch(args.branch) if args.branch else None
+            if args.branch and not dept:
+                print("부서 브랜치가 아님")
+                return 0
+            for line in wip_resume(team, [dept] if dept else None) or ["재개할 이슈 없음"]:
+                print(line)
+            return 0
+        if args.cmd == "stale-sweep":
+            print(stale_sweep(team))
             return 0
         if args.cmd == "review-prep":
             plan = review_prep(team, args.pr)

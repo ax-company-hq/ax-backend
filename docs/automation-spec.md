@@ -76,7 +76,8 @@ docs/requirements.md (사람이 수정) ──claude-plan──▶ 작업 이슈
 - 대체 규칙: 리뷰 부서 담당이 PR 작성자와 같은 사람이면 `fallback_order`(orchestrator, data, finance, planning, support, marketing)에서 작성자·다른 리뷰어와 겹치지 않는 첫 부서로 바꾼다.
 - 에이전트 PR은 부서 하나만 바꿀 수 있다. 사람 PR은 그 사람이 맡은 부서 여러 개를 함께 바꿀 수 있고, 해당 리뷰 부서 전부가 승인해야 한다.
 - 부서 id `infra`는 `infra/` 폴더(준하), `dejafix`는 `agents/infra-dejafix/`(예진)다. 브랜치 접두사로 폴더 이름(`infra-dejafix/…`)을 써도 dejafix로 인식한다.
-- contracts는 사람 승인 없이 에이전트 2명 리뷰와 하위 호환 검사로 머지한다. 사람 승인으로 바꾸려면 CODEOWNERS에 `/contracts/`를 추가하면 된다.
+- contracts는 에이전트 2명 리뷰, 하위 호환 검사, code owner(준하·태윤·재현 중 한 명) 승인으로 머지한다 (CODEOWNERS `/contracts/`).
+  `.github/`·`.claude/`·`scripts/`·`CLAUDE.md`의 code owner는 재현·준하·태윤, 그 밖의 human_paths는 재현·준하.
 
 
 ## 구현 규칙 (확인된 사실)
@@ -99,13 +100,16 @@ anthropics/claude-code-action@v1의 입력은 공식 문서(code.claude.com/docs
 
 ### 0. 설정 원본 (.github/team.yml)
 members:
-  JangJaehyeonn:  { name: 재현, token: CLAUDE_TOKEN_JAEHYEON,  daily_cap: 20 }
-  2taeyoon:       { name: 태윤, token: CLAUDE_TOKEN_TAEYOON,   daily_cap: 20 }
-  haakim7:        { name: 준하, token: CLAUDE_TOKEN_JUNHA,     daily_cap: 20 }
-  NYejin:         { name: 예진, token: CLAUDE_TOKEN_YEJIN,     daily_cap: 20 }
-  bxbae:          { name: 병환, token: CLAUDE_TOKEN_BYUNGHWAN, daily_cap: 20 }
-  areatmadm:      { name: 재헌, token: CLAUDE_TOKEN_JAEHEON,   daily_cap: 20 }
+  JangJaehyeonn:  { name: 재현, token: CLAUDE_TOKEN_JAEHYEON,  write_cap: 15, review_cap: 15 }
+  2taeyoon:       { name: 태윤, token: CLAUDE_TOKEN_TAEYOON,   write_cap: 15, review_cap: 15 }
+  haakim7:        { name: 준하, token: CLAUDE_TOKEN_JUNHA,     write_cap: 15, review_cap: 15 }
+  NYejin:         { name: 예진, token: CLAUDE_TOKEN_YEJIN,     write_cap: 15, review_cap: 15 }
+  bxbae:          { name: 병환, token: CLAUDE_TOKEN_BYUNGHWAN, write_cap: 15, review_cap: 15 }
+  areatmadm:      { name: 재헌, token: CLAUDE_TOKEN_JAEHEON,   write_cap: 15, review_cap: 15 }
 bot_login: ax-company-hq-bot[bot]   # `gh api apps/ax-company-hq-bot`로 확인 (앱 slug: ax-company-hq-bot)
+review_required_depts: [contracts, agent-template]   # 이 부서를 건드렸거나 부서 2개 이상일 때만 agent-review (11장)
+wip: { open_bot_prs: 2, in_progress_issues: 3 }      # 부서 동시 작성 한도 (11장)
+stale_hours: 48                                      # 매일 정리 기준 (11장)
 depts:      # id: { folder, aliases, owners(첫 번째가 실행 토큰), env_prefix }
   data:           { folder: agents/data,          owners: [JangJaehyeonn],  env_prefix: DATA }
   memory:         { folder: memory,               owners: [JangJaehyeonn],  env_prefix: MEMORY }
@@ -138,9 +142,9 @@ bot_branches:   # 작성자가 bot_login일 때만 인정. 리뷰 생략 여부�
   is-member <login> · is-trusted <login> (6명 + bot_login) · owner-token <dept> · dept-of-branch <branch> (folder 이름·aliases 포함)
   depts-of <login> · check-diff <depts…> <base_sha> <head_sha> (merge-base 기준 three-dot, human_paths·예외·shared_rules·bot_branches 적용, 위반 목록 출력)
   reviewers-for <base_sha> <head_sha> <author_person> (봇 PR이면 author_person = 브랜치 부서의 실행 토큰 주인, types/sync-는 바뀐 앱 부서의 주인. 빈 목록이면 exit 1) · arbiter-for <author_dept> <reviewer_depts…>
-  cap-ok <login> (오늘 UTC 기준, ax-backend·ax-frontend 두 레포에서 이름에 `claude:<토큰 부서>:`가 포함된 잡(재사용 워크플로의 `호출자 / claude:…` 형태 포함) 중
-    그 사람이 실행 토큰 주인인 부서 것의 합 < daily_cap. 실제로 실행된(conclusion이 skipped가 아닌) 잡만 센다. 조회 토큰은 두 레포 범위. Claude 워크플로 파일의 실행만 조회해 API 호출을 줄임)
-  requeue <issue> <reason> <pr> <head_sha> (PR이 있으면 닫고 그 브랜치 삭제, 이슈가 닫혀 있으면 다시 열기, in-progress 제거, 이유 코멘트, retry-1→2→3, 3 다음은 blocked.
+  cap-ok <login> --kind write|review (오늘 UTC 기준, ax-backend·ax-frontend 두 레포에서 이름에 `claude:<토큰 부서>:`가 포함된 잡(재사용 워크플로의 `호출자 / claude:…` 형태 포함) 중
+    그 사람이 실행 토큰 주인인 부서 것의 합 < write_cap(작성: _claude-write·claude-request) 또는 review_cap(리뷰: claude-review). 둘을 따로 센다. 실제로 실행된(conclusion이 skipped가 아닌) 잡만 센다. 조회 토큰은 두 레포 범위. Claude 워크플로 파일의 실행만 조회해 API 호출을 줄임)
+  requeue <issue> <reason> <pr> <head_sha> (PR이 있으면 닫고 그 브랜치 삭제, 이슈가 닫혀 있으면 다시 열기, in-progress 제거, 이유 코멘트, 첫 실패는 retry-1, 같은 이슈 두 번째 실패는 needs-human (11장).
     중복 방지 키: PR이 있으면 (pr, head_sha), 없으면 (issue, 호출한 워크플로 run_id). 같은 키로 이미 requeue했으면 아무것도 안 함 —
     코멘트에 `<!-- requeue:<키> -->` 표시. 모든 재대기는 이 함수 하나로)
 
@@ -245,13 +249,13 @@ guards.yml — 트리거: pull_request_target [opened, synchronize, reopened, re
 concurrency `guards-<PR>` cancel-in-progress: true. 포크 PR은 바로 folder-guard failure("external")
 - synchronize인데 hotfix 라벨이 있으면 라벨을 뗀다 (새 커밋은 다시 승인받아야 함)
 - 현재 head SHA에 ax-bot이 쓴 유효한 hotfix 상태가 있으면 이 워크플로는 어떤 상태도 쓰지 않고 끝낸다
-- 리뷰 생략 대상(bot_branches의 review: skip, 사람 PR이 human_paths만 변경)은 이 워크플로가 `agent-review` success를 쓴다 (AX_AUTOMATION과 무관하게 머지 가능)
+- 리뷰 생략 대상(bot_branches의 review: skip, 사람 PR이 human_paths만 변경, 부서 하나 안에서만 바뀐 PR)은 이 워크플로가 `agent-review` success를 쓴다 (AX_AUTOMATION과 무관하게 머지 가능). 부서 하나 안 변경은 설명 "not required …" (11장)
 - folder-guard:
   - bot_login PR: 부서는 브랜치에서 판단(dept-of-branch). bot_branches면 그 규칙(허용 경로 검사 포함). 아니면 check-diff <그 부서> 통과
   - 사람 PR: human_paths만 바꿨으면 통과(대신 code owner 리뷰가 필수로 걸림). 아니면 check-diff <depts-of 작성자> 통과
   - 어느 경우든 깊이와 상관없이 `CLAUDE.md`, `CLAUDE.local.md`, `.claude/`, `.mcp.json`이 부서 폴더 안에 생기면 실패 (사람 PR이 루트 것을 바꾸는 건 human_paths)
   - 실패: 이유 코멘트. bot_login PR이면 닫고 requeue("다른 폴더 변경은 to:<부서> 요청으로 분리")
-- test-guard: merge-base 대비 tests 파일 삭제, `def test_` 수 감소(AST 정적 계산), 테스트 함수 안 assert 수 50% 이상 감소 → 실패 + 코멘트.
+- test-guard: merge-base 대비 부서별 합계로 `def test_` 수 감소, 테스트 함수 안 assert 수 감소(AST 정적 계산) → 실패 + 코멘트. 파일 분할·이동은 같은 부서 합계가 줄지 않으면 통과 (11장).
   bot_login PR이면 requeue. bot_branches(revert/ 등)는 성공
 - dev-health: repo 변수 AX_DEV_RED가 on이면 pending("dev 빨간불 — 복구 후 자동 재개"), 아니면 success. revert/ 브랜치는 항상 success
 hotfix.yml — pull_request_target labeled(hotfix만), 스위치 무관:
@@ -335,13 +339,31 @@ claude-review.yml — 트리거: pull_request_target [opened, synchronize, reope
   - bot_login PR의 최신 ci가 실패인데 claude-ci-fix가 실행 중이 아니고 ci-fix-2가 없으면 claude-ci-fix 재dispatch
   - quota 라벨·상태는 UTC 날짜가 바뀌면 해제
 - daily-report.yml — `0 0 * * *`: 지난 24시간 머지, 사람별 Claude 잡 수/상한, 리뷰 라운드·arbiter 판정, requeue·blocked, revert·incident, e2e, AX_* 변수 → report 이슈 1개 (전날 것은 닫음)
-- scripts/setup-labels.sh: external, task, request, priority, in-progress, blocked, obsolete, quota, incident, reverted, arbiter-fixed,
+- scripts/setup-labels.sh: external, task, request, priority, in-progress, blocked, obsolete, quota, needs-human, needs-split, wip-wait, stale, incident, reverted, arbiter-fixed,
   retry-1~3, review-round-1~3, ci-fix-1, ci-fix-2, phase:1~3, hotfix, delegated, no-op, generated-pr, report, dept:·to:·by:<부서>(전부)
 
 ### 10. 운영
 - 사람이 개입하는 방법 (이 문서가 운영 안내서를 겸한다)
   (blocked 해제 = blocked·retry 라벨 제거 / 데모 전 main 동결 = AX_RELEASE=off / 토큰 유출 의심 = 그 사람 시크릿 즉시 삭제 → 새 토큰 발급·재등록 /
    사람 PR이 dev를 깨뜨린 incident = 그 사람이 수정 PR)
+
+### 11. 단순화 (막히는 PR·이슈 줄이기) — 1~10장보다 우선
+- 리뷰 범위: agent-review는 review_required_depts(contracts, agent-template)를 건드렸거나 부서 2개 이상에 걸친 PR에만 돈다.
+  부서 하나 안에서만 바뀐 PR은 guards가 `agent-review` success("not required — 부서 폴더 안 변경")를 쓰고 claude-review prep은 종료.
+  필수 체크 구성은 그대로 (agent-review는 계속 필수). 판정 함수: team.py `Team.review_required`, CLI `review-required`
+- cap 분리: 사람마다 write_cap(작성)·review_cap(리뷰)을 따로 센다. 기본 15/15. run 제목으로 종류를 나눈다 (team.py `run_kind`)
+- WIP 제한: _claude-write prep에서 부서의 열린 봇 PR(부서 브랜치)이 open_bot_prs 이상이거나 진행 중(in-progress) to:/dept: 이슈가
+  in_progress_issues 이상이면 시작하지 않고 `wip-wait` 라벨 + 코멘트. wip-resume.yml(봇 PR closed)과 stale-sweep이 자리가 난 부서의
+  wip-wait 이슈 1개(priority → 번호 순)를 _claude-write로 다시 실행한다
+- 실패 처리: 봇 부서 PR이 관문(guards) 또는 ci에서 실패하면 실패 요약을 힌트로 이슈에 남기고 PR 닫기·브랜치 삭제·재대기(team.py requeue).
+  첫 실패(retry-1)는 바로 _claude-write를 다시 실행, 같은 이슈 두 번째 실패는 `needs-human`(자동 재시도 멈춤).
+  ci 실패는 bot-ci-failed.yml(workflow_run ci)이 처리하고, AX_DEV_RED=on이거나 dev push ci의 최근 완료 실행이 실패면 아무것도 하지 않는다.
+  claude-ci-fix·address(2단계)는 이 규칙으로 대신한다
+- 턴 한도: 작성 Claude 단계가 --max-turns를 넘으면(execution_file의 result) 재대기하지 않고 `needs-split` 라벨 + "작업 분할 필요" 코멘트
+- 매일 정리: stale-sweep.yml(`0 1 * * *`, AX_AUTOMATION=on) — stale_hours보다 오래 변화 없는 봇 부서 PR은 닫고(브랜치 삭제, 연결 이슈 needs-human),
+  봇이 만든 이슈(report·incident·in-progress 제외)는 `stale` 라벨로 닫는다. 목록을 `[report] 정리 <날짜>` 이슈에 남기고 전날 것은 닫는다.
+  revert/·openapi/sync- 같은 봇 브랜치 PR은 dev-health 담당이라 건드리지 않는다
+- 기준 문서와 다른 동작: docs PR(requirements·agent-common)을 먼저 합의·머지한 뒤 코드 PR (CLAUDE.md 작업 규칙 11, review.md 막는 기준 1)
 
 ### 완료 기준 (각 단계는 자기 범위에 해당하는 항목만)
 - team.py 단위 테스트: 리뷰어 표 모든 행, 같은 사람 대체, contracts 대체, 빈 목록 실패, check-diff(human_paths·루트 파일·notes 예외·uv.lock·심볼릭 링크 거부·bot_branches),

@@ -152,36 +152,46 @@
   "human_path_exceptions": "docs/notes/",
   "members": {
     "2taeyoon": {
-      "daily_cap": 20,
       "name": "태윤",
-      "token": "CLAUDE_TOKEN_TAEYOON"
+      "review_cap": 15,
+      "token": "CLAUDE_TOKEN_TAEYOON",
+      "write_cap": 15
     },
     "JangJaehyeonn": {
-      "daily_cap": 20,
       "name": "재현",
-      "token": "CLAUDE_TOKEN_JAEHYEON"
+      "review_cap": 15,
+      "token": "CLAUDE_TOKEN_JAEHYEON",
+      "write_cap": 15
     },
     "NYejin": {
-      "daily_cap": 20,
       "name": "예진",
-      "token": "CLAUDE_TOKEN_YEJIN"
+      "review_cap": 15,
+      "token": "CLAUDE_TOKEN_YEJIN",
+      "write_cap": 15
     },
     "areatmadm": {
-      "daily_cap": 20,
       "name": "재헌",
-      "token": "CLAUDE_TOKEN_JAEHEON"
+      "review_cap": 15,
+      "token": "CLAUDE_TOKEN_JAEHEON",
+      "write_cap": 15
     },
     "bxbae": {
-      "daily_cap": 20,
       "name": "병환",
-      "token": "CLAUDE_TOKEN_BYUNGHWAN"
+      "review_cap": 15,
+      "token": "CLAUDE_TOKEN_BYUNGHWAN",
+      "write_cap": 15
     },
     "haakim7": {
-      "daily_cap": 20,
       "name": "준하",
-      "token": "CLAUDE_TOKEN_JUNHA"
+      "review_cap": 15,
+      "token": "CLAUDE_TOKEN_JUNHA",
+      "write_cap": 15
     }
   },
+  "review_required_depts": [
+    "contracts",
+    "agent-template"
+  ],
   "reviewers": {
     "agent-template": [
       "finance",
@@ -234,5 +244,10 @@
   },
   "shared_rules": {
     "uv.lock": "requires_pyproject"
+  },
+  "stale_hours": 48,
+  "wip": {
+    "in_progress_issues": 3,
+    "open_bot_prs": 2
   }
 }

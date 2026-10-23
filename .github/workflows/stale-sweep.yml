@@ -1,0 +1,54 @@
+name: stale-sweep
+
+# 매일 1회: stale_hours(48시간)보다 오래 변화가 없는 봇 부서 PR·봇 이슈를 닫고 목록을 report 이슈에 남긴다.
+# 자리가 난 부서의 wip-wait 이슈도 재개한다 (docs/automation-spec.md 11장).
+on:
+  schedule:
+    - cron: "0 1 * * *" # 10시 KST
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: stale-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    if: >-
+      vars.AX_AUTOMATION == 'on' &&
+      (github.event_name == 'schedule' || github.actor != 'ax-company-hq-bot[bot]')
+    runs-on: ubuntu-latest
+    environment: bot
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: dev, persist-credentials: false, sparse-checkout: .github }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: team.py 의존성
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet --require-hashes -r .github/scripts/requirements.txt
+      - name: 수동 실행은 팀원만
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          ACTOR: ${{ github.actor }}
+        run: |
+          jq -e --arg a "$ACTOR" '.members | has($a)' .github/team.json >/dev/null || { echo "::error::팀원만"; exit 1; }
+      - name: ax-bot token
+        id: bot
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ secrets.AX_BOT_APP_ID }}
+          private-key: ${{ secrets.AX_BOT_PRIVATE_KEY }}
+          permission-issues: write
+          permission-pull-requests: write
+          permission-contents: write
+          permission-actions: write
+      - name: 정리 · report
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+        run: |
+          "$RUNNER_TEMP/venv/bin/python" -I .github/scripts/claude_jobs.py stale-sweep
