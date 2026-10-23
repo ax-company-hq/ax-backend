@@ -80,13 +80,8 @@ def _coupon(inc: Incident) -> dict[str, Any]:
 
 
 def _loss(inc: Incident) -> dict[str, Any]:
-    impact = _out(inc, "impact")
-    coupon = _out(inc, "coupon")
-    return {
-        "damage_amount": impact.get("damage_amount"),
-        "failed_order_count": impact.get("failed_order_count"),
-        "compensation_paid": coupon.get("total_amount"),
-    }
+    # 재무는 영향 숫자를 data에서 직접 조회하고 보상액은 자기 장부에서 센다. 총괄은 구간만 준다.
+    return {**_window(inc), "context_id": inc.context_id}
 
 
 def _recovery(inc: Incident) -> dict[str, Any]:

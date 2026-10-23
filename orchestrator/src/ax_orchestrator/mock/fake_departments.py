@@ -40,7 +40,7 @@ CARDS: dict[str, list[tuple[str, str, str | None]]] = {
         ("issue_coupon", "B", "finance"),
     ],
     "support": [("request_compensation", "A", None), ("send_reply", "A", None)],
-    "finance": [("loss_aggregation", "read", None), ("verify_amount", "read", None)],
+    "finance": [("loss_aggregation", "read", None)],
     "hr": [("record_case", "A", None)],
 }
 OWNERS = {
@@ -113,13 +113,18 @@ DEFAULT_OUTPUTS: dict[str, Callable[[AgentRequest], dict[str, Any]]] = {
         issued=len(r.input.get("customer_ids", [])),
         total_amount=len(r.input.get("customer_ids", [])) * 5_000,
     ),
+    # 실제 재무 `LossReport` 모양(받지 못한 값은 None = 확인할 수 없음)
     "loss_aggregation": lambda r: _ok(
-        damage_amount=r.input.get("damage_amount"),
-        compensation_paid=r.input.get("compensation_paid"),
+        failed_orders=128,
+        affected_customers=87,
+        lost_amount=5_430_000,
+        compensation_coupon_count=87,
+        compensation_total=435_000,
+        total_loss=5_865_000,
+        summary="목 데이터",
     ),
     "verify_recovery": lambda r: _ok(recovered=True, infra_metrics_ok=True),
     "record_case": lambda r: _ok(card_id="card_mock01"),
-    "verify_amount": lambda r: _ok(match=True),
 }
 
 
@@ -182,7 +187,7 @@ class FakeDepartments:
                 status=TaskStatus.INPUT_REQUIRED,
                 reason_code=InputReason.DEPT_INPUT,
                 output={
-                    "question": {"skill": "verify_amount", "input": {"amount": 1}},
+                    "question": {"skill": "impact_analysis", "input": {}},
                 },
             )
         build = DEFAULT_OUTPUTS.get(req.skill, lambda r: {})

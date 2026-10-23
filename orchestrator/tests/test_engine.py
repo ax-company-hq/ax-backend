@@ -36,6 +36,8 @@ async def test_calls_carry_context_and_unique_idempotency_keys(harness) -> None:
     for _, req in harness.fakes.calls:
         assert req.meta.context_id == inc.context_id
         assert req.meta.idempotency_key.startswith(f"{inc.context_id}:{req.skill}:")
+    for _, req in harness.fakes.calls:  # 새 요청은 path에 자기 이름을 붙이고 3홉 이내여야 한다
+        assert "orchestrator" in req.meta.path and len(req.meta.path) <= 3
     keys = [r.meta.idempotency_key for _, r in harness.fakes.calls]
     assert len(keys) == len(set(keys))
 
@@ -186,7 +188,7 @@ async def test_dept_input_is_relayed(harness) -> None:
     inc = await run(harness)
     assert inc.status == "resolved"
     skills = [r.skill for _, r in harness.fakes.calls]
-    assert "verify_amount" in skills
+    assert skills.count("impact_analysis") == 2  # 총괄이 필요한 부서에 질의
     again = [r for _, r in harness.fakes.calls if r.skill == "request_compensation"][-1]
     assert "answers" in again.input
 
@@ -197,3 +199,26 @@ async def test_coupon_is_sent_once_with_sequence(harness) -> None:
     coupons = [r for _, r in harness.fakes.calls if r.skill == "issue_coupon"]
     assert len(coupons) == 1 and coupons[0].sequence == 1
     assert inc.steps["coupon"].grade == "B"
+
+
+@pytest.mark.asyncio
+async def test_loss_aggregation_gets_window_and_context_only(harness) -> None:
+    inc = await run(harness)
+    req = next(r for _, r in harness.fakes.calls if r.skill == "loss_aggregation")
+    assert set(req.input) == {"window_from", "window_to", "context_id"}
+    assert req.input["context_id"] == inc.context_id
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_does_not_call_verify_amount(harness) -> None:
+    await run(harness)
+    assert "verify_amount" not in [r.skill for _, r in harness.fakes.calls]
+
+
+@pytest.mark.asyncio
+async def test_record_case_carries_facts_not_fixed_text(harness) -> None:
+    harness.fakes.script("marketing", "publish_notice", "fail", "fail", "fail")
+    await run(harness)
+    req = next(r for _, r in harness.fakes.calls if r.skill == "record_case")
+    assert "publish_notice" in req.input["decision_reason"]
+    assert req.input["alternatives_considered"]

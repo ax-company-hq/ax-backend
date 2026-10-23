@@ -159,6 +159,7 @@ class Engine:
         meta = RequestMeta(
             context_id=inc.context_id,
             token="orchestrator",
+            path=["orchestrator"],
             deadline=now() + timedelta(seconds=self.step_timeout),
             idempotency_key=f"{inc.context_id}:{skill}:{step.id}",
         )
@@ -342,8 +343,18 @@ class Engine:
             "context_id": inc.context_id,
             "kind": "incident",
             "summary": f"{inc.title} — 완료 {len(done)}단계, 미완료 {len(problems)}단계",
-            "decision_reason": "시나리오 A plan에 따라 부서에 분배하고 결과를 취합함",
-            "alternatives_considered": [],
+            "decision_reason": (
+                f"{inc.kind} plan 실행 결과 — 완료: {', '.join(r.skill for r in done) or '없음'}; "
+                f"미완료: {', '.join(r.skill for r in problems) or '없음'}"
+            ),
+            "alternatives_considered": [
+                *(f"{r.skill}: {r.status} ({r.note})" for r in problems),
+                *(
+                    f"{r.skill}: {r.dept}로 이관 ({r.reason_code})"
+                    for r in done
+                    if r.transferred_to
+                ),
+            ],
             "source_refs": [f"step:{r.step_id}" for r in done],
             "author": self.author,
             "area": "infra",
