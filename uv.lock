@@ -14,7 +14,6 @@ members = [
     "ax-agent-template",
     "ax-contracts",
     "ax-dashboard-api",
-    "ax-e2e",
     "ax-memory",
     "ax-orchestrator",
     "ax-safety",
@@ -256,41 +255,6 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "uvicorn", specifier = ">=0.30" },
-]
-
-[[package]]
-name = "ax-e2e"
-version = "0.1.0"
-source = { editable = "e2e" }
-dependencies = [
-    { name = "ax-agent-data" },
-    { name = "ax-agent-finance" },
-    { name = "ax-agent-hr" },
-    { name = "ax-agent-infra" },
-    { name = "ax-agent-marketing" },
-    { name = "ax-agent-planning" },
-    { name = "ax-agent-support" },
-    { name = "ax-agent-template" },
-    { name = "ax-contracts" },
-    { name = "ax-orchestrator" },
-    { name = "fastapi" },
-    { name = "httpx" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "ax-agent-data", editable = "agents/data" },
-    { name = "ax-agent-finance", editable = "agents/finance" },
-    { name = "ax-agent-hr", editable = "agents/hr" },
-    { name = "ax-agent-infra", editable = "agents/infra-dejafix" },
-    { name = "ax-agent-marketing", editable = "agents/marketing" },
-    { name = "ax-agent-planning", editable = "agents/planning" },
-    { name = "ax-agent-support", editable = "agents/support" },
-    { name = "ax-agent-template", editable = "agent-template" },
-    { name = "ax-contracts", editable = "contracts" },
-    { name = "ax-orchestrator", editable = "orchestrator" },
-    { name = "fastapi", specifier = ">=0.115" },
-    { name = "httpx", specifier = ">=0.27" },
 ]
 
 [[package]]
