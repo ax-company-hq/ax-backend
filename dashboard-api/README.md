@@ -101,6 +101,8 @@ support 출력은 `claim_mapping.py`에서 화면 모델로 바꾼다 (값을 �
 | 경로 (`/api/dashboard` 아래) | 응답 `data` |
 | --- | --- |
 | GET `/communications?dept&context_id` | 한 줄(`CommunicationLine`)의 배열, 시간 오름차순. `meta.total`, `meta.truncated` |
+| GET `/incidents`, `/incidents/{context_id}` | AI 대화방. 총괄 `GET /api/incidents`의 사건(steps·events·pending_holds)을 그대로 중계(읽기 전용). 총괄 주소는 `AX_ORCHESTRATOR_URL` |
+| GET `/executions?context_id` | AI 대화방. 안전 관문 실행 기록에서 코드가 만든 필드만(`computed_amount`, `outcome` 5가지). `params` 원문 없음. 안전 관문 주소는 `AX_SAFETY_URL` |
 - 읽기는 공통 로그 읽기 조회(`CommonLogQuery`/`CommonLogResult`)만 쓴다. 쓰는 쪽은 agent-template이 A2A 요청·응답을 자동 기록하도록 요청해 둔 상태다(이슈 #242). 읽기 구현이 아직 없어서 목 모드가 아니면 `set_reader`로 읽기 함수를 꽂기 전까지 503 `UPSTREAM_NOT_CONNECTED`다.
 - 한 줄에는 코드가 만든 필드만 담는다: `from_agent` → `to_agent`, `skill`, `outcome`(`completed`·`rejected`·`held`·`needs_human`·`in_progress`), `occurred_at`, `context_id`, `execution_id`. `payload`와 고객 원문은 넣지 않는다. `execution_id`로 안전 레이어 결정과 이어 "보류·거부"를 한 줄에 보여 줄 수 있다.
 - `dept`는 그 부서가 보냈거나 받은 줄만, `context_id`는 같은 사건끼리 묶어 본다. 방향은 요청(`request_received`)이면 요청자 → 받은 쪽, 결과·결정이면 기록한 쪽 → 요청자다. 이벤트 발행·기억 참조는 부서 간 대화가 아니라서 뺀다. 이관 큐로 넘긴 건(`escalated`)은 `needs_human`으로 보인다.

@@ -37,6 +37,9 @@ from ax_dashboard_api import (
 from ax_dashboard_api import (
     communications as communication_log,
 )
+from ax_dashboard_api import (
+    incidents as incident_log,
+)
 from ax_dashboard_api.envelope import ApiError, is_mock, ok, require_mock
 from ax_dashboard_api.schemas import (
     AgentMessageBody,
@@ -502,6 +505,25 @@ def communications(dept: str | None = None, context_id: str | None = None) -> di
     body = ok(lines, total=len(lines))
     body["meta"]["truncated"] = truncated
     return body
+
+
+@router.get("/incidents")
+async def incidents() -> dict:
+    """AI 대화방: 총괄의 사건 기록(steps·events·pending_holds)을 그대로 중계한다 (읽기 전용)."""
+    items = await incident_log.list_incidents()
+    return ok(items, total=len(items))
+
+
+@router.get("/incidents/{context_id}")
+async def incident(context_id: str) -> dict:
+    return ok(await incident_log.get_incident(context_id))
+
+
+@router.get("/executions")
+async def executions(context_id: str | None = None) -> dict:
+    """AI 대화방: 안전 관문 실행 기록. 금액은 `computed_amount`만, `params` 원문은 없다."""
+    items = await incident_log.list_executions(context_id)
+    return ok(items, total=len(items))
 
 
 def _given(**filters: str | None) -> dict[str, str]:
