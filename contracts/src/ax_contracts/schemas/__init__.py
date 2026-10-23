@@ -102,6 +102,8 @@ from ax_contracts.schemas.message import (
     TaskStatus,
 )
 from ax_contracts.schemas.planning import (
+    CreateTicketInput,
+    CreateTicketOutput,
     FindRelatedPrsInput,
     FindRelatedPrsOutput,
     InProgressItem,
@@ -228,6 +230,8 @@ __all__ = [
     "VerifyHandoverOutput",
     "VerifyRecoveryInput",
     "VerifyRecoveryOutput",
+    "CreateTicketInput",
+    "CreateTicketOutput",
     "FindRelatedPrsInput",
     "FindRelatedPrsOutput",
     "LinkIncidentInput",
