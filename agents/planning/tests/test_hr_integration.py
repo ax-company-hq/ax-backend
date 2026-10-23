@@ -40,11 +40,30 @@ def _verify(a2a_body, ids: list[str], owner_id: str = "emp_01", area: str | None
     )
 
 
+async def _hold_merge(action, params, meta, evidence) -> ExecuteDecision:
+    """merge_pr만 safety C 보류로 돌려주는 관문 (PR을 열어 둔 채 진행 중 항목으로 남긴다)."""
+    if action == "merge_pr":
+        return ExecuteDecision(
+            execution_id="exe_hold", grade="C", status="held", hold_reason="over_threshold"
+        )
+    return ExecuteDecision(execution_id="exe_ok", grade="A", status="executed")
+
+
 def _start_spec7(service) -> None:
-    """SPEC-7 확정 + PR 생성: T-11(백엔드)·T-12(프론트), PR #31(T-11)·PR #32(T-12)."""
+    """SPEC-7 확정 + PR 생성: T-11(백엔드)·T-12(프론트), PR #31(T-11)·PR #32(T-12).
+
+    PR #31의 자동 머지는 safety가 보류한 것으로 두어(교차검증 대기) 두 PR 모두 열려 있게 한다.
+    """
     run(service.answer_question("SPEC-7", "품절 상품도 남겨 두고 품절 표시해 주세요"))
     run(service.confirm_spec("SPEC-7"))
-    run(service.generate_prs("SPEC-7"))
+    gate = service._gate
+    service._gate = _hold_merge
+    try:
+        run(service.generate_prs("SPEC-7"))
+    finally:
+        service._gate = gate
+    pr31 = next(p for p in service.state.prs if p.id == "PR #31")
+    assert pr31.auto_review is not None and pr31.auto_review.state == "교차검증 대기"
 
 
 def _domain(service) -> dict:

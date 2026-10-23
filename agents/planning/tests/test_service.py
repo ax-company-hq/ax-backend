@@ -169,7 +169,15 @@ def test_req12_main_flow(service) -> None:
     decision = service.state.decisions[-1]
     assert (decision.id, decision.spec, decision.from_) == ("D-1", "SPEC-7", "스레드 TH-7")
 
-    run(service.confirm_spec("SPEC-7"))
+    # 질문은 닫혔지만 R2 인사 경고(DC-31)가 남아 자동 확정하지 않는다 → 교차검증 대기
+    spec = next(s for s in service.state.specs if s.id == "SPEC-7")
+    assert spec.status == "초안" and spec.auto_review is not None
+    assert (spec.auto_review.state, spec.auto_review.rules) == (
+        "교차검증 대기",
+        ["spec_rejected_warning"],
+    )
+
+    run(service.confirm_spec("SPEC-7"))  # 판단은 기존 사람 확정 버튼
     assert spec.status == "초안"  # 바뀐 것은 서비스 상태 (복사본 교체)
     spec = next(s for s in service.state.specs if s.id == "SPEC-7")
     assert spec.status == "확정"
@@ -184,26 +192,38 @@ def test_req12_main_flow(service) -> None:
     run(service.generate_prs("SPEC-7"))
     prs = [p for p in service.state.prs if p.task in {"T-11", "T-12"}]
     assert [(p.id, p.reviews) for p in prs] == [("PR #31", ["통과"]), ("PR #32", ["불일치"])]
-    assert [t.state for t in service.state.tasks if t.spec == "SPEC-7"] == ["머지 대기", "PR 검수"]
+    # PR #31: 검수 통과 + merge_pr 규칙 통과 → 자동 머지. PR #32: 검수 불일치 → 수정 대기
+    assert [t.state for t in service.state.tasks if t.spec == "SPEC-7"] == ["완료", "PR 검수"]
     assert prs[0].changed_paths == ["shop-api/cart/service.py"]
+    assert (prs[0].merged, prs[0].auto, prs[0].auto_review) == (True, True, None)
+    assert req(service, "REQ-12").state == "작업 중"
 
     run(service.review_pr("PR #32"))
-    assert service.state.prs[-1].reviews == ["불일치", "통과"]
+    pr32 = service.state.prs[-1]
+    assert pr32.reviews == ["불일치", "통과"]
+    # 재검수 통과지만 shop-web/ 경로가 허용 경로 밖 → 자동 머지 안 함, 교차검증 대기
+    assert not pr32.merged and pr32.auto_review is not None
+    assert pr32.auto_review.state == "교차검증 대기"
+    assert pr32.auto_review.rules == ["pr_allowed_paths"]
 
-    run(service.merge_pr("PR #31"))
+    run(service.merge_pr("PR #31"))  # 이미 자동 머지 → 변화 없음
     assert req(service, "REQ-12").state == "작업 중"
-    run(service.merge_pr("PR #32"))
+    run(service.merge_pr("PR #32"))  # 판단은 기존 사람 머지 버튼
     assert req(service, "REQ-12").state == "완료"
     assert all(p.merged and p.merged_at for p in service.state.prs)
 
     flow = acts(service, "ctx_req_0012")
     texts = [a.text for a in flow if a.point == "record_case"]
     assert "① kind spec_confirmed · SPEC-7" in texts
+    assert "① kind pr_merged · PR #31 (자동 머지)" in texts
     assert "① kind pr_merged · PR #32" in texts
     assert "① kind request_closed · REQ-12" in texts
     assert flow[-1].to == "support" and "완료" in flow[-1].text
     human = [a for a in flow if a.kind == "사람"]
-    assert len(human) == 3  # 확정 1 + 머지 2
+    assert len(human) == 2  # 확정 1 + 머지 1 (PR #31은 자동 머지)
+    assert [a.point for a in flow if a.point == "audit.auto_confirmed"] == []
+    assert next(s for s in service.state.specs if s.id == "SPEC-7").auto_review is None
+    assert service.state.prs[-1].auto_review is None
     gated = [c.action for c in service.gate_calls]
     for action in ("confirm_spec", "split_tasks", "generate_pr", "merge_pr", "record_case"):
         assert action in gated
