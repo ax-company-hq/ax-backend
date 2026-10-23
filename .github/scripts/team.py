@@ -939,10 +939,25 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--pr", type=int)
     p.add_argument("--head-sha")
     p.add_argument("--run-id")
+    p = sub.add_parser("dev-status")  # AX 개발실 status.json (AX_DEVROOM=on일 때만, dev_status.py)
+    p.add_argument("--out", type=Path, help="status.json을 둘 폴더 (기본 환경변수 AX_DEVROOM_DIR)")
+    p.add_argument("--e2e", type=Path, help="e2e-result.json 폴더 (없으면 GitHub artifact)")
+    p.add_argument("--real", type=Path, help="real-result.json 폴더 (없으면 GitHub artifact)")
+    p.add_argument("--morning", type=Path, help="morning.json 폴더 (없으면 GitHub artifact)")
     args = ap.parse_args(argv)
 
     team = Team.load()
     cmd = args.cmd
+
+    if cmd == "dev-status":
+        import dev_status  # 개발실 전용이라 이 명령에서만 불러온다
+
+        env_dir = os.environ.get("AX_DEVROOM_DIR")
+        out = args.out or (Path(env_dir) if env_dir else None)
+        if out is None and dev_status.switch_on():
+            print("--out 또는 AX_DEVROOM_DIR이 필요함", file=sys.stderr)
+            return 1
+        return dev_status.run(team, out or Path("."), args.e2e, args.real, args.morning)
 
     if cmd in ("is-member", "is-trusted"):
         ok = team.is_member(args.login) if cmd == "is-member" else team.is_trusted(args.login)

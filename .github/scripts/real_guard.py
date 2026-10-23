@@ -2,7 +2,8 @@
 """실서버(self-hosted runner) 보안 검사. 표준 라이브러리만 쓴다.
 
   real_guard.py check-actor --actor LOGIN --event NAME [--codeowners PATH]
-      workflow_dispatch를 일으킨 사람이 code owner(.github/ 소유자)인지 본다. schedule은 통과한다.
+      workflow_dispatch를 일으킨 사람이 code owner(.github/ 소유자)인지 본다.
+      schedule·workflow_run(devroom-update)은 통과한다.
   real_guard.py check-runner-label [--workflows DIR]
       `ax-server` 라벨은 허용 목록의 워크플로만 쓸 수 있다. 그 밖에서 쓰면 실패한다.
       (public 레포에서 다른 워크플로·PR이 서버 PC에서 도는 것을 막는 장치)
@@ -43,6 +44,9 @@ def code_owners(path: Path) -> set[str]:
 def actor_allowed(actor: str, event: str, owners: set[str]) -> tuple[bool, str]:
     if event == "schedule":
         return True, "schedule 실행"
+    if event == "workflow_run":
+        # devroom-update만: dev의 자동화 워크플로가 끝났을 때 (PR·포크 실행은 워크플로 if가 거른다)
+        return True, "workflow_run 실행"
     if event != "workflow_dispatch":
         return False, f"허용하지 않는 이벤트: {event}"
     if actor in owners:
