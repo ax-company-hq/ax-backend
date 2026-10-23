@@ -47,6 +47,7 @@ mk needs-human   b60205 "같은 이슈 2회 실패 — 사람 확인 필요 (떼
 mk needs-split   d93f0b "작성이 턴 한도 초과 — 작업을 나눠 다시 올릴 것"
 mk wip-wait      fef2c0 "부서 동시 작성 한도 — 자리가 나면 자동 시작"
 mk stale         cccccc "48시간 변화 없어 매일 정리가 닫음"
+mk core-change   d93f0b "핵심 파일(.github·.claude·CODEOWNERS·기준표) 변경 머지 (사후 확인용)"
 # 사고·복구
 mk incident      b60205 "dev 장애 사건"
 mk reverted      e99695 "dev 깨짐으로 revert됨"

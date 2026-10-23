@@ -264,3 +264,18 @@ def test_apply_second_failure_does_not_redispatch(tmp_path, monkeypatch) -> None
     monkeypatch.setattr(team_mod, "dispatch_write", lambda r, t, n, *dm: dispatched.append(n))
     assert guards.main(["apply", str(f)]) == 0
     assert dispatched == []
+
+
+CORE_FILES = [".github/workflows/x.yml", ".github/CODEOWNERS", ".github/team.yml",
+              ".github/scripts/team.py", ".claude/settings.json", ".claude/hooks/guard-folder.mjs",
+              "CODEOWNERS", "agents/finance/src/finance_agent/ai_review_policy.toml",
+              "safety/src/ax_safety/rules/thresholds.toml"]
+
+
+@pytest.mark.parametrize("path", CORE_FILES)
+@pytest.mark.parametrize("branch", ["finance/1-x-r0", "safety/2-x-r0", "revert/123",
+                                    "openapi/sync-abc1234"])
+def test_bot_pr_touching_core_files_always_fails_folder_guard(team, branch, path) -> None:
+    # code owner 리뷰 필수가 꺼진 뒤 핵심 파일의 유일한 벽: 봇 PR은 어떤 브랜치로도 못 바꾼다
+    plan = decide(team, pr(BOT, branch), [ch(path)])
+    assert states(plan)["folder-guard"] == "failure", (branch, path)

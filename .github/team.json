@@ -54,6 +54,12 @@
     ]
   },
   "contracts_fallback": "data",
+  "core_notify": "JangJaehyeonn",
+  "core_paths": [
+    ".github/",
+    ".claude/",
+    "CODEOWNERS"
+  ],
   "depts": {
     "agent-template": {
       "env_prefix": "AGENT_TEMPLATE",

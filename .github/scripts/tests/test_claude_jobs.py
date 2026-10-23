@@ -661,3 +661,80 @@ def test_write_post_drops_human_files(team, tmp_path: Path) -> None:
     info = cj.write_post(team, "safety", ws, out)
     assert info["kept"] == ["safety/src/ax_safety/gate.py"]
     assert "safety/src/ax_safety/rules/thresholds.toml" in info["dropped"]
+
+
+def core_env(monkeypatch, files, merged="2026-10-23T05:00:00Z", reports=None):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    calls = []
+
+    def fake_api(path, *extra):
+        calls.append((path, extra))
+        if path.endswith("/pulls/9"):
+            return {"merged_at": merged, "base": {"ref": "dev"}, "title": "ci: x",
+                    "user": {"login": "haakim7"}}
+        if "/files?" in path:
+            return [{"filename": f} for f in files]
+        if "labels=report" in path:
+            return reports or []
+        if path.endswith("/issues") and extra:
+            return {"number": 77}
+        return None
+
+    monkeypatch.setattr(cj, "api", fake_api)
+    monkeypatch.setattr(cj, "comment", lambda n, b: calls.append((f"comment {n}", b)))
+    monkeypatch.setattr(cj, "add_labels", lambda n, lbs: calls.append((f"add {n}", tuple(lbs))))
+    return calls
+
+
+def test_core_merged_records_and_mentions(team, monkeypatch) -> None:
+    calls = core_env(monkeypatch, [".github/workflows/ci.yml", "docs/a.md",
+                                   "safety/src/ax_safety/rules/thresholds.toml"],
+                     reports=[{"number": 50, "title": "[report] 정리 2026-10-23",
+                               "user": {"login": BOT}}])
+    assert cj.core_merged(team, 9) == "report #50에 기록"
+    assert ("add 9", ("core-change",)) in calls
+    msg = next(b for p, b in calls if p == "comment 50")
+    assert msg.startswith("@JangJaehyeonn 핵심 파일 변경 머지: #9 ci: x (@haakim7)")
+    assert "`.github/workflows/ci.yml`" in msg and "thresholds.toml" in msg
+    assert "docs/a.md" not in msg
+
+
+def test_core_merged_creates_report_when_none(team, monkeypatch) -> None:
+    calls = core_env(monkeypatch, [".claude/settings.json"])
+    now = cj.parse_time("2026-10-23T06:00:00Z")
+    assert cj.core_merged(team, 9, now) == "report #77에 기록"
+    created = next(e for p, e in calls if p == "repos/o/r/issues" and e)
+    assert "title=[report] 정리 2026-10-23" in created
+
+
+@pytest.mark.parametrize(("files", "merged"), [
+    (["docs/a.md", "agents/data/x.py"], "2026-10-23T05:00:00Z"), ([".github/x.yml"], None)])
+def test_core_merged_skips(team, monkeypatch, files, merged) -> None:
+    calls = core_env(monkeypatch, files, merged)
+    assert cj.core_merged(team, 9) in ("핵심 파일 변경 없음", "dev 머지 아님")
+    assert not any(p.startswith("comment") for p, _ in calls)
+
+
+def test_stale_sweep_lists_core_changes(team, monkeypatch) -> None:
+    now = cj.parse_time("2026-10-23T03:00:00Z")
+    core = [{"number": 88, "title": "ci: y", "user": {"login": "haakim7"},
+             "pull_request": {"merged_at": "2026-10-22T20:00:00Z"}},
+            {"number": 87, "title": "old", "user": {"login": "haakim7"},
+             "pull_request": {"merged_at": "2026-10-21T20:00:00Z"}}]
+    writes = []
+
+    def fake_api(path, *extra):
+        if extra:
+            writes.append((path, extra))
+            return {"number": 99}
+        if "labels=core-change" in path:
+            return core
+        return []
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setattr(cj, "api", fake_api)
+    monkeypatch.setattr(cj, "wip_resume", lambda t: [])
+    cj.stale_sweep(team, now)
+    body = next(x for x in writes[-1][1] if x.startswith("body="))
+    assert "지난 24시간 핵심 파일 변경" in body and "#88 ci: y (@haakim7)" in body
+    assert "#87" not in body

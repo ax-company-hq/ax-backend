@@ -24,6 +24,11 @@ wip: { open_bot_prs: 2, in_progress_issues: 3 }
 # 매일 1회 정리: 이 시간보다 오래 변화가 없는 봇 PR·봇 이슈를 닫는다
 stale_hours: 48
 
+# 핵심 파일: 사람 PR로만 바뀐다 (봇 PR은 folder-guard가 막음). code owner 리뷰 필수가 꺼져 있어
+# 머지되면 report 이슈에 기록하고 core_notify를 멘션한다. human_files(기준표 toml)도 핵심 파일
+core_paths: [.github/, .claude/, CODEOWNERS]
+core_notify: JangJaehyeonn
+
 # id: { folder, aliases, owners(첫 번째가 실행 토큰), env_prefix }
 depts:
   data: { folder: agents/data, owners: [JangJaehyeonn], env_prefix: DATA }

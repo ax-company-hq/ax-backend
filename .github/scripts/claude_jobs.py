@@ -14,6 +14,7 @@ Claude가 도는 잡은 결과물(패치·JSON)만 만든다. GitHub에 쓰는 �
   ci-failed     --run-id R --head-sha S --branch B  (bot: 봇 PR ci 실패 → 힌트 남기고 닫고 재대기)
   wip-resume    [--branch B]                        (bot: 자리가 난 부서의 wip-wait 이슈 1개 재개)
   stale-sweep                                       (bot: 48시간 멈춘 봇 PR·이슈 정리 + report 이슈)
+  core-merged   --pr N                              (bot: 핵심 파일 PR 머지 → report에 멘션 한 줄)
 """
 
 from __future__ import annotations
@@ -916,6 +917,58 @@ def pr_all_green(sha: str) -> bool:
     return all(r.get("status") == "completed" and r.get("conclusion") in GREEN for r in runs)
 
 
+CORE_LABEL = "core-change"
+
+
+def find_or_create_report(team: team_mod.Team, now: datetime) -> dict:
+    """열린 봇 report 이슈 (없으면 오늘 것을 만든다. 매일 정리가 다음 날 새 것으로 바꾼다)."""
+    issues = api(f"repos/{repo()}/issues?state=open&labels=report&per_page=100") or []
+    report = next((i for i in issues if i.get("title", "").startswith(REPORT_PREFIX)
+                   and (i.get("user") or {}).get("login") == team.bot_login), None)
+    if report:
+        return report
+    return api(f"repos/{repo()}/issues", "-X", "POST", "-f",
+               f"title={REPORT_PREFIX} {now.strftime('%Y-%m-%d')}", "-f",
+               "body=핵심 파일 변경 기록 (매일 정리가 하루치를 모아 새 report를 만든다)",
+               "-f", "labels[]=report")
+
+
+def core_merged(team: team_mod.Team, pr_no: int, now: datetime | None = None) -> str:
+    """핵심 파일을 바꾼 PR이 머지되면 core-change 라벨 + report 이슈에 멘션 한 줄."""
+    now = now or datetime.now(UTC)
+    pr = api(f"repos/{repo()}/pulls/{pr_no}")
+    if not pr.get("merged_at") or pr["base"]["ref"] != "dev":
+        return "dev 머지 아님"
+    files = [f["filename"] for f in list_pages(f"repos/{repo()}/pulls/{pr_no}/files?", 30)]
+    core = [p for p in files if team.is_core_path(p)]
+    if not core:
+        return "핵심 파일 변경 없음"
+    add_labels(pr_no, [CORE_LABEL])
+    report = find_or_create_report(team, now)
+    shown = ", ".join(f"`{p}`" for p in core[:5]) + (
+        f" 외 {len(core) - 5}개" if len(core) > 5 else "")
+    who = team.data.get("core_notify", "")
+    mention = f"@{who} " if who else ""
+    author = (pr.get("user") or {}).get("login", "")
+    title = (pr.get("title") or "")[:100]
+    line = f"{mention}핵심 파일 변경 머지: #{pr_no} {title} (@{author}) — {shown}"
+    comment(report["number"], line)
+    return f"report #{report['number']}에 기록"
+
+
+def labeled_merges(label: str, now: datetime) -> list[dict]:
+    """지난 24시간 머지된 PR 중 그 라벨이 붙은 것."""
+    since = (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    items = api(f"repos/{repo()}/issues?state=closed&labels={label}&since={since}"
+                "&per_page=100") or []
+    out = []
+    for i in items:
+        merged = (i.get("pull_request") or {}).get("merged_at")
+        if merged and parse_time(merged) >= now - timedelta(hours=24):
+            out.append(i)
+    return out
+
+
 def stale_sweep(team: team_mod.Team, now: datetime | None = None) -> str:
     now = now or datetime.now(UTC)
     prs = api(f"repos/{repo()}/pulls?state=open&per_page=100") or []
@@ -949,6 +1002,7 @@ def stale_sweep(team: team_mod.Team, now: datetime | None = None) -> str:
             "-f", "state_reason=not_planned")
         lines.append(f"- 이슈 #{n} {i['title']}")
     resumed = wip_resume(team)
+    core = labeled_merges(CORE_LABEL, now)
     day = now.strftime("%Y-%m-%d")
     body = [f"{hours}시간 넘게 변화가 없던 봇 PR·이슈 정리 ({day} UTC)", ""]
     body += lines or ["- 닫은 것 없음"]
@@ -957,6 +1011,9 @@ def stale_sweep(team: team_mod.Team, now: datetime | None = None) -> str:
                  *[f"- PR #{p['number']} {p['title']}" for p in waiting]]
     if resumed:
         body += ["", "**wip-wait 재개**", *[f"- {r}" for r in resumed]]
+    body += ["", "**지난 24시간 핵심 파일 변경** (.github/·.claude/·CODEOWNERS·기준표 toml)"]
+    body += [f"- #{p['number']} {p['title']} (@{(p.get('user') or {}).get('login', '')})"
+             for p in core] or ["- 없음"]
     for old in issues:
         if old.get("title", "").startswith(REPORT_PREFIX) and (old.get("user") or {}).get(
                 "login") == team.bot_login:
@@ -1010,6 +1067,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - 단계별 분기
     p.add_argument("--branch", default="")
     p.add_argument("--pr", type=int)
     sub.add_parser("stale-sweep")
+    sub.add_parser("core-merged").add_argument("--pr", type=int, required=True)
     p = sub.add_parser("claude-settings")
     p.add_argument("--dept", required=True)
     p.add_argument("--trusted", type=Path, required=True)
@@ -1084,6 +1142,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - 단계별 분기
                 return 0
             for line in wip_resume(team, [dept] if dept else None) or ["재개할 이슈 없음"]:
                 print(line)
+            return 0
+        if args.cmd == "core-merged":
+            print(core_merged(team, args.pr))
             return 0
         if args.cmd == "stale-sweep":
             print(stale_sweep(team))

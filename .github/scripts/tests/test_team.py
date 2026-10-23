@@ -878,3 +878,16 @@ def test_cap_counts_contracts_review_runs_from_jobs(team: Team, monkeypatch) -> 
     # contracts 리뷰는 실제 리뷰 부서(data → 재현)로, data 리뷰는 제목대로(finance → 태윤)
     assert team_mod.usage_by_owner(team, runs, ran, "review") == {
         "JangJaehyeonn": 1, "2taeyoon": 1}
+
+
+@pytest.mark.parametrize(
+    ("path", "core"),
+    [(".github/workflows/ci.yml", True), (".github/CODEOWNERS", True),
+     (".claude/settings.json", True),
+     ("CODEOWNERS", True), ("safety/src/ax_safety/rules/thresholds.toml", True),
+     ("agents/finance/src/finance_agent/ai_review_policy.toml", True),
+     ("docs/automation-spec.md", False), ("scripts/safe-test.sh", False), ("CLAUDE.md", False),
+     ("agents/data/x.py", False), (".githubx/a", False)],
+)
+def test_is_core_path(team: Team, path: str, core: bool) -> None:
+    assert team.is_core_path(path) is core
