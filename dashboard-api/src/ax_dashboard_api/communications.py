@@ -32,6 +32,17 @@ COMM_KINDS = [
 ]
 MAX_LIMIT = 1000
 
+# 팀 기준 부서 이름(.github/team.yml)과 에이전트 이름(Agent Card, 공통 로그의 `source`)이 다른 곳.
+# DejaFix 어댑터는 팀에서는 `dejafix`(다른 이름 `infra-dejafix`)이고 에이전트 이름은 `infra`다.
+# `dept`는 어느 쪽 이름으로 보내도 되고, 응답의 `from_agent`·`to_agent`는 에이전트 이름 그대로다.
+DEPT_NAMES = {"dejafix": "infra", "infra-dejafix": "infra"}
+
+
+def agent_name(dept: str) -> str:
+    """`dept` 값을 공통 로그의 에이전트 이름으로 바꾼다."""
+    return DEPT_NAMES.get(dept, dept)
+
+
 LogReader = Callable[[CommonLogQuery], CommonLogResult]
 
 
@@ -170,5 +181,6 @@ def list_communications(
     result = _read(query)
     lines = [_line(r) for r in result.records]
     if dept:
-        lines = [x for x in lines if dept in (x.from_agent, x.to_agent)]
+        wanted = agent_name(dept)
+        lines = [x for x in lines if wanted in (x.from_agent, x.to_agent)]
     return lines, result.truncated

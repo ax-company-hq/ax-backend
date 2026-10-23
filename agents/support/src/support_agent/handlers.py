@@ -19,11 +19,18 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from ax_agent_template.client import call_agent
 from ax_agent_template.execute import execute
 from ax_agent_template.server import error_result
 from ax_contracts.schemas import AgentRequest, AgentResult, Evidence, TaskStatus
-from support_agent import compensation, drafting, events, guard, notices, persistence
+from support_agent import (
+    compensation,
+    drafting,
+    events,
+    guard,
+    notices,
+    persistence,
+    secure_transfer,
+)
 from support_agent.schemas import (
     AddCustomerMessageInput,
     CheckReplyInput,
@@ -44,7 +51,8 @@ STORE = persistence.build_inquiry_store()
 LEDGER = persistence.build_sequence_ledger()
 # 문의와 기획개발 변경 요청의 연결. 요청은 change_handlers.py, 결과 통지는 계약이 정해진 뒤 붙인다
 CHANGES = persistence.build_change_request_store()
-SEND = call_agent  # 테스트에서 바꿀 수 있다
+# 다른 에이전트로 나가는 모든 요청이 지나간다. DejaFix로 가는 고객 개인정보는 여기서 암호화한다
+SEND = secure_transfer.send  # 테스트에서 바꿀 수 있다
 
 
 def _parse[M: BaseModel](request: AgentRequest, model: type[M]) -> M | AgentResult:
