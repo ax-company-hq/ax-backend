@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import os
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -12,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from ax_agent_template.events import subscribe
 from ax_agent_template.server import create_agent_app
 from ax_contracts.schemas import AgentCard
+from finance_agent import catbooks
 from finance_agent.handlers import HANDLERS, SUBSCRIBED_EVENTS, on_event, recompute, state
 from finance_agent.selftest import SELF_TEST_TTL_HOURS, is_fresh, run_self_test
 
@@ -86,9 +90,33 @@ def add_read_api(app: FastAPI) -> None:
             state().last_self_test = last = None
         return {"data": last, "meta": {"ttl_hours": SELF_TEST_TTL_HOURS}}
 
+    @app.get("/api/finance/catbooks/sync")
+    async def catbooks_sync() -> dict:
+        """캣북스에서 지금 가져와 확인한다. 캣북스는 읽기만 하고 재무 기록만 갱신한다."""
+        summary = await catbooks.sync()
+        return {"data": summary, "meta": {"poll_seconds": catbooks.poll_seconds()}}
+
+    @app.get("/api/finance/catbooks/items")
+    def catbooks_items() -> dict:
+        """캣북스에서 들어온 처리할 일. 최근 신청 먼저."""
+        rows = catbooks.items_newest_first()
+        return {
+            "data": rows,
+            "meta": {
+                "count": len(rows),
+                "sync": state().ledger.catbooks_sync,
+                "poll_seconds": catbooks.poll_seconds(),
+            },
+        }
+
     @app.get("/api/finance/ai-reviews")
     def ai_reviews() -> dict:
         rows = state().ledger.ai_reviews
+        return {"data": list(reversed(rows)), "meta": {"count": len(rows)}}
+
+    @app.get("/api/finance/threshold-reviews")
+    def threshold_reviews() -> dict:
+        rows = state().ledger.threshold_reviews
         return {"data": list(reversed(rows)), "meta": {"count": len(rows)}}
 
     @app.get("/api/finance/market-ops")
@@ -97,8 +125,23 @@ def add_read_api(app: FastAPI) -> None:
         return {"data": list(reversed(rows)), "meta": {"count": len(rows)}}
 
 
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """서버가 도는 동안 캣북스를 주기적으로 가져온다 (`FINANCE_CATBOOKS_POLL_SECONDS=0`이면 끔)."""
+    interval = catbooks.poll_seconds()
+    task = asyncio.create_task(catbooks.poll_forever(interval)) if interval else None
+    try:
+        yield
+    finally:
+        if task:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+
 def create_app() -> FastAPI:
     app = create_agent_app(load_card(), HANDLERS)
+    app.router.lifespan_context = lifespan
     origins = os.getenv("FINANCE_CORS_ORIGINS", DEFAULT_CORS_ORIGINS)
     app.add_middleware(
         CORSMiddleware,

@@ -1,7 +1,7 @@
 """finance skill 입출력 (재무 구성안 4-2, 공통 구성안 12장).
 
-TODO: 다른 부서가 함께 쓰는 형식(`VerifyAmountInput`·`VerifyAmountOutput`은 safety가 보낸다)은
-`contracts/`로 옮긴다 (to:contracts 요청). 그 전까지 safety가 보내는 필드와 여기를 같게 유지한다.
+다른 부서와 함께 쓰는 `VerifyAmountInput`·`VerifyAmountOutput`·`VerifyReason`은
+contracts가 원본이다.
 금액은 모두 정수 원이다.
 """
 
@@ -11,37 +11,14 @@ from typing import Any, Literal
 
 from pydantic import Field
 
+from ax_contracts import schemas as _contract
 from ax_contracts.schemas import AxModel, UtcDatetime
 
-
 # ---------------------------------------------------------------- verify_amount (safety → finance)
-class VerifyAmountInput(AxModel):
-    """안전 레이어가 라우팅한 B 액션. `params`는 요청 부서가 보낸 값이라 그대로 믿지 않는다."""
-
-    execution_id: str
-    action: str
-    requester: str
-    params: dict[str, Any] = Field(default_factory=dict)
-    computed_amount: int | None = None
-    threshold_version: int | None = None
-
-
-VerifyReason = Literal[
-    "recomputed_match",
-    "amount_mismatch",
-    "invalid_params",
-    "not_affected",
-    "exceeds_paid",
-    "source_unavailable",
-    "unsupported_action",
-]
-
-
-class VerifyAmountOutput(AxModel):
-    decision: Literal["approved", "rejected"]
-    reason_code: VerifyReason
-    recomputed: dict[str, int] = Field(default_factory=dict)
-    threshold_version: int | None = None
+# 안전 레이어와 함께 쓰는 형식은 contracts가 원본이다(#82, #92). 여기서는 다시 내보내기만 한다.
+VerifyAmountInput = _contract.VerifyAmountInput
+VerifyAmountOutput = _contract.VerifyAmountOutput
+VerifyReason = _contract.VerifyReason
 
 
 # ---------------------------------------------------------------- loss_aggregation (손실 리포트)
@@ -118,6 +95,27 @@ class ReviewHoldInput(AxModel):
 
 
 class ReviewHoldOutput(AxModel):
+    decision: Literal["approve", "reject", "escalate"]
+    reason_code: str
+    explanation: str
+
+
+# ---------------------------------- review_threshold_change (safety → finance, 기준 바꾸기 판단)
+class ThresholdReviewInput(AxModel):
+    """안전 장치 범위 안의 기준 바꾸기 요청. 숫자·`stats`는 safety가 코드로 센 값이다.
+
+    요청한 사람이 쓴 이유는 `untrusted.reason_untrusted_text`로 오며 판단에 쓰지 않는다.
+    """
+
+    change_id: str
+    key: str
+    current_value: int | None = None
+    new_value: int
+    baseline: int | None = None
+    stats: dict[str, Any] = Field(default_factory=dict)
+
+
+class ThresholdReviewOutput(AxModel):
     decision: Literal["approve", "reject", "escalate"]
     reason_code: str
     explanation: str

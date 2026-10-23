@@ -76,6 +76,8 @@ def _ask(client: TestClient, key: str, value: Any, reason: str = "보류가 많�
         ("nope", 100, "없는 기준", "바꿀 수 있는 기준이 아닙니다"),
         ("verify_timeout_seconds", 40, "검증 마감", "바꿀 수 있는 기준이 아닙니다"),
         ("pr_allowed_paths", 1, "목록", "경로 목록"),
+        ("pr_protected_paths", 1, "보호 경로", "경로 목록"),
+        ("merge_protected_paths", 1, "보호 경로", "경로 목록"),
         ("auto_review.enabled", 0, "AI 끄기", "사람만"),
         ("auto_review", 1, "AI", "사람만"),
         ("coupon_total", 400_000, "", "이유"),
@@ -255,7 +257,8 @@ def test_versions_history_and_thresholds_api(clock, verifier, sent) -> None:
     assert (rules["coupon_total"], rules["coupon_unit"]) == (400_000, 25_000)
     assert table["baseline"]["coupon_total"] == 300_000
     assert table["baseline"]["review_timeout_seconds"] == 86_400
-    assert "pr_allowed_paths" not in table["baseline"]
+    for path_rule in ("pr_allowed_paths", "merge_allowed_paths", "pr_protected_paths"):
+        assert path_rule not in table["baseline"]
 
     steps = [e["step"] for e in client.get("/api/safety/audit-logs").json()["data"]]
     assert "threshold_change_applied" in steps and "threshold_change_rejected" in steps

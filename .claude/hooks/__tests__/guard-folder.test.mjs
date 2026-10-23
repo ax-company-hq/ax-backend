@@ -58,6 +58,17 @@ test('human paths blocked', () => {
   }
 });
 
+test('human_files inside dept folder blocked', () => {
+  for (const [f, d] of [['safety/src/ax_safety/rules/thresholds.toml', 'safety'],
+                        ['agents/finance/src/finance_agent/ai_review_policy.toml', 'finance'],
+                        ['safety/src/ax_safety/rules/Thresholds.toml.', 'safety']]) {
+    const r = run(root, p(f), { args: ['--depts', d] });
+    assert.strictEqual(r.status, 2, f);
+    assert.match(r.stderr, /human_files/);
+  }
+  assert.strictEqual(run(root, p('safety/src/ax_safety/rules/other.toml'), { args: ['--depts', 'safety'] }).status, 0);
+});
+
 test('docs/notes: own allowed, other dept blocked', () => {
   assert.strictEqual(run(root, p('docs/notes/data/n.md'), { args: ['--depts', 'data'] }).status, 0);
   assert.strictEqual(run(root, p('docs/notes/finance/n.md'), { args: ['--depts', 'data'] }).status, 2);

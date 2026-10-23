@@ -44,6 +44,8 @@ def test_classify():
     assert cc.classify("FooRequest") == (cc.REQ,)
     assert cc.classify("FooResult") == (cc.RES,)
     assert cc.classify("Escalation") == (cc.REQ, cc.RES)
+    assert cc.classify("RecordCase") == (cc.REQ,)  # 목록에 있는 skill 입력 모델
+    assert cc.classify("OtherCase") == (cc.REQ, cc.RES)  # 접미사로 넓히지 않는다
 
 
 def test_request_required_add_fails(tmp_path):
@@ -257,3 +259,15 @@ def test_main_exit_codes(tmp_path, capsys):
     assert cc.main(["x", str(b), str(same)]) == 0
     assert cc.main(["x", str(b), str(broken)]) == 1
     assert "필드 삭제" in capsys.readouterr().out
+
+
+def test_request_only_model_allows_enum_add_but_keeps_request_rules(tmp_path):
+    e1 = {"type": "string", "enum": ["a", "b"]}
+    e2 = {"type": "string", "enum": ["a", "b", "c"]}
+    base, head = {"m.RecordCase": obj({"k": e1})}, {"m.RecordCase": obj({"k": e2})}
+    assert run(tmp_path / "add", base, head) == []  # enum 값 추가는 요청에서 호환
+    assert run(tmp_path / "rm", head, base)  # enum 값 제거는 여전히 깨짐
+    required = {"m.RecordCase": obj({"k": e1, "n": S}, required=["n"])}
+    assert run(tmp_path / "req", base, required)  # 필수 필드 추가도 여전히 깨짐
+    other = {"m.OtherCase": obj({"k": e1})}, {"m.OtherCase": obj({"k": e2})}
+    assert run(tmp_path / "other", *other)  # 목록에 없는 모델은 응답 규칙까지 받는다

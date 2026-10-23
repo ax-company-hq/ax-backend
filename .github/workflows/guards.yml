@@ -66,6 +66,8 @@ jobs:
           permission-issues: write
           permission-pull-requests: write
           permission-contents: write
+          # 봇 PR이 관문에 걸려 재대기(retry-1)되면 _claude-write를 다시 실행한다
+          permission-actions: write
 
       - name: Apply (ax-bot 상태·코멘트)
         env:

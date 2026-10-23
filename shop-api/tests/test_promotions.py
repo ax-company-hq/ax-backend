@@ -72,7 +72,7 @@ def test_writes_are_marketing_only(client: TestClient, method: str, url: str, bo
     assert send(url, **kwargs).status_code == 401  # 토큰 없음
     for caller in (SUPPORT, FINANCE, OTHER):  # 고객지원도 쿠폰·공지는 못 쓴다
         assert send(url, headers=caller, **kwargs).status_code == 403
-    assert not client.get("/api/shop/coupons").status_code == 200  # 쿠폰 조회도 토큰이 필요하다
+    assert client.get("/api/shop/coupons").status_code == 401  # 쿠폰 조회도 토큰이 필요하다
 
 
 def test_coupon_reads_are_limited_to_departments_that_verify_or_deduplicate(
@@ -195,3 +195,15 @@ def test_issuing_coupons_and_banners_publishes_no_events_from_shop_api(client: T
     client.post("/api/shop/banners", json=_banner(), headers=MARKETING)
     client.post("/api/shop/coupons", json=_coupon(), headers=MARKETING)
     assert not events.MOCK_PUBLISHED  # notice.published·coupon.issued는 마케팅 에이전트가 발행한다
+
+
+def test_context_id_is_stored_when_given(client: TestClient) -> None:
+    banner = client.post(
+        "/api/shop/banners", json=_banner(context_id="ctx_inc_0001"), headers=MARKETING
+    ).json()["data"]
+    coupon = client.post(
+        "/api/shop/coupons", json=_coupon(context_id="ctx_inc_0001"), headers=MARKETING
+    ).json()["data"]
+    assert banner["context_id"] == coupon["context_id"] == "ctx_inc_0001"
+    plain = client.post("/api/shop/banners", json=_banner("ntc_0002"), headers=MARKETING)
+    assert plain.json()["data"]["context_id"] is None  # 선택 필드라 없으면 비어 있다

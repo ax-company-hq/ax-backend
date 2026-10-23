@@ -111,8 +111,14 @@ def test_agent_card(client: TestClient) -> None:
         "seller_review",
         "settlement_hold",
         "review_hold",
+        "review_threshold_change",
     }
     assert skills["review_hold"].allowed_requesters == ["safety"]
+    assert skills["review_threshold_change"].allowed_requesters == ["safety"]
+    assert (
+        skills["review_threshold_change"].grade,
+        skills["review_threshold_change"].priority,
+    ) == ("read", "recommended")
     assert skills["verify_amount"].allowed_requesters == ["safety"]
     assert (skills["verify_amount"].priority, skills["loss_aggregation"].priority) == (
         "required",
@@ -120,7 +126,7 @@ def test_agent_card(client: TestClient) -> None:
     )
     assert (skills["seller_review"].grade, skills["seller_review"].verifier) == ("B", "data")
     served = client.get("/.well-known/agent-card.json").json()
-    assert served["name"] == "finance" and len(served["skills"]) == 5
+    assert served["name"] == "finance" and len(served["skills"]) == 6
 
 
 # ---------------------------------------------------------------- verify_amount (DEP-FIN-02)
@@ -612,3 +618,12 @@ def test_every_seller_review_outcome_is_listed(
         ("sel_2", "rejected"),
         ("sel_1", "approved"),
     ]
+
+
+def test_verify_amount_models_come_from_contracts() -> None:
+    """#90: safety와 함께 쓰는 형식은 contracts가 원본이다(중복 정의 없음)."""
+    from ax_contracts import schemas as contract
+    from finance_agent import schemas
+
+    assert schemas.VerifyAmountInput is contract.VerifyAmountInput
+    assert schemas.VerifyAmountOutput is contract.VerifyAmountOutput

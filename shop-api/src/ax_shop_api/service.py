@@ -40,6 +40,10 @@ class PaymentOutcome:
     server_error: bool = False  # 카드 거절(PG_DECLINED)은 5xx가 아니다
 
 
+# 배송비: 품목 합계(포인트 차감 전)가 기준 미만이면 부과한다(시연용 값, 고객지원 시드와 같다)
+SHIPPING_FEE = 3000
+FREE_SHIPPING_FROM = 50000
+
 BASELINE_LATENCY_MS = 180.0  # 평소 p95 기준(시연용)
 
 
@@ -145,21 +149,44 @@ class Shop:
         if order is None:
             raise ShopError("ORDER_NOT_FOUND", "주문을 찾을 수 없다", 404)
         items = conn.execute(
-            "SELECT product_id, seller_id, qty, unit_price FROM order_items WHERE order_id = ?",
+            "SELECT i.rowid AS item_rowid, i.product_id, i.seller_id, i.qty, i.unit_price, "
+            "i.points_share, COALESCE(i.title, p.name) AS title FROM order_items i "
+            "LEFT JOIN products p ON p.product_id = i.product_id "
+            "WHERE i.order_id = ? ORDER BY i.rowid",
             (order_id,),
         ).fetchall()
         payments = conn.execute(
-            "SELECT payment_id, amount, method_code, status, failure_code FROM payments "
-            "WHERE order_id = ? ORDER BY rowid",
+            "SELECT payment_id, amount, method_code, status, failure_code, created_at "
+            "FROM payments WHERE order_id = ? ORDER BY rowid",
             (order_id,),
         ).fetchall()
+        refunded = conn.execute(
+            "SELECT COALESCE(SUM(amount), 0) AS total FROM refunds WHERE order_id = ?",
+            (order_id,),
+        ).fetchone()["total"]
         return {
             "order_id": order["order_id"],
             "buyer_id": order["buyer_id"],
             "status": order["status"],
             "total_amount": order["total_amount"],
+            "refunded_amount": refunded,
+            "shipping_fee": order["shipping_fee"],
+            "points_used": order["points_used"],
+            "delivered_at": order["delivered_at"],
             "created_at": order["created_at"],
-            "items": [dict(i) for i in items],
+            "items": [
+                {
+                    "order_item_id": f"oit_{i['item_rowid']:04d}",
+                    "product_id": i["product_id"],
+                    "seller_id": i["seller_id"],
+                    "title": i["title"],
+                    "qty": i["qty"],
+                    "unit_price": i["unit_price"],
+                    "points_share": i["points_share"],
+                    "paid_amount": i["qty"] * i["unit_price"] - i["points_share"],
+                }
+                for i in items
+            ],
             "payments": [dict(p) for p in payments],
         }
 
@@ -194,13 +221,30 @@ class Shop:
         return self.get_product(product_id)
 
     # --- 주문·결제 ----------------------------------------------------------
-    def create_order(self, buyer_id: str, lines: list[tuple[str, int]]) -> dict[str, Any]:
+    @staticmethod
+    def _split_points(points_used: int, amounts: list[int]) -> list[int]:
+        """포인트를 품목 금액 비율로 나눈다. 반올림으로 남는 몫은 뒤 품목부터 1원씩 붙인다."""
+        subtotal = sum(amounts)
+        shares = [points_used * amount // subtotal for amount in amounts]
+        left = points_used - sum(shares)
+        for index in reversed(range(len(shares))):
+            if left == 0:
+                break
+            if shares[index] < amounts[index]:
+                shares[index] += 1
+                left -= 1
+        return shares
+
+    def create_order(
+        self, buyer_id: str, lines: list[tuple[str, int]], points_used: int = 0
+    ) -> dict[str, Any]:
+        """주문을 만든다. 결제(현금) 총액 = 품목 합계 − 포인트 + 배송비를 코드가 계산한다."""
         if not lines:
             raise ShopError("EMPTY_ORDER", "주문 상품이 없다")
         with self.db.tx() as conn:
             if not conn.execute("SELECT 1 FROM buyers WHERE buyer_id = ?", (buyer_id,)).fetchone():
                 raise ShopError("BUYER_NOT_FOUND", "구매자를 찾을 수 없다", 404)
-            items, total = [], 0
+            items, titles, total = [], [], 0
             for product_id, qty in lines:
                 product = conn.execute(
                     "SELECT * FROM products WHERE product_id = ? AND active = 1", (product_id,)
@@ -217,21 +261,33 @@ class Shop:
                         "unit_price": product["price"],
                     }
                 )
+                titles.append(product["name"])
                 total += qty * product["price"]  # 계산은 코드로
                 conn.execute(
                     "UPDATE products SET stock = stock - ? WHERE product_id = ?", (qty, product_id)
                 )
+            if points_used > total:
+                raise ShopError("POINTS_EXCEED_ITEMS", "포인트는 품목 합계를 넘을 수 없다")
+            shipping_fee = 0 if total >= FREE_SHIPPING_FROM else SHIPPING_FEE
+            shares = self._split_points(
+                points_used, [item["qty"] * item["unit_price"] for item in items]
+            )
+            total = total - points_used + shipping_fee  # 실제 결제(현금) 금액
             order_id = self.db.next_id(conn, "order", "ord_")
             now = _now()
             conn.execute(
-                "INSERT INTO orders VALUES (?, ?, 'pending_payment', ?, ?, NULL, ?, ?)",
-                (order_id, buyer_id, total, TENANT_ID, now, now),
+                "INSERT INTO orders (order_id, buyer_id, status, total_amount, tenant_id, "
+                "context_id, created_at, updated_at, shipping_fee, points_used) "
+                "VALUES (?, ?, 'pending_payment', ?, ?, NULL, ?, ?, ?, ?)",
+                (order_id, buyer_id, total, TENANT_ID, now, now, shipping_fee, points_used),
             )
-            for item in items:
+            for item, title, share in zip(items, titles, shares, strict=True):
                 conn.execute(
-                    "INSERT INTO order_items VALUES (?, ?, ?, ?, ?, ?, NULL)",
+                    "INSERT INTO order_items (order_id, product_id, seller_id, qty, unit_price, "
+                    "tenant_id, context_id, title, points_share) "
+                    "VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)",
                     (order_id, item["product_id"], item["seller_id"], item["qty"],
-                     item["unit_price"], TENANT_ID),
+                     item["unit_price"], TENANT_ID, title, share),
                 )  # fmt: skip
             outbox.enqueue(
                 conn,
@@ -285,6 +341,25 @@ class Shop:
                     EventType.PAYMENT_FAILED,
                     failed.model_dump(mode="json"),
                     f"payment.failed:{payment_id}",
+                )
+        return self.get_order(order_id)
+
+    def mark_delivered(self, order_id: str, delivered_at: datetime | None = None) -> dict[str, Any]:
+        """배송 완료 시각을 적는다(시연·시드용 관리 API). 상태는 바꾸지 않고 이벤트도 내지 않는다.
+
+        결제된 주문만 가능하고, 이미 적혀 있으면 그대로 돌려준다.
+        """
+        with self.db.tx() as conn:
+            order = conn.execute("SELECT * FROM orders WHERE order_id = ?", (order_id,)).fetchone()
+            if order is None:
+                raise ShopError("ORDER_NOT_FOUND", "주문을 찾을 수 없다", 404)
+            if order["status"] != "paid":
+                raise ShopError("ORDER_NOT_PAID", "결제된 주문만 배송 완료로 표시할 수 있다", 409)
+            if order["delivered_at"] is None:
+                moment = (delivered_at or datetime.now(UTC)).astimezone(UTC)
+                conn.execute(
+                    "UPDATE orders SET delivered_at = ? WHERE order_id = ?",
+                    (moment.strftime("%Y-%m-%dT%H:%M:%SZ"), order_id),
                 )
         return self.get_order(order_id)
 

@@ -96,7 +96,9 @@ main        ← 야간 e2e 성공 시 release 워크플로가 머지 (AX_RELEASE
 | PR 종류 | 머지 조건 |
 | --- | --- |
 | 부서 폴더 PR (contracts·agent-template·infra 포함) | ci·contracts-compat·automation-tests 통과 + folder-guard·test-guard·dev-health + 리뷰 부서 에이전트 승인(agent-review) |
-| human_paths PR (`.github/`, `.claude/`, `scripts/`, `CLAUDE.md`, `docs/`, 루트 파일) | 위 체크 + **code owner(재현·준하) 승인**. 에이전트 리뷰는 생략 |
+| human_paths PR (`.github/`, `.claude/`, `scripts/`, `CLAUDE.md`, `docs/`, 루트 파일) | 위 체크 + **code owner 승인** (`.github/`·`.claude/`·`scripts/`·`CLAUDE.md`는 재현·준하·태윤, 그 밖은 재현·준하). 에이전트 리뷰는 생략 |
+| contracts PR | 위 부서 폴더 PR 조건. 리뷰는 바뀐 계약 파일을 쓰는 부서 에이전트. 깨지는 변경은 contracts-compat이 막음 |
+| 기준표 PR (`thresholds.toml`, `ai_review_policy.toml`) | 체크 + **code owner(태윤·재현·준하) 승인**. 에이전트는 못 바꿈 |
 | 봇 PR (`revert/`, `openapi/sync-`) | 리뷰·호환 검사 생략, 허용 경로만 |
 
 ### 왜 사람 승인이 아니라 에이전트 리뷰인가
@@ -108,7 +110,11 @@ DejaFix에서는 "승인 1명 + 작성자 본인 승인 불가" 때문에 PR 30�
 ```
 # .github/CODEOWNERS
 *                    @JangJaehyeonn @haakim7
-# 부서 폴더·notes·uv.lock은 owner 없음 (에이전트 리뷰로 머지)
+/.github/            @JangJaehyeonn @haakim7 @2taeyoon
+/.claude/            @JangJaehyeonn @haakim7 @2taeyoon
+/scripts/            @JangJaehyeonn @haakim7 @2taeyoon
+/CLAUDE.md           @JangJaehyeonn @haakim7 @2taeyoon
+# 부서 폴더·contracts·notes·uv.lock은 owner 없음 (에이전트 리뷰 또는 CI·관문으로 머지)
 /contracts/
 /agent-template/
 /orchestrator/
@@ -122,7 +128,8 @@ DejaFix에서는 "승인 1명 + 작성자 본인 승인 불가" 때문에 PR 30�
 /uv.lock
 ```
 
-뒤의 줄이 앞의 `*`를 덮어써서, owner가 없는 줄의 경로는 code owner 승인이 필요 없다. contracts를 사람 승인으로 바꾸고 싶으면 `/contracts/` 줄에 owner를 적는다.
+뒤의 줄이 앞의 `*`를 덮어써서, owner가 없는 줄의 경로는 code owner 승인이 필요 없다. 적힌 owner 중 한 명이 승인하면 된다.
+부서 폴더 안의 기준표(`thresholds.toml`, `ai_review_policy.toml`)는 맨 뒤에 owner 줄을 따로 둔다 (team.yml `human_files`).
 
 ### 리뷰 부서
 
@@ -156,7 +163,7 @@ DejaFix에서는 "승인 1명 + 작성자 본인 승인 불가" 때문에 PR 30�
 - 개발은 각자 PC에서 자기 서비스와 필요한 것만 띄우고, 서버 PC는 통합 테스트·데모에만 쓴다.
 - 준하가 `contracts/`와 `agent-template/`의 인터페이스를 먼저 올리면 나머지가 기다리지 않고 시작할 수 있다.
 - 작업 이슈는 `docs/requirements.md`에서 claude-plan이 만들고, 이슈의 `depends`가 닫혀야 claude-tasks가 집어 간다. 그래서 contracts 이슈를 phase 1·depends의 앞에 둔다.
-- Claude 실행은 사람마다 하루 상한(daily_cap)이 있다. 상한은 `.github/team.yml`에서 조정한다.
+- Claude 실행은 사람마다 하루 상한이 작성(write_cap)·리뷰(review_cap) 따로 있다. 상한은 `.github/team.yml`에서 조정한다.
 
 ## 두 레포 연결
 

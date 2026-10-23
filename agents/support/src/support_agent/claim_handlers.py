@@ -15,9 +15,10 @@ from typing import Any
 
 from ax_agent_template.execute import execute
 from ax_contracts.schemas import AgentRequest, AgentResult, Evidence
-from support_agent import claim_rules, orders
+from support_agent import claim_rules, orders, persistence
 from support_agent import handlers as h
 from support_agent.claim_schemas import (
+    ClaimReasonHit,
     CreateClaimInput,
     DecideClaimInput,
     GetClaimInput,
@@ -28,9 +29,22 @@ from support_agent.claim_schemas import (
     QueueRunResult,
     ReceiveReturnInput,
 )
-from support_agent.claims import ClaimStore, now_iso
+from support_agent.claims import now_iso
 
-CLAIMS = ClaimStore()
+CLAIMS = persistence.build_claim_store()
+# 지급을 실행하지 못한 이유 (safety 판정 상태 → 화면에 보일 문장)
+HELD_MESSAGE = {
+    "verifying": "재무 교차검증 중",
+    "held": "안전 레이어 보류 (사람 확인 대기)",
+    "rejected": "실행이 거부됨",
+    "failed": "실행에 실패함",
+}
+
+
+def _note(request: AgentRequest) -> str | None:
+    """상담원·검수 메모는 `untrusted.note`로만 받는다. 저장만 하고 지시로 쓰지 않는다."""
+    note = request.untrusted.get("note")
+    return note.strip() or None if isinstance(note, str) else None
 
 
 def _claim_not_found(request: AgentRequest, claim_id: int) -> AgentResult:
@@ -78,7 +92,7 @@ async def create_claim(request: AgentRequest) -> AgentResult:
     if isinstance(parsed, AgentResult):
         return parsed
     order = orders.get_order(parsed.order_id)
-    if order is None or order.user_id != parsed.user_id:
+    if order is None or order.buyer_id != parsed.buyer_id:
         return h._done(
             request, {"message": f"주문 {parsed.order_id}를 찾을 수 없다"}, outcome="not_found"
         )
@@ -102,7 +116,7 @@ async def create_claim(request: AgentRequest) -> AgentResult:
         items=wanted,
         evidence_count=parsed.evidence_count,
         unsealed=parsed.unsealed,
-        prior_claims=CLAIMS.count_for_user(parsed.user_id),
+        prior_claims=CLAIMS.count_for_buyer(parsed.buyer_id),
         now=datetime.now(UTC),
     )
 
@@ -140,7 +154,6 @@ async def decide_claim(request: AgentRequest) -> AgentResult:
     allowed = ("needs_review",) if parsed.decision == "approve" else ("needs_review", "needs_info")
     if claim.status not in allowed:
         return _invalid_state(request, claim.id, claim.status, "결정")
-    note = request.untrusted.get("note")
 
     async def apply() -> tuple[dict[str, Any], bool]:
         if parsed.decision == "approve":
@@ -148,8 +161,14 @@ async def decide_claim(request: AgentRequest) -> AgentResult:
         else:
             status = "rejected"
         claim.decided_by = request.meta.requester or "agent_console"
+        claim.agent_note = _note(request)
         CLAIMS.set_status(
-            claim, status, parsed.decision, note=note if isinstance(note, str) else ""
+            claim,
+            status,
+            parsed.decision,
+            note=claim.agent_note or "",
+            system_outcome=claim.outcome,
+            agent_action=parsed.decision,
         )
         return claim.model_dump(mode="json"), False
 
@@ -175,6 +194,7 @@ async def receive_return(request: AgentRequest) -> AgentResult:
     async def apply() -> tuple[dict[str, Any], bool]:
         claim.return_received_at = now_iso()
         claim.inspection = parsed.inspection
+        claim.inspection_note = _note(request) or claim.inspection_note
         CLAIMS.set_status(claim, "return_received", "receive", inspection=parsed.inspection)
         return claim.model_dump(mode="json"), False
 
@@ -195,6 +215,7 @@ async def inspect_return(request: AgentRequest) -> AgentResult:
 
     async def apply() -> tuple[dict[str, Any], bool]:
         claim.inspection = parsed.inspection
+        claim.inspection_note = _note(request) or claim.inspection_note
         CLAIMS.set_status(claim, "return_received", "inspection", inspection=parsed.inspection)
         return claim.model_dump(mode="json"), False
 
@@ -228,36 +249,72 @@ async def process_claim_queue(request: AgentRequest) -> AgentResult:
                     claim_id=claim.id,
                     result="skipped",
                     detail=", ".join(b.message for b in entry.blockers),
+                    blockers=entry.blockers,
                 )
             )
             continue
+        # 키와 사건은 클레임 단위로 고정한다. 안전 레이어는 C 보류 건을 승인한 뒤 같은 키로 다시
+        # 요청해야 `executed`를 돌려주는데, 호출마다 새 키를 쓰면 승인이 반영되지 않는다.
         meta = request.meta.model_copy(
-            update={"idempotency_key": f"{request.meta.context_id}:refund_request:claim:{claim.id}"}
+            update={
+                "context_id": claim.context_id,
+                "idempotency_key": f"{claim.context_id}:refund_request:claim:{claim.id}",
+            }
+        )
+        # 보류되면 담당자가 이 요약을 본다 (safety가 앞 200자를 보류 기록에 담는다). 고객 이름·메모
+        # 같은 외부 입력은 넣지 않고 코드가 아는 사실(금액·ID·유형·사유 코드)만 쓴다.
+        summary = (
+            f"환불 {claim.expected_refund:,}원 · 클레임 {claim.id} · 주문 {claim.order_id}"
+            f" · {claim.type}/{claim.reason}"
         )
         decision = await execute(
             "refund_request",
             {
                 "claim_id": claim.id,
                 "order_id": claim.order_id,
-                "buyer_id": f"usr_{claim.user_id}",
+                "buyer_id": claim.buyer_id,
                 "refund_amount": claim.expected_refund,
+                "summary": summary,
             },
             meta,
             Evidence(
                 queries=["claim_rules"],
                 data_summary=f"claim {claim.id}: 환불 {claim.expected_refund}원",
-                ref_ids=[f"claim:{claim.id}", f"order:{claim.order_id}"],
+                ref_ids=[
+                    f"claim:{claim.id}",
+                    f"order:{claim.order_id}",
+                    f"request:{request.meta.context_id}",
+                ],
             ),
         )
         if decision.status != "executed":
             held += 1
-            results.append(QueueRunResult(claim_id=claim.id, result="held", detail=decision.status))
+            results.append(
+                QueueRunResult(
+                    claim_id=claim.id,
+                    result="held",
+                    detail=decision.status,
+                    blockers=[
+                        ClaimReasonHit(
+                            code="ON_HOLD",
+                            level="block",
+                            message=HELD_MESSAGE.get(decision.status, decision.status),
+                        )
+                    ],
+                )
+            )
             continue
         # TODO: shop-api 환불 API(SHOP-12) 호출. 지금은 실행 허가와 지급 기록만 남긴다
         claim.refund_paid = claim.expected_refund
         claim.processed_at = now_iso()
         CLAIMS.set_status(
-            claim, "completed", "pay", amount=claim.expected_refund, execution=decision.execution_id
+            claim,
+            "completed",
+            "pay",
+            amount=claim.expected_refund,
+            refund_cash=claim.expected_refund,
+            compensation=0,
+            execution=decision.execution_id,
         )
         paid += 1
         results.append(QueueRunResult(claim_id=claim.id, result="paid", refund=claim.refund_paid))

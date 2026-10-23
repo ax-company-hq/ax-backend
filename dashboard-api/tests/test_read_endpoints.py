@@ -91,6 +91,6 @@ def test_invalid_query_uses_error_envelope(client: TestClient) -> None:
 def test_without_mock_returns_503(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DASHBOARD_MOCK", raising=False)
     monkeypatch.delenv("AGENT_TEMPLATE_MOCK", raising=False)
-    response = TestClient(app).get(f"{BASE}/claims")
+    response = TestClient(app).get(f"{BASE}/reviews")  # 아직 목 전용인 경로
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "UPSTREAM_NOT_CONNECTED"

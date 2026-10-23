@@ -100,6 +100,10 @@ STEP_MIN_RATIO = 0.5  # TOML 원래 값의 0.5배 ~ 2배 안에서만 바꿀 수
 STEP_MAX_RATIO = 2.0
 TIMEOUT_BOUNDS = (3600, 259200)  # 사람 결정 마감: 1시간 ~ 3일
 REASON_MAX = 300
+PATH_METRICS = (
+    "paths_within",
+    "paths_avoid",
+)  # 경로 목록 규칙은 숫자 기준이 아니라 API로 못 바꾼다
 TENANT = "shop-demo"
 
 AI_REVIEWER = "finance-ai"  # 재무 AI가 결정한 보류 건의 decided_by
@@ -373,6 +377,19 @@ class Gate:
                 elif outside := rule.paths_outside(paths):
                     hits.append({"key": rule.key, "outside": outside, "allowed": rule.allowed})
                 continue
+            if rule.metric == "paths_avoid":
+                paths = request.params.get(rule.field or "")
+                if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+                    hits.append({"key": rule.key, "invalid": rule.field})
+                elif protected_hit := rule.paths_protected(paths):
+                    hits.append(
+                        {
+                            "key": rule.key,
+                            "protected_hit": protected_hit,
+                            "protected": rule.protected,
+                        }
+                    )
+                continue
             if rule.metric == "param":
                 value = request.params.get(rule.field or "")
                 if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -431,6 +448,9 @@ class Gate:
     ) -> ExecuteDecision:
         now = self._now()
         review_id = f"rev_{uuid.uuid4().hex[:12]}"
+        summary = request.params.get("summary")
+        if isinstance(summary, str) and summary.strip():  # 사람이 읽을 설명. 요청 쪽 데이터다
+            report = {"summary": summary.strip()[:200], **report}
         full_report = {
             "action": request.action,
             "requester": request.requester,
@@ -626,7 +646,7 @@ class Gate:
     # 기준표는 메모리에서 바꾼다(TODO: persist). 재시작하면 TOML 원래 값으로 돌아간다.
     def baseline_values(self) -> dict[str, int]:
         """바꿀 수 있는 기준과 TOML 원래 값."""
-        values = {r.key: r.value for r in self.baseline.rules if r.metric != "paths_within"}
+        values = {r.key: r.value for r in self.baseline.rules if r.metric not in PATH_METRICS}
         values[TIMEOUT_KEY] = int(self.baseline.review_timeout_seconds)
         return values
 
@@ -634,7 +654,7 @@ class Gate:
         if key == TIMEOUT_KEY:
             return int(self.thresholds.review_timeout_seconds)
         rule = next((r for r in self.thresholds.rules if r.key == key), None)
-        if rule is None or rule.metric == "paths_within":
+        if rule is None or rule.metric in PATH_METRICS:
             return None
         return rule.value
 
@@ -642,8 +662,8 @@ class Gate:
         """안전 장치(코드) 검사. 문제가 있으면 쉬운 한국어 이유, 없으면 None."""
         if key.startswith("auto_review"):
             return "AI 판단 켜기·끄기 같은 설정은 사람만 바꿀 수 있습니다."
-        if any(r.key == key and r.metric == "paths_within" for r in self.baseline.rules):
-            return "허용 경로 목록은 숫자 기준이 아니라 바꿀 수 없습니다."
+        if any(r.key == key and r.metric in PATH_METRICS for r in self.baseline.rules):
+            return "허용·보호 경로 목록은 숫자 기준이 아니라 바꿀 수 없습니다."
         baseline = self.baseline_values().get(key)
         if baseline is None:
             return "바꿀 수 있는 기준이 아닙니다. 기준 이름을 확인하세요."

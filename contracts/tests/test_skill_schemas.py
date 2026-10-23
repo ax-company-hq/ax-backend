@@ -5,6 +5,8 @@ from ax_contracts.schemas import (
     AnomalyDetectionInput,
     AnomalyDetectionOutput,
     CategoryImpact,
+    CreateTicketInput,
+    CreateTicketOutput,
     DiagnoseIncidentInput,
     DiagnoseIncidentOutput,
     FindRelatedPrsInput,
@@ -56,6 +58,39 @@ def test_find_related_prs_and_link_incident() -> None:
     out = LinkIncidentOutput.model_validate({"linked_paras": ["R1"], "follow_up_request_id": "r1"})
     assert out.follow_up_request_id == "r1"
     assert LinkIncidentOutput().follow_up_request_id is None
+
+
+def test_create_ticket() -> None:
+    ask = CreateTicketInput.model_validate(
+        {"title": "배송 안내 문구 변경", "evidence": "반복 문의 42건"}
+    )
+    assert (ask.source_ref, ask.evidence_ids) == (None, [])
+    created = CreateTicketOutput.model_validate(
+        {"request_id": "REQ-1", "context_id": "ctx_req_1", "outcome": "created"}
+    )
+    assert created.duplicate_of is None
+    dup = CreateTicketOutput.model_validate(
+        {
+            "request_id": "REQ-2",
+            "context_id": "ctx_req_1",
+            "outcome": "linked_duplicate",
+            "duplicate_of": "REQ-1",
+        }
+    )
+    assert dup.duplicate_of == "REQ-1"
+    with pytest.raises(ValidationError):
+        CreateTicketOutput.model_validate(
+            {"request_id": "REQ-3", "context_id": "ctx_req_1", "outcome": "linked_duplicate"}
+        )
+    with pytest.raises(ValidationError):
+        CreateTicketOutput.model_validate(
+            {
+                "request_id": "REQ-3",
+                "context_id": "ctx_req_1",
+                "outcome": "created",
+                "duplicate_of": "REQ-1",
+            }
+        )
 
 
 def test_verify_rollback_target() -> None:
