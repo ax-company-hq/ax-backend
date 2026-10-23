@@ -32,15 +32,21 @@ def test_agent_card_format_and_served() -> None:
     card = load_card()
     assert (card.name, card.owner, card.url) == ("planning", "예진", "http://planning:8101/a2a")
     skills = {s.id: s for s in card.skills}
-    assert set(skills) == {"find_related_prs", "link_incident", "verify_rollback_target"}
+    required = {"find_related_prs", "link_incident", "verify_rollback_target"}
+    hr_links = {"list_in_progress", "verify_handover"}
+    assert set(skills) == required | hr_links
     assert skills["find_related_prs"].grade == "read"
     assert skills["link_incident"].grade == "A"
     assert skills["verify_rollback_target"].grade == "read"
+    assert skills["list_in_progress"].grade == "read"
+    assert skills["verify_handover"].grade == "read"
     assert skills["find_related_prs"].allowed_requesters == ["orchestrator", "infra", "data"]
     assert skills["link_incident"].allowed_requesters == ["orchestrator", "infra"]
     assert skills["verify_rollback_target"].allowed_requesters == ["safety"]
+    assert skills["list_in_progress"].allowed_requesters == ["hr", "orchestrator"]
+    assert skills["verify_handover"].allowed_requesters == ["safety"]
     for skill in card.skills:
-        assert skill.priority == "required"
+        assert skill.priority == ("required" if skill.id in required else "recommended")
         assert skill.verifier is None
         for ref in (skill.input_schema, skill.output_schema):
             path, name = ref.split("#")

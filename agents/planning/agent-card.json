@@ -1,7 +1,7 @@
 {
   "name": "planning",
   "owner": "예진",
-  "description": "기획개발 — 변경 요청을 기획서·작업·PR로 잇고, 장애 사건에 관련 PR·기획 문단 후보를 회신하고 연결한다. 원인 판정은 하지 않는다",
+  "description": "기획개발 — 변경 요청을 기획서·작업·PR로 잇고, 장애 사건에 관련 PR·기획 문단 후보를 회신하고 연결한다. 인사 인수인계에 진행 중 항목을 알려 주고 인계 목록 누락을 교차검증한다. 원인 판정은 하지 않는다",
   "url": "http://planning:8101/a2a",
   "version": "0.1.0",
   "capabilities": {
@@ -38,6 +38,26 @@
       "allowed_requesters": ["safety"],
       "verifier": null,
       "priority": "required"
+    },
+    {
+      "id": "list_in_progress",
+      "description": "담당자(owner_id = 명부 member_id)·영역(area = 명부 area)의 진행 중 항목을 돌려준다: deployment(dev에 머지됐지만 복구·확인이 끝나지 않은 PR), ticket(끝나지 않은 작업), pr(열린 PR). 담당자는 작업 owner, 영역은 PR 바뀐 경로·기획서 문단에서 코드로 정한다. 다른 담당자·영역 항목은 넣지 않는다. 상태를 바꾸지 않는다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/planning.py#ListInProgressInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/planning.py#ListInProgressOutput",
+      "grade": "read",
+      "allowed_requesters": ["hr", "orchestrator"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "verify_handover",
+      "description": "hr confirm_handover(B)의 교차검증. 인계 목록(handover_item_ids)을 list_in_progress 결과와 코드로 비교해 빠진 진행 중 항목이 없으면 승인(complete), 있으면 거절(missing_items, missing 목록). 인계 목록에 있지만 이미 끝난 항목은 stale_item_ids로만 알려 주고 판정에 쓰지 않는다. 거절도 completed + outcome rejected_by_review. 상태를 바꾸지 않는다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/planning.py#VerifyHandoverInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/planning.py#VerifyHandoverOutput",
+      "grade": "read",
+      "allowed_requesters": ["safety"],
+      "verifier": null,
+      "priority": "recommended"
     }
   ]
 }
