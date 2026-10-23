@@ -27,7 +27,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from ax_contracts.schemas import ExecuteDecision, ExecuteRequest, HoldReason, ReviewHoldInput
+from ax_contracts.schemas import (
+    ExecuteDecision,
+    ExecuteRequest,
+    HoldReason,
+    ReviewHoldInput,
+    ReviewThresholdChangeInput,
+)
 from ax_safety.overrides import OverrideFile, SavedOverrides
 from ax_safety.rules import (
     ActionSpec,
@@ -839,14 +845,14 @@ class Gate:
             context_id=self._change_context(change),
             tenant_id=TENANT,
             timeout_seconds=timeout,
-            input={
-                "change_id": change.change_id,
-                "key": change.key,
-                "current_value": change.old_value,
-                "new_value": change.new_value,
-                "baseline": change.baseline,
-                "stats": change.stats,
-            },
+            input=ReviewThresholdChangeInput(
+                change_id=change.change_id,
+                key=change.key,
+                current_value=change.old_value,
+                new_value=change.new_value,
+                baseline=change.baseline,
+                stats=change.stats,
+            ).model_dump(mode="json"),
             untrusted={"reason_untrusted_text": reason},
         )
         try:

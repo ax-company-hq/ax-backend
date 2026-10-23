@@ -24,6 +24,7 @@ from ax_contracts.schemas import (
     ExecuteRequest,
     RequestMeta,
     ReviewHoldOutput,
+    ReviewThresholdChangeOutput,
     TaskStatus,
 )
 from ax_safety.gate import (
@@ -68,12 +69,14 @@ async def _ask_reviewer(
     target_id: str,
     timeout_seconds: float,
     input: dict[str, Any],
+    output_model: type[ReviewHoldOutput] | type[ReviewThresholdChangeOutput],
     untrusted: dict[str, Any] | None = None,
 ) -> ReviewOutcome:
     """재무 AI 판단 skill을 A2A로 부른다. 완료가 아니거나 계약 형식이 아닌 답이면 사람에게.
 
-    답 형식(`decision`·`reason_code`·`explanation`)은 `review_hold`와 `review_threshold_change`가
-    같아서 계약 `ReviewHoldOutput`으로 검사한다. 멱등성 키는 `{context_id}:{skill}:{대상}`.
+    답은 skill별 계약 모델(`review_hold` → `ReviewHoldOutput`,
+    `review_threshold_change` → `ReviewThresholdChangeOutput`)로 검사한다.
+    멱등성 키는 `{context_id}:{skill}:{대상}`.
     """
     request = AgentRequest(
         meta=RequestMeta(
@@ -92,7 +95,7 @@ async def _ask_reviewer(
     if result.status != TaskStatus.COMPLETED:
         return ReviewOutcome("escalate", f"reviewer_{result.status.value}")
     try:
-        out = ReviewHoldOutput.model_validate(result.output)
+        out = output_model.model_validate(result.output)
     except ValidationError:
         return ReviewOutcome("escalate", "reviewer_invalid_output")
     return ReviewOutcome(out.decision, out.reason_code, out.explanation)
@@ -108,13 +111,15 @@ async def call_reviewer(task: ReviewTask) -> ReviewOutcome:
         target_id=task.review_id,
         timeout_seconds=task.timeout_seconds,
         input=task.input,
+        output_model=ReviewHoldOutput,
     )
 
 
 async def call_threshold_reviewer(task: ThresholdReviewTask) -> ReviewOutcome:
     """재무 AI의 `review_threshold_change`에 기준 바꾸기 의견을 묻는다(참고 의견, 적용은 사람).
 
-    요청한 사람이 쓴 이유는 `untrusted`로만 넘긴다.
+    입력은 gate가 계약 `ReviewThresholdChangeInput`으로 만든다. 요청한 사람이 쓴 이유는
+    `untrusted`로만 넘긴다.
     """
     return await _ask_reviewer(
         reviewer=task.reviewer,
@@ -124,6 +129,7 @@ async def call_threshold_reviewer(task: ThresholdReviewTask) -> ReviewOutcome:
         target_id=task.change_id,
         timeout_seconds=task.timeout_seconds,
         input=task.input,
+        output_model=ReviewThresholdChangeOutput,
         untrusted=task.untrusted,
     )
 
