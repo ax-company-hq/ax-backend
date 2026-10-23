@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from ax_contracts.schemas.common import TENANT_ID_DEFAULT
+from support_agent.change_requests import ChangeRequestLink, ChangeRequestStore
 from support_agent.claim_schemas import Claim
 from support_agent.claims import ClaimStore
 from support_agent.compensation import SequenceLedger
@@ -46,6 +47,7 @@ TABLES: tuple[Table, ...] = (
     Table("inquiry_results", ("tenant_id", "idempotency_key"), ("context_id",)),
     Table("draft_events", ("event_id",), ("tenant_id", "context_id", "inquiry_id")),
     Table("claims", ("claim_id",), ("tenant_id", "context_id", "order_id", "user_id", "status")),
+    Table("change_requests", ("tenant_id", "context_id"), ("inquiry_id", "status")),
     Table("compensation_sequences", ("tenant_id", "context_id")),
     Table("compensation_results", ("tenant_id", "idempotency_key"), ("context_id",)),
 )
@@ -274,6 +276,30 @@ class PersistentClaimStore(ClaimStore):
         return self._save(super().set_status(claim, status, action, **detail))
 
 
+class PersistentChangeRequestStore(ChangeRequestStore):
+    """문의와 기획개발 변경 요청의 연결을 DB에 둔다. `_put` 한 곳에서만 쓰면 된다."""
+
+    def __init__(self, repo: Repo) -> None:
+        super().__init__()
+        self._repo = repo
+        for doc in repo.load("change_requests"):
+            link = ChangeRequestLink.model_validate(doc)
+            self._links[link.context_id] = link
+
+    def _put(self, link: ChangeRequestLink) -> ChangeRequestLink:
+        self._repo.upsert(
+            "change_requests",
+            {
+                "tenant_id": link.tenant_id,
+                "context_id": link.context_id,
+                "inquiry_id": link.inquiry_id,
+                "status": link.status,
+            },
+            link.model_dump(mode="json"),
+        )
+        return super()._put(link)  # DB 쓰기에 성공한 뒤에 캐시에 넣는다
+
+
 class PersistentSequenceLedger(SequenceLedger):
     def __init__(self, repo: Repo) -> None:
         super().__init__()
@@ -322,3 +348,8 @@ def build_claim_store() -> ClaimStore:
 def build_sequence_ledger() -> SequenceLedger:
     repo = get_repo()
     return PersistentSequenceLedger(repo) if repo else SequenceLedger()
+
+
+def build_change_request_store() -> ChangeRequestStore:
+    repo = get_repo()
+    return PersistentChangeRequestStore(repo) if repo else ChangeRequestStore()

@@ -4,7 +4,6 @@ DB 없이 도는 테스트는 `MemoryRepo`(저장소 인터페이스의 메모�
 확인한다. `SUPPORT_PG_DSN`이 있을 때만 도는 테스트는 실제 PostgreSQL(`PgRepo`)로 같은 것을 확인한다.
 """
 
-import json
 import os
 import re
 from datetime import UTC, datetime, timedelta
@@ -18,7 +17,6 @@ from support_agent import claim_handlers, compensation, handlers, persistence
 from support_agent.claims import ClaimStore
 from support_agent.main import app
 from support_agent.persistence import (
-    BY_NAME,
     TABLES,
     PersistentClaimStore,
     PersistentInquiryStore,
@@ -27,25 +25,6 @@ from support_agent.persistence import (
     schema_sql,
 )
 from support_agent.store import InquiryStore
-
-
-class MemoryRepo:
-    """`PgRepo`와 같은 인터페이스. JSON으로 직렬화해 저장해서 DB와 같은 제약(JSON만 가능)을 둔다."""
-
-    def __init__(self) -> None:
-        self.tables: dict[str, dict[tuple, str]] = {t.name: {} for t in TABLES}
-        self.fail = False
-
-    def load(self, table: str) -> list[dict[str, Any]]:
-        rows = self.tables[table]
-        return [json.loads(rows[key]) for key in sorted(rows)]
-
-    def upsert(self, table: str, values: dict[str, Any], doc: dict[str, Any]) -> None:
-        if self.fail:
-            raise RuntimeError("db down")
-        spec = BY_NAME[table]
-        assert set(values) == {*spec.pk, *spec.columns}  # 컬럼을 빠뜨리지 않는다
-        self.tables[table][tuple(values[c] for c in spec.pk)] = json.dumps(doc, ensure_ascii=False)
 
 
 @pytest.fixture(autouse=True)
@@ -113,8 +92,10 @@ def create_inquiry(client: TestClient, key: str = "k-1") -> dict[str, Any]:
     )
 
 
-def test_inquiries_survive_restart_and_ids_continue(monkeypatch: pytest.MonkeyPatch) -> None:
-    repo = MemoryRepo()
+def test_inquiries_survive_restart_and_ids_continue(
+    monkeypatch: pytest.MonkeyPatch, memory_repo
+) -> None:
+    repo = memory_repo()
     boot(monkeypatch, repo)
     client = TestClient(app)
     first = create_inquiry(client)["output"]
@@ -135,8 +116,10 @@ def test_inquiries_survive_restart_and_ids_continue(monkeypatch: pytest.MonkeyPa
     assert nxt["messages"][0]["id"] > max(m["id"] for m in after["messages"])  # 메시지 ID도 이어짐
 
 
-def test_idempotent_replay_works_across_restart(monkeypatch: pytest.MonkeyPatch) -> None:
-    repo = MemoryRepo()
+def test_idempotent_replay_works_across_restart(
+    monkeypatch: pytest.MonkeyPatch, memory_repo
+) -> None:
+    repo = memory_repo()
     boot(monkeypatch, repo)
     client = TestClient(app)
     first = create_inquiry(client, key="same")["output"]
@@ -147,9 +130,9 @@ def test_idempotent_replay_works_across_restart(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_draft_events_are_saved_with_context_and_feed_kpis(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, memory_repo
 ) -> None:
-    repo = MemoryRepo()
+    repo = memory_repo()
     boot(monkeypatch, repo)
     client = TestClient(app)
     inquiry_id = create_inquiry(client)["output"]["id"]
@@ -183,8 +166,8 @@ def create_claim(client: TestClient, key: str = "c-1", **fields: Any) -> dict[st
     return call(client, "create_claim", payload, {"description": "찢어졌어요"}, key=key)
 
 
-def test_claim_lifecycle_survives_restart(monkeypatch: pytest.MonkeyPatch) -> None:
-    repo = MemoryRepo()
+def test_claim_lifecycle_survives_restart(monkeypatch: pytest.MonkeyPatch, memory_repo) -> None:
+    repo = memory_repo()
     boot(monkeypatch, repo)
     client = TestClient(app)
     claim_id = create_claim(client)["output"]["id"]
@@ -214,9 +197,9 @@ def test_claim_lifecycle_survives_restart(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_claim_ids_continue_and_duplicates_are_still_detected(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, memory_repo
 ) -> None:
-    repo = MemoryRepo()
+    repo = memory_repo()
     boot(monkeypatch, repo)
     client = TestClient(app)
     first = create_claim(client)["output"]["id"]
@@ -226,8 +209,10 @@ def test_claim_ids_continue_and_duplicates_are_still_detected(
     assert other["output"]["id"] == first + 1
 
 
-def test_claim_idempotent_replay_works_across_restart(monkeypatch: pytest.MonkeyPatch) -> None:
-    repo = MemoryRepo()
+def test_claim_idempotent_replay_works_across_restart(
+    monkeypatch: pytest.MonkeyPatch, memory_repo
+) -> None:
+    repo = memory_repo()
     boot(monkeypatch, repo)
     client = TestClient(app)
     first = create_claim(client, key="same")["output"]
@@ -237,9 +222,9 @@ def test_claim_idempotent_replay_works_across_restart(monkeypatch: pytest.Monkey
 
 # ---------------------------------------------------------------- 보상 sequence
 def test_compensation_sequence_and_results_continue_after_restart(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, memory_repo
 ) -> None:
-    repo = MemoryRepo()
+    repo = memory_repo()
     boot(monkeypatch, repo)
     client = TestClient(app)
     inquiry_id = create_inquiry(client)["output"]["id"]
@@ -274,8 +259,8 @@ def test_compensation_sequence_and_results_continue_after_restart(
 
 
 # ---------------------------------------------------------------- 쓰기 실패
-def test_write_failure_is_not_swallowed(monkeypatch: pytest.MonkeyPatch) -> None:
-    repo = MemoryRepo()
+def test_write_failure_is_not_swallowed(memory_repo) -> None:
+    repo = memory_repo()
     store = PersistentInquiryStore(repo)
     repo.fail = True
     with pytest.raises(RuntimeError, match="db down"):
