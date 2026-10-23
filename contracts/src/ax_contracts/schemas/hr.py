@@ -16,8 +16,8 @@ skill과 등급(등급 신고는 안전 레이어 레지스트리가 원본이�
 | `get_roster` | 읽기 | 담당·교대 명부 (개인정보 제외) |
 | `update_onboarding_step` | A | 온보딩 단계 완료 표시(진행률은 코드가 다시 계산) |
 | `decide_candidate_card` | A | 확신 낮은 후보 카드를 사람이 승인·거절 |
-| `list_handovers`·`list_open_questions`·`list_onboardings` | 읽기 | 대시보드 인사 화면용 인수인계·질문·온보딩 현황 |
-| `list_changes`·`list_candidate_cards`·`get_audit_timeline` | 읽기 | 변경 요청·후보 카드·감사 기록 현황 |
+| `list_handovers`·`list_open_questions`·`list_onboardings` | 읽기 | 인수인계·질문·온보딩 현황 |
+| `list_changes`·`list_candidate_cards`·`get_audit_timeline` | 읽기 | 변경·후보 카드·감사 기록 |
 
 인계자 질문은 `input-required`(+ `reason_code: human_input`) 결과의 `output`에 담는다.
 질문을 기다리는 동안은 hr이 상태를 저장하고, 답변은 새 요청(`answer_handover_question`)으로
