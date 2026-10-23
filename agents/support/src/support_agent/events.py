@@ -33,11 +33,12 @@ def build_inquiry_received(request: AgentRequest, conversation: Conversation) ->
     last = customer[-1]
     classification = last.analysis.classification if last.analysis else None
     key = inquiry_received_key(request.meta.context_id, conversation.id, len(customer))
+    order_id = conversation.order_id
     data = SupportInquiryReceivedData(
         inquiry_id=conversation.id,
-        # TODO: shop-api 주문(`ord_…`)으로 전환되면(#118) 그 ID를 넣는다. 지금 주문 ID는 시드 숫자라
-        # 계약의 `ord_` 문자열로 바꿔 쓰지 않는다 (지어낸 ID를 내보내지 않는다).
-        order_id=None,
+        # 계약의 `order_id`는 `ord_` 문자열이다. 시드 주문("101")처럼 그 형식이 아닌 ID는 지어서
+        # 바꾸지 않고 비워 둔다.
+        order_id=order_id if order_id and order_id.startswith("ord_") else None,
         category=classification.category if classification else None,
         urgency=classification.urgency if classification else None,
         message_count=len(customer),

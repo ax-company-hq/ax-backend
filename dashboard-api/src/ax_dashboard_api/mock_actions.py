@@ -73,7 +73,7 @@ def _next_message_id(conv: Conversation) -> int:
 
 # ---------------------------------------------------------------- 문의
 def create_conversation(
-    user_id: int, subject: str, message: str, order_id: int | None
+    user_id: int, subject: str, message: str, order_id: int | str | None
 ) -> Conversation:
     user = next((u for u in mock_data.USERS if u.id == user_id), None)
     if user is None:
