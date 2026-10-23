@@ -105,6 +105,17 @@ support 출력은 `claim_mapping.py`에서 화면 모델로 바꾼다 (값을 �
 - 한 줄에는 코드가 만든 필드만 담는다: `from_agent` → `to_agent`, `skill`, `outcome`(`completed`·`rejected`·`held`·`needs_human`·`in_progress`), `occurred_at`, `context_id`, `execution_id`. `payload`와 고객 원문은 넣지 않는다. `execution_id`로 안전 레이어 결정과 이어 "보류·거부"를 한 줄에 보여 줄 수 있다.
 - `dept`는 그 부서가 보냈거나 받은 줄만, `context_id`는 같은 사건끼리 묶어 본다. 방향은 요청(`request_received`)이면 요청자 → 받은 쪽, 결과·결정이면 기록한 쪽 → 요청자다. 이벤트 발행·기억 참조는 부서 간 대화가 아니라서 뺀다. 이관 큐로 넘긴 건(`escalated`)은 `needs_human`으로 보인다.
 
+### AI 대화방: 총괄 사건·안전 관문 기록 (읽기 전용 중계)
+| 경로 (`/api/dashboard` 아래) | 원본 | 응답 `data` |
+| --- | --- | --- |
+| GET `/incidents` | 총괄 `GET /api/incidents` | 사건 배열 (단계·이벤트·`pending_holds`) |
+| GET `/incidents/{context_id}` | 총괄 `GET /api/incidents/{id}` | 사건 하나, 없으면 404 |
+| GET `/executions?context_id` | 안전 관문 `GET /api/safety/executions` | 실행 기록 배열 |
+- 브라우저가 총괄·안전 관문을 직접 부르지 않게 하는 경로다 (이슈 #255, ax-frontend #18). 읽기 전용이라 상위로는 GET만 나가고, 사람 결정은 여기서 만들지 않는다 (안전 관문 보류 큐 결정 경로 사용).
+- 총괄 응답은 그대로 중계하되 `untrusted` 키는 중첩된 곳까지 지운다. 안전 관문 기록은 화면에 필요한 필드만 남긴다: `execution_id`, `created_at`, `request`(`action`·`requester`·`context_id`), `decision`(`grade`·`status`·`computed_amount`·`threshold_version`·`verifier`·`hold_reason`·`review_id`·`result_ref`). 요청의 `params`·`evidence`·멱등 키·`report`·고객 정보는 넘기지 않는다. 금액은 안전 레이어가 계산한 `computed_amount`뿐이다.
+- 주소는 `AX_ORCHESTRATOR_URL`·`AX_SAFETY_URL`(기본 `http://<이름>:<포트>`). 연결 실패는 502 `UPSTREAM_ERROR`, 시간 초과는 504 `UPSTREAM_TIMEOUT`, 원본 형식이 다르면 502다.
+- 목 모드는 샘플 사건 1개(보류 대기 포함)와 실행 기록 2개를 돌려준다. `/communications`와 같은 `{data, meta}` 봉투다.
+
 ### 사건 ID (`context_id`)
 모든 요청에는 사건 단위 `context_id`가 필요하다. 화면(상담원) 호출은 요청마다 새 `ctx_ui_<hex>`를 붙인다 (`support_client.UI_CONTEXT_PREFIX`, 한 곳).
 - 계약에 정해진 접두사는 흉내 내지 않는다: `ctx_inc_`(통합 에이전트 발급), `ctx_req_`(기획개발 발급 — 같은 변경 요청을 여러 부서가 보내면 하나로 묶는 번호표), `ctx_ntc_`, `ctx_cmp_`(마케팅 발급). 예전에는 화면 호출에 `ctx_req_`를 붙였는데, 기획개발이 발급하는 변경 요청 번호와 같은 모양이라 헷갈릴 수 있어 바꿨다.
