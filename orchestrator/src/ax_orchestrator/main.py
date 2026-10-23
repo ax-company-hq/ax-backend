@@ -108,6 +108,16 @@ async def registry() -> dict:
     return {"data": state.registry.view(), "meta": {"mock": True}}
 
 
+@app.get("/api/registry/real")
+async def registry_real() -> dict:
+    """실제 부서의 Agent Card를 HTTP로 수집해 결과를 보여 준다(읽기 전용, 사건은 열지 않음)."""
+    from ax_orchestrator.real import http_card_fetcher
+
+    real = Registry()
+    await real.load(DEPTS, http_card_fetcher())
+    return {"data": real.view(), "meta": {"mock": False}}
+
+
 @app.get("/api/incidents")
 async def incidents() -> dict:
     items = state.manager.listing() if state.manager else []
