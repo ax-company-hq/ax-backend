@@ -131,12 +131,20 @@ def path_scores(stages: list[StageDef], out: list[Stage]) -> dict:
     return scores
 
 
-def regressions(status: DevStatus) -> list[dict]:
-    """이슈를 만들 대상: 통과하다 실패한 단계. 앞 단계 때문에 막힌 것은 원인이 아니다."""
+def regressions(status: DevStatus, prev: DevStatus | None = None) -> list[dict]:
+    """이슈를 만들 대상: 이번 실행에서 **새로** 통과가 아니게 된 단계.
+
+    직전 결과가 이미 regressed인 단계는 계속 실패 중일 뿐이라 넣지 않는다 (이슈·revert 반복 방지).
+    앞 단계 때문에 막힌 것(blocked_by)은 원인이 아니라서 넣지 않는다.
+    """
+    before = {s.name: s for s in (prev.stages if prev else [])}
     found = []
     for s in status.stages:
         for view in ("unit", "chain"):
             r = getattr(s, view)
+            old = getattr(before[s.name], view) if s.name in before else None
+            if old is not None and old.state == "regressed":
+                continue
             if r.state == "regressed" and not (r.note or "").startswith("blocked_by:"):
                 found.append(
                     {

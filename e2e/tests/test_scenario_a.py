@@ -137,3 +137,15 @@ def test_real_mode_stub_marks_everything_pending() -> None:
     out = run_once("real")
     assert {v["state"] for v in out["chain"].values()} == {"absent"}
     assert {v["state"] for v in out["unit"].values()} == {"absent"}
+
+
+def test_already_regressed_stage_is_not_a_new_regression() -> None:
+    stages = build_stage_table()
+    prev = prev_all_pass(stages)
+    runs = make_runs({"impact": "fail"})
+    first, _ = judge.judge(stages, runs, prev, "c1", NOW)
+    assert judge.regressions(first, prev)  # 처음 실패한 실행: 새 회귀
+    second, _ = judge.judge(stages, runs, first, "c2", NOW)
+    assert next(s for s in second.stages if "impact" in s.name).unit.state == "regressed"
+    assert judge.regressions(second, first) == []  # 계속 실패 중: 이슈·revert 대상이 아니다
+    assert judge.regressions(second) != []  # prev를 안 주면 상태만 본다

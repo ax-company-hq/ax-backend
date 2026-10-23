@@ -9,7 +9,7 @@
                               회귀가 있으면 이슈를 만들고(AX_E2E=on), AX_GO=on이면 작성을 시작하고,
                               AX_AUTO_REVERT=on이면 원인 PR을 처리한다
 
-스위치(repo 변수): AX_E2E, AX_GO, AX_AUTO_REVERT, (정지) AX_AUTO_PAUSE.
+스위치(repo 변수): AX_E2E, AX_GO, AX_AUTO_REVERT.
 LLM을 부르지 않는다. 작성 시작은 team.dispatch_write를 거쳐 run 제목이 cap 집계에 잡힌다.
 봇 코멘트·이슈·PR 본문에는 `<!-- autopilot -->` 표시를 붙인다 (이 표시가 있는 이벤트는 무시한다).
 """
@@ -33,7 +33,6 @@ WORKFLOW = "scenario-a.yml"
 ARTIFACT = "e2e-result"
 NEEDS_HUMAN = "needs-human"
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
-UPLOAD = "pu" + "sh"  # revert/<번호> 브랜치를 올리는 git 하위 명령 (봇 토큰으로만)
 
 
 def repo() -> str:
@@ -148,14 +147,17 @@ def file_regression(reg: dict, sha: str, prev_sha: str | None, go: bool, team) -
     return number, "이슈"
 
 
-def suspect_prs(prev_sha: str | None, sha: str) -> list[int]:
-    """prev_sha..sha 범위 커밋이 속한 PR 번호 (중복 제거, 오래된 순)."""
-    if not prev_sha:
+def suspect_prs(last_pass: str | None, sha: str) -> list[int]:
+    """last_pass..sha 범위 커밋이 속한 PR 번호 (중복 제거, 오래된 순). 범위를 못 구하면 빈 목록."""
+    if not last_pass:
         return []
-    out = subprocess.run(
-        ["git", "rev-list", "--reverse", f"{prev_sha}..{sha}"],
-        capture_output=True, text=True, check=True,
-    ).stdout.split()
+    try:
+        out = subprocess.run(
+            ["git", "rev-list", "--reverse", f"{last_pass}..{sha}"],
+            capture_output=True, text=True, check=True,
+        ).stdout.split()
+    except subprocess.CalledProcessError:
+        return []
     found: list[int] = []
     for commit in out:
         for pr in api(f"repos/{repo()}/commits/{commit}/pulls") or []:
@@ -170,11 +172,11 @@ def revert_prs(number: int) -> list[dict]:
 
 
 def decide_revert(team, pr: dict, files: list[str], reverts: list[dict]) -> str:
-    """원인 PR을 어떻게 처리할지: revert | human | core | no_rerevert | wait | pause."""
+    """원인 PR을 어떻게 처리할지: revert | human | core | no_rerevert | wait | still_red."""
     if pr["head"]["ref"].startswith("revert/"):
         return "no_rerevert"  # 되돌림 PR이 원인이면 다시 되돌리지 않는다
     if any(r.get("merged_at") for r in reverts):
-        return "pause"  # 이미 되돌렸는데도 빨간불
+        return "still_red"  # 이미 되돌렸는데도 빨간불 -> 사람이 본다
     if any(r["state"] == "open" for r in reverts):
         return "wait"
     if any(team.is_core_path(f) for f in files):
@@ -185,32 +187,39 @@ def decide_revert(team, pr: dict, files: list[str], reverts: list[dict]) -> str:
 
 
 def git_revert_pr(pr: dict, issue: int) -> str:
-    """revert/<번호> 브랜치를 만들어 올리고 PR을 연다. 충돌하면 conflict."""
-    number, merge_commit = pr["number"], pr["merge_commit_sha"]
-    token = os.environ["GH_TOKEN"]
-    auth = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    """revert/<번호> 브랜치를 만들어 올리고 PR을 연다. 충돌하면 conflict.
 
-    def git(*args: str) -> None:
-        ident = ["-c", "user.name=ax-company-hq-bot[bot]",
-                 "-c", "user.email=ax-bot@users.noreply.github.com"]
-        subprocess.run(["git", *ident, *args], check=True, capture_output=True, text=True)
+    토큰은 명령줄이 아니라 GIT_CONFIG_* 환경변수로만 넘기고 로그에서 가린다.
+    실패해도 명령줄·환경변수가 예외 메시지에 나오지 않게 종료 코드만 남긴다 (공개 레포 로그).
+    """
+    number, merge_commit = pr["number"], pr["merge_commit_sha"]
+    auth = base64.b64encode(f"x-access-token:{os.environ['GH_TOKEN']}".encode()).decode()
+    print(f"::add-mask::{auth}")
+    ident = ["-c", "user.name=ax-company-hq-bot[bot]",
+             "-c", "user.email=ax-bot@users.noreply.github.com"]
+
+    def git(*args: str, authed: bool = False) -> None:
+        env = dict(os.environ)
+        if authed:
+            env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="http.extraheader",
+                       GIT_CONFIG_VALUE_0=f"AUTHORIZATION: basic {auth}")
+        try:
+            subprocess.run(["git", *ident, *args], check=True, capture_output=True, env=env)
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(f"git {args[0]} 실패 (종료 코드 {exc.returncode})") from None
 
     git("fetch", "origin", "dev")
     git("checkout", "-B", f"revert/{number}", "origin/dev")
     parents = len((api(f"repos/{repo()}/commits/{merge_commit}") or {}).get("parents", []))
     try:
         git("revert", "--no-edit", *(["-m", "1"] if parents > 1 else []), merge_commit)
-    except subprocess.CalledProcessError:
+    except RuntimeError:
         subprocess.run(["git", "revert", "--abort"], capture_output=True)
         return "conflict"
     title = clean(pr["title"], 80)
     git("commit", "--amend", "-m", f"revert: #{number} {title}\n\ne2e 회귀 #{issue}")
-    header = f"http.extraheader=AUTHORIZATION: basic {auth}"
-    git("-c", header, UPLOAD, "origin", f"revert/{number}")
-    body = (
-        f"{MARK}\ne2e 회귀 #{issue}의 원인으로 보여 #{number}을 되돌립니다 (AX_AUTO_REVERT). "
-        "되돌린 뒤에도 빨간불이면 새 작업을 멈춥니다."
-    )
+    git("push", "origin", f"revert/{number}", authed=True)
+    body = f"{MARK}\ne2e 회귀 #{issue}의 원인으로 보여 #{number}을 되돌립니다 (AX_AUTO_REVERT)."
     api(
         f"repos/{repo()}/pulls", "-X", "POST",
         "-f", f"head=revert/{number}", "-f", "base=dev",
@@ -219,26 +228,17 @@ def git_revert_pr(pr: dict, issue: int) -> str:
     return "reverted"
 
 
-def set_pause() -> bool:
-    """AX_AUTO_PAUSE=on (새 작업 정지). 권한이 없으면 False."""
-    for method, path in (("PATCH", "/AX_AUTO_PAUSE"), ("POST", "")):
-        try:
-            api(f"repos/{repo()}/actions/variables{path}", "-X", method,
-                "-f", "name=AX_AUTO_PAUSE", "-f", "value=on")
-            return True
-        except subprocess.CalledProcessError:
-            continue
-    return False
-
-
 HUMAN_WHY = {
     "human": "사람이 올린 PR이라 자동으로 되돌리지 않습니다",
     "core": "핵심 파일(.github/·.claude/·기준표)을 바꾼 PR이라 자동으로 되돌리지 않습니다",
-    "no_rerevert": "되돌림 PR이 원인이라 다시 되돌리지 않습니다",
+    "no_rerevert": "되돌림 PR이라 다시 되돌리지 않습니다",
+    "still_red": "이미 되돌렸는데도 회귀가 남아 있어 자동 revert 후에도 빨간불입니다. "
+    "새 작업을 멈출지 사람이 정해 주세요",
 }
 
 
 def handle_cause(team, issue: int, pr_number: int) -> str:
+    """원인 PR 하나를 처리하고 결과를 그 단계의 이슈에 남긴다."""
     pr = api(f"repos/{repo()}/pulls/{pr_number}")
     listing = api(f"repos/{repo()}/pulls/{pr_number}/files?per_page=100") or []
     action = decide_revert(team, pr, [f["filename"] for f in listing], revert_prs(pr_number))
@@ -253,18 +253,15 @@ def handle_cause(team, issue: int, pr_number: int) -> str:
         mention = f"@{author} " if author != team.bot_login else ""
         say(issue, f"원인 후보 #{pr_number}: {HUMAN_WHY[action]}. {mention}확인해 주세요.")
         add_label(issue, NEEDS_HUMAN)
-    elif action == "pause":
-        ok = set_pause()
-        note = "새 작업을 멈췄습니다 (AX_AUTO_PAUSE=on)."
-        if not ok:
-            note = "AX_AUTO_PAUSE를 켜지 못했습니다 (변수 쓰기 권한 확인)."
-        say(issue, f"#{pr_number}을 되돌린 뒤에도 회귀가 남아 있습니다. {note}")
-        add_label(issue, NEEDS_HUMAN)
     return action
 
 
-def act(result_path: Path, detail_path: Path, sha: str, prev_sha: str | None) -> list[str]:
-    """회귀 후속 처리. 스위치 꺼짐·첫 실행(기준선)·회귀 없음이면 아무것도 하지 않는다."""
+def act(result_path: Path, detail_path: Path, sha: str, prev_sha: str | None = None) -> list[str]:
+    """회귀 후속 처리. 스위치 꺼짐·첫 실행(기준선)·새 회귀 없음이면 아무것도 하지 않는다.
+
+    detail의 regressions는 이번 실행에서 **새로** 회귀한 단계뿐이다 (이미 회귀 중인 단계는 없음).
+    원인 PR은 단계마다 `last_pass_commit..sha` 범위에서 찾는다.
+    """
     if not switch("AX_E2E"):
         return ["AX_E2E가 on이 아님 - 보고만 함"]
     detail = json.loads(detail_path.read_text(encoding="utf-8"))
@@ -273,20 +270,25 @@ def act(result_path: Path, detail_path: Path, sha: str, prev_sha: str | None) ->
     team = team_mod.Team.load()
     regs = group_regressions(detail, team)
     if not regs:
-        return ["회귀 없음"]
-    log, issues = [], []
+        return ["새 회귀 없음"]
+    log: list[str] = []
+    handled: set[int] = set()
     for reg in regs:
-        number, how = file_regression(reg, sha, prev_sha, switch("AX_GO"), team)
-        issues.append(number)
+        last_pass = reg.get("last_pass_commit")
+        number, how = file_regression(reg, sha, last_pass, switch("AX_GO"), team)
         log.append(f"{reg['name']}: #{number} {how}")
-    if switch("AX_AUTO_REVERT"):
-        prs = suspect_prs(prev_sha, sha)
-        if len(prs) == 1:
-            log.append(f"원인 PR #{prs[0]}: {handle_cause(team, issues[0], prs[0])}")
-        else:
+        if not switch("AX_AUTO_REVERT"):
+            continue
+        prs = suspect_prs(last_pass, sha)
+        if len(prs) != 1:
             names = ", ".join(f"#{n}" for n in prs) or "없음"
-            say(issues[0], f"원인 PR을 하나로 정하지 못해 revert하지 않습니다 (후보: {names}).")
-            log.append("원인 PR 불명 - revert 안 함")
+            say(number, f"원인 PR을 하나로 정하지 못해 revert하지 않습니다 (후보: {names}).")
+            log.append(f"{reg['name']}: 원인 PR 불명 - revert 안 함")
+        elif prs[0] in handled:
+            say(number, f"원인 후보 #{prs[0]}는 다른 단계 이슈에서 이미 처리했습니다.")
+        else:
+            handled.add(prs[0])
+            log.append(f"{reg['name']}: 원인 PR #{prs[0]} {handle_cause(team, number, prs[0])}")
     return log
 
 

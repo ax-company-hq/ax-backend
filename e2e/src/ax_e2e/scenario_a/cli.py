@@ -59,7 +59,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             "mode": mode,
             "runs": args.runs,
             "meta": runs[0]["meta"],
-            "regressions": regressions(status),
+            "regressions": regressions(status, prev),
         }
     )
     out = Path(args.out)

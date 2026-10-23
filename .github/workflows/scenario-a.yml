@@ -15,8 +15,9 @@ on:
 permissions: {}
 
 concurrency:
-  # 커밋마다 한 번씩 돈다: 같은 그룹으로 묶으면 대기 중인 실행이 취소되므로 run 단위로 나눈다
-  group: scenario-a-${{ github.run_id }}
+  # 실행을 직렬화한다 (직전 결과 비교가 겹치지 않게). 진행 중인 실행은 취소하지 않지만
+  # 대기 중인 실행은 최신 1개만 남는다: 짧은 간격으로 머지가 이어지면 중간 커밋은 건너뛸 수 있다
+  group: scenario-a
   cancel-in-progress: false
 
 jobs:
@@ -65,7 +66,7 @@ jobs:
   follow:
     # 회귀 이슈 · 작성 시작 · 자동 revert. 각 동작은 자기 스위치가 on일 때만 한다 (e2e_follow.py)
     needs: e2e
-    if: vars.AX_E2E == 'on'
+    if: vars.AX_E2E == 'on' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     environment: bot
     permissions:

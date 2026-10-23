@@ -44,7 +44,7 @@ class Calls:
         if path.startswith(f"repos/{REPO}/issues?state=open"):
             return self.issues
         if path.endswith("/issues") and "POST" in extra:
-            return {"number": 900}
+            return {"number": 899 + len(self.posts())}
         return None
 
     def kinds(self) -> list[str]:
@@ -104,7 +104,7 @@ def test_baseline_and_no_regression_do_nothing(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("AX_AUTO_REVERT", "on")
     calls = Calls(monkeypatch)
     assert run_act(tmp_path, [reg()], baseline=True) == ["첫 실행 - 기준선만 기록"]
-    assert run_act(tmp_path, []) == ["회귀 없음"]  # broken·pending만 있으면 regressions는 비어 있다
+    assert run_act(tmp_path, []) == ["새 회귀 없음"]  # 새 회귀가 없으면 비어 있다
     assert calls.log == []
 
 
@@ -161,7 +161,7 @@ def test_decide_revert_only_bot_pr_without_core_files(team) -> None:
     assert decide(team, pr(), [".github/team.yml"], []) == "core"
     assert decide(team, pr(), ["safety/src/ax_safety/rules/thresholds.toml"], []) == "core"
     assert decide(team, pr(branch="revert/5"), ["agents/data/x.py"], []) == "no_rerevert"
-    assert decide(team, pr(), [], [{"state": "closed", "merged_at": "t"}]) == "pause"
+    assert decide(team, pr(), [], [{"state": "closed", "merged_at": "t"}]) == "still_red"
     assert decide(team, pr(), [], [{"state": "open", "merged_at": None}]) == "wait"
 
 
@@ -230,10 +230,59 @@ def test_auto_revert_off_never_looks_for_cause(tmp_path, monkeypatch) -> None:
     assert reverted == []
 
 
-def test_pause_when_still_red_after_revert(tmp_path, monkeypatch) -> None:
+def test_still_red_after_revert_asks_a_human_and_does_not_pause(tmp_path, monkeypatch) -> None:
     calls, reverted = setup_cause(monkeypatch, BOT, ["agents/data/x.py"])
     monkeypatch.setattr(ef, "revert_prs", lambda n: [{"state": "closed", "merged_at": "t"}])
-    paused: list[bool] = []
-    monkeypatch.setattr(ef, "set_pause", lambda: paused.append(True) or True)
     run_act(tmp_path, [reg()])
-    assert paused == [True] and reverted == []
+    assert reverted == [] and calls.labeled("needs-human")
+    assert any("자동 revert 후에도 빨간불" in c[2] for c in calls.log if c[0] == "say")
+    assert not any("AX_AUTO_PAUSE" in str(c) for c in calls.log)  # 변수를 건드리지 않는다
+
+
+def test_cause_is_searched_from_last_pass_commit(tmp_path, monkeypatch) -> None:
+    calls, reverted = setup_cause(monkeypatch, BOT, ["agents/data/x.py"])
+    seen: list[tuple] = []
+    monkeypatch.setattr(ef, "suspect_prs", lambda p, s: seen.append((p, s)) or [7])
+    run_act(tmp_path, [reg()], prev="q" * 40)
+    assert seen == [("abc", "s" * 40)]  # 직전 실행 sha(q...)가 아니라 마지막 통과 커밋부터
+
+
+def test_revert_result_goes_to_the_stage_issue(tmp_path, monkeypatch) -> None:
+    calls, reverted = setup_cause(monkeypatch, BOT, ["agents/data/x.py"])
+    other = reg("[총괄] diagnose", "infra")
+    other["last_pass_commit"] = "zzz"
+    monkeypatch.setattr(ef, "suspect_prs", lambda p, s: [7] if p == "zzz" else [8, 9])
+    run_act(tmp_path, [reg(), other])
+    assert reverted == [7]
+    says = [(c[1], c[2]) for c in calls.log if c[0] == "say"]
+    assert any(n == 901 and "되돌리는 PR" in t for n, t in says)  # diagnose 이슈(두 번째)
+    assert any(n == 900 and "하나로 정하지 못해" in t for n, t in says)
+
+
+def test_git_token_goes_through_env_not_args_and_errors_do_not_leak(monkeypatch, capsys) -> None:
+    import subprocess
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", REPO)
+    monkeypatch.setenv("GH_TOKEN", "ghs_SECRET")
+    monkeypatch.setattr(ef, "api", lambda *a, **k: {"parents": [1]})
+    runs: list[tuple] = []
+
+    def fake_run(cmd, **kw):
+        runs.append((cmd, kw.get("env") or {}))
+        if "push" in cmd:
+            raise subprocess.CalledProcessError(128, cmd, stderr=b"secret in stderr")
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(ef.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError) as err:
+        ef.git_revert_pr(pr(), 5)
+    push_cmd, push_env = next(r for r in runs if "push" in r[0])
+    assert "AUTHORIZATION" not in " ".join(push_cmd) and "extraheader" not in " ".join(push_cmd)
+    assert push_env["GIT_CONFIG_KEY_0"] == "http.extraheader"
+    assert push_env["GIT_CONFIG_VALUE_0"].startswith("AUTHORIZATION: basic ")
+    assert all("GIT_CONFIG_VALUE_0" not in env for cmd, env in runs if "push" not in cmd)
+    message = str(err.value) + repr(err.value.__cause__)
+    assert "ghs_SECRET" not in message and "AUTHORIZATION" not in message
+    assert err.value.__suppress_context__
+    out = capsys.readouterr().out
+    assert out.startswith("::add-mask::") and "ghs_SECRET" not in out
