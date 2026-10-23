@@ -109,7 +109,7 @@
       <span class="pill" id="state">대기 중</span>
     </div>
     <div class="opts">
-      <label><input type="checkbox" id="o-hold"> 쿠폰 지급을 C 등급 보류로</label>
+      <label><input type="checkbox" id="o-hold"> 롤백을 C 등급 보류(사람 승인 대기)로</label>
       <label><input type="checkbox" id="o-fail"> 공지 게시 1회 실패(재시도)</label>
       <label><input type="checkbox" id="o-owner"> 공지 게시를 다른 부서에 이관</label>
       <label><input type="checkbox" id="o-infra"> 인프라 카드 비어 있음(현재 dev 상태)</label>
@@ -163,7 +163,7 @@ async function jget(url) { const r = await fetch(url); return r.json(); }
 
 async function inject() {
   $('inject').disabled = true;
-  const body = { hold_coupon: $('o-hold').checked, fail_marketing: $('o-fail').checked,
+  const body = { hold_rollback: $('o-hold').checked, fail_marketing: $('o-fail').checked,
     wrong_owner: $('o-owner').checked, infra_card_empty: $('o-infra').checked };
   const r = await fetch('/api/demo/incidents', { method: 'POST',
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -184,7 +184,7 @@ async function refreshRegistry() {
   const j = await jget('/api/registry');
   const d = j.data;
   setHTML('depts', d.depts.map((x) => `<div class="dept"><b>${esc(x.name)}</b>
-    <small>${esc(x.owner)}</small><div class="skills">${x.skills.filter((s) => s.orchestrator)
+    <small>${esc(x.owner)}</small><span class="grade ${x.mode === 'real' ? 'A' : ''}">${x.mode === 'real' ? '실제' : '목'}</span><div class="skills">${x.skills.filter((s) => s.orchestrator)
       .map((s) => `<span class="skill ${s.grade}">${esc(s.id)} · ${esc(s.grade)}</span>`).join('')}</div></div>`).join(''));
   const un = Object.entries(d.unavailable);
   $('unavail').innerHTML = un.length ? '확인할 수 없음: ' + un.map(([k, v]) => `${esc(k)} (${esc(v)})`).join(', ') : '';
@@ -204,7 +204,7 @@ function render(inc) {
   setHTML('log', inc.events.slice().reverse()
     .map((e) => `<div><span>${kst(e.at)}</span>${esc(e.message)}</div>`).join(''));
   setHTML('holdlist', inc.pending_holds.length ? inc.pending_holds.map((h) => `<div class="hold">
-    <b>${esc(h.label)}</b><div class="note">${esc(h.skill)} — 기준 초과로 보류됨</div>
+    <b>${esc(h.label)}</b><div class="note">${esc(h.skill)} — 사람 승인이 필요해 보류됨</div>
     <div class="row"><button class="btn primary" onclick="decide('${h.step_id}', true)">승인</button>
     <button class="btn" onclick="decide('${h.step_id}', false)">거절</button></div></div>`).join('')
     : '<div class="empty">보류된 단계가 없어요.</div>');

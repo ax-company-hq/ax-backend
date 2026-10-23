@@ -10,13 +10,14 @@
 ORCHESTRATOR_MOCK=1 uv run uvicorn ax_orchestrator.main:app --app-dir orchestrator/src --port 8000
 ```
 `http://localhost:8000/demo`에서 장애를 주입해 사건 흐름을 본다. `ORCHESTRATOR_HOLD_TIMEOUT`(초, 기본 600)은 C 등급 승인 대기 마감이다.
+혼합 모드(내 부서만 실제, 나머지는 가짜): `ORCHESTRATOR_REAL_DEPTS=finance`(쉼표로 여러 부서). 부서별로 총괄이 부르는 skill·입력은 `docs/notes/orchestrator/department-guide.md`.
 테스트: `uv run pytest orchestrator`
 
 ## 3. 입출력 계약
 `ax_contracts`의 `AgentRequest/AgentResult/EventEnvelope`를 그대로 쓴다. 새 계약 없음.
 
 ## 4. 구성
-`registry.py`(카드 수집) · `manager.py`(이벤트→사건) · `engine.py`(plan 실행·재시도·이관·중계) · `plans/scenario_a.py`(시나리오 A 데이터) · `mock/`(가짜 부서·하네스) · `static/demo.html`(목업 화면)
+`registry.py`(카드 수집) · `hybrid.py`(부서별 실제/가짜 선택) · `real.py`(HTTP 카드 수집) · `guide.py`(연동 안내서 생성) · `manager.py`(이벤트→사건) · `engine.py`(plan 실행·재시도·이관·중계) · `plans/scenario_a.py`(시나리오 A 데이터) · `mock/`(가짜 부서·하네스) · `static/demo.html`(목업 화면)
 
 ## 5. 하지 않는 것
 분석 문장·금액·등급을 만들지 않는다. C 등급을 승인하지 않는다(사람이 대시보드에서). 부서 DB를 직접 건드리지 않는다. 외부 텍스트를 지시로 해석하지 않는다.
