@@ -81,6 +81,12 @@ support 출력은 `claim_mapping.py`에서 화면 모델로 바꾼다 (값을 �
 | POST `/handover-questions/{question_id}/answer` | `answer_handover_question` | 본문 `HandoverAnswerRequest`(`question_id`, `answer`, `idempotency_key`) → `AnswerHandoverQuestionOutput` |
 | GET `/candidate-cards?area` | `list_candidate_cards` | 후보 `Card[]` (`candidate: true`, `confidence` low·mid·high) |
 | POST `/candidate-cards/{card_id}/decision` | `decide_candidate_card` | 본문 `{decision: approve|reject, note?}` → `{card_id, status: active|retired}` |
+| GET `/onboardings?member_id&area` | `list_onboardings` | `OnboardingView[]` (단계·진행률) |
+| POST `/onboardings/{onboarding_id}/steps/{step_id}` | `update_onboarding_step` | 본문 `{done: true|false}`(기본 true) → `StartOnboardingOutput` (진행률은 다시 센 값) |
+| GET `/assignment-changes?status&area&member_id` | `list_changes` | `ChangeView[]` (교대·발령·퇴직·입사 요청, 확인 목록) |
+| GET `/roster?area` | `get_roster` | `GetRosterOutput` 한 개 (`entries`, `gap_areas`, `collected_at`). 개인 정보 없음 |
+| GET `/hr-activity/{context_id}` | `get_audit_timeline` | `AuditEntry[]` (hr이 한 일, 시간순) |
+| POST `/plan-checks` | `check_plan` | 본문 `{draft: {title, summary, area, kind}}` → `CheckPlanOutput` (읽기, 저장 안 함) |
 - 답변은 질문이 속한 사건의 `context_id`(질문 목록에서 받은 값)를 그대로 `meta.context_id`로 보낸다. 새로 만들지 않는다. 그래서 hr 감사 기록이 그 사건으로 모인다. 이미 답해서 대기 목록에서 빠진 질문(같은 답의 재전송)은 사건을 알 수 없어 새 `ctx_ui_`로 보내고, hr이 질문 ID로 찾아 한 번만 반영한다. 멱등 키는 본문의 `idempotency_key`다.
 - 같은 답을 다시 보내면 한 번만 반영되고 성공한다. **다른 답**을 다시 보내면 409 `CONFLICT`다. 없는 질문·카드·인수인계는 404 `NOT_FOUND`, 본문 오류(빈 답변·빈 키·경로와 다른 `question_id`·모르는 결정 값)는 422다.
 - 후보 카드: 같은 결정을 다시 하면 성공하고 반대 결정이면 409 `CONFLICT`다. 실행은 hr이 `decide_candidate_card`(A)로 한다. 대시보드는 hr skill만 부르고 직접 `execute()`하지 않는다. 승인 권한 규칙은 아직 없다(누구나 호출 가능, 정하면 여기서 막는다).
@@ -88,7 +94,27 @@ support 출력은 `claim_mapping.py`에서 화면 모델로 바꾼다 (값을 �
 - 목과 실제는 같은 모양이다. 예전 목의 `StartHandoverOutput`(`gap_count`, `questions`)은 hr 화면 계약의 `HandoverView`(`open_questions`)로 바뀌었다. 화면 타입을 다시 만들어야 한다.
 - 완성도·진행률 같은 숫자는 hr이 계산한 값이다 (목은 코드가 계산: 완성도 = (항목 수 - 빈 자리) / 항목 수).
 - 답변 문장은 사람이 쓴 내부 입력이라 계약대로 `input`으로 보낸다. 화면은 텍스트로만 표시해야 한다.
-- 아직 연결하지 않은 hr 화면 경로(온보딩·변경·명부·감사 기록·계획 비교)는 `dashboard-api-contract.md` 2장의 제안 경로대로 이어서 붙인다.
+- 온보딩 단계 완료는 이미 그 상태면 그대로 성공하고(`duplicate`), 없는 온보딩·단계는 404다. 변경(`assignment-changes`)의 시작·확정·퇴직 확정은 통합 에이전트만 부르고 화면은 조회만 한다 (hr Agent Card가 dashboard-api를 허용하지 않음). 계획 비교의 `draft`는 화면에서 사람이 쓴 요약이라 `input`으로 보낸다 (`untrusted` 비움).
+- 목 모드 데이터는 `mock_handover.py`(인수인계·후보 카드)와 `mock_hr.py`(온보딩·변경·명부·감사·계획 비교)에 있다. 목의 진행률은 hr과 같은 규칙(완료한 단계 / 전체 단계)으로 코드가 센다.
+
+### 소통 탭: 부서 간 A2A 대화
+| 경로 (`/api/dashboard` 아래) | 응답 `data` |
+| --- | --- |
+| GET `/communications?dept&context_id` | 한 줄(`CommunicationLine`)의 배열, 시간 오름차순. `meta.total`, `meta.truncated` |
+- 읽기는 공통 로그 읽기 조회(`CommonLogQuery`/`CommonLogResult`)만 쓴다. 쓰는 쪽은 agent-template이 A2A 요청·응답을 자동 기록하도록 요청해 둔 상태다(이슈 #242). 읽기 구현이 아직 없어서 목 모드가 아니면 `set_reader`로 읽기 함수를 꽂기 전까지 503 `UPSTREAM_NOT_CONNECTED`다.
+- 한 줄에는 코드가 만든 필드만 담는다: `from_agent` → `to_agent`, `skill`, `outcome`(`completed`·`rejected`·`held`·`needs_human`·`in_progress`), `occurred_at`, `context_id`, `execution_id`. `payload`와 고객 원문은 넣지 않는다. `execution_id`로 안전 레이어 결정과 이어 "보류·거부"를 한 줄에 보여 줄 수 있다.
+- `dept`는 그 부서가 보냈거나 받은 줄만, `context_id`는 같은 사건끼리 묶어 본다. 방향은 요청(`request_received`)이면 요청자 → 받은 쪽, 결과·결정이면 기록한 쪽 → 요청자다. 이벤트 발행·기억 참조는 부서 간 대화가 아니라서 뺀다. 이관 큐로 넘긴 건(`escalated`)은 `needs_human`으로 보인다.
+
+### AI 대화방: 총괄 사건·안전 관문 기록 (읽기 전용 중계)
+| 경로 (`/api/dashboard` 아래) | 원본 | 응답 `data` |
+| --- | --- | --- |
+| GET `/incidents` | 총괄 `GET /api/incidents` | 사건 배열 (단계·이벤트·`pending_holds`) |
+| GET `/incidents/{context_id}` | 총괄 `GET /api/incidents/{id}` | 사건 하나, 없으면 404 |
+| GET `/executions?context_id` | 안전 관문 `GET /api/safety/executions` | 실행 기록 배열 |
+- 브라우저가 총괄·안전 관문을 직접 부르지 않게 하는 경로다 (이슈 #255, ax-frontend #18). 읽기 전용이라 상위로는 GET만 나가고, 사람 결정은 여기서 만들지 않는다 (안전 관문 보류 큐 결정 경로 사용).
+- 총괄 응답은 그대로 중계하되 `untrusted` 키는 중첩된 곳까지 지운다. 안전 관문 기록은 화면에 필요한 필드만 남긴다: `execution_id`, `created_at`, `request`(`action`·`requester`·`context_id`), `decision`(`grade`·`status`·`computed_amount`·`threshold_version`·`verifier`·`hold_reason`·`review_id`·`result_ref`). 요청의 `params`·`evidence`·멱등 키·`report`·고객 정보는 넘기지 않는다. 금액은 안전 레이어가 계산한 `computed_amount`뿐이다.
+- 주소는 `AX_ORCHESTRATOR_URL`·`AX_SAFETY_URL`(기본 `http://<이름>:<포트>`). 연결 실패는 502 `UPSTREAM_ERROR`, 시간 초과는 504 `UPSTREAM_TIMEOUT`, 원본 형식이 다르면 502다.
+- 목 모드는 샘플 사건 1개(보류 대기 포함)와 실행 기록 2개를 돌려준다. `/communications`와 같은 `{data, meta}` 봉투다.
 
 ### 사건 ID (`context_id`)
 모든 요청에는 사건 단위 `context_id`가 필요하다. 화면(상담원) 호출은 요청마다 새 `ctx_ui_<hex>`를 붙인다 (`support_client.UI_CONTEXT_PREFIX`, 한 곳).

@@ -13,6 +13,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from pydantic import ValidationError
+
 from ax_agent_template import call_agent, publish
 from ax_contracts.schemas import (
     EVENT_DATA_MODELS,
@@ -21,6 +23,7 @@ from ax_contracts.schemas import (
     EventType,
     ExecuteRequest,
     RequestMeta,
+    ReviewHoldOutput,
     TaskStatus,
 )
 from ax_safety.gate import (
@@ -65,7 +68,7 @@ async def call_reviewer(task: ReviewTask) -> ReviewOutcome:
             token="",  # call_agent가 safety 토큰으로 바꾼다
             path=[],
             deadline=datetime.now(UTC) + timedelta(seconds=task.timeout_seconds),
-            idempotency_key=f"review:{task.review_id}",
+            idempotency_key=f"{task.context_id}:{task.skill}:{task.review_id}",
         ),
         skill=task.skill,
         input=task.input,
@@ -73,11 +76,11 @@ async def call_reviewer(task: ReviewTask) -> ReviewOutcome:
     result = await call_agent(task.reviewer, request)
     if result.status != TaskStatus.COMPLETED:
         return ReviewOutcome("escalate", f"reviewer_{result.status.value}")
-    out = result.output
-    decision = out.get("decision")
-    if decision not in ("approve", "reject", "escalate"):
+    try:
+        out = ReviewHoldOutput.model_validate(result.output)  # 계약 형식이 아니면 사람에게
+    except ValidationError:
         return ReviewOutcome("escalate", "reviewer_invalid_output")
-    return ReviewOutcome(decision, str(out.get("reason_code", "")), str(out.get("explanation", "")))
+    return ReviewOutcome(out.decision, out.reason_code, out.explanation)
 
 
 async def call_threshold_reviewer(task: ThresholdReviewTask) -> ReviewOutcome:

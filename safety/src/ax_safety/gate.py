@@ -27,8 +27,15 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from ax_contracts.schemas import ExecuteDecision, ExecuteRequest, HoldReason
-from ax_safety.rules import ActionSpec, Registry, ThresholdTable, higher
+from ax_contracts.schemas import ExecuteDecision, ExecuteRequest, HoldReason, ReviewHoldInput
+from ax_safety.rules import (
+    ActionSpec,
+    Registry,
+    ThresholdTable,
+    auto_review_on,
+    higher,
+    without_self_review,
+)
 from ax_safety.store import ExecutionRecord, Review, Store, ThresholdChange
 
 logger = logging.getLogger("ax.safety.gate")
@@ -126,6 +133,11 @@ AUTO_REJECT_NOTE = {
 }
 
 
+SELF_REVIEW_NOTE = (
+    "자기 검증 금지: {action}의 요청자와 검토자({who})가 같아 AI에게 묻지 않고 사람에게 넘깁니다."
+)
+
+
 class AmountError(ValueError):
     pass
 
@@ -180,7 +192,7 @@ class Gate:
         if unknown:
             raise ValueError(f"기준표 규칙의 액션이 레지스트리에 없다: {sorted(unknown)}")
         self.registry = registry
-        self.thresholds = thresholds
+        self.thresholds = without_self_review(registry, thresholds)
         self.baseline = thresholds  # TOML 원래 값. 기준 바꾸기의 허용 범위는 이 값으로 정한다
         self._threshold_reviewer = threshold_reviewer
         self._threshold_lock = asyncio.Lock()
@@ -494,7 +506,7 @@ class Gate:
     ) -> ExecuteDecision:
         """심각하지 않은 C 건을 사람보다 먼저 판단한다. 판단하지 못하면 사람에게 둔다."""
         cfg = self.thresholds.auto_review
-        if not cfg.enabled:
+        if not (cfg.enabled and auto_review_on()):  # 기준표 + 환경변수 둘 다 켜야 돈다
             return held
         reason = review.report.get("hold_reason", "")
         if reason in cfg.auto_reject_reasons:
@@ -504,6 +516,14 @@ class Gate:
             return self._current(review, held)
         if self._reviewer is None or request.action not in cfg.actions:
             return held
+        if request.requester == cfg.reviewer:  # 자기 검증 금지: 요청자에게 자기 건을 묻지 않는다
+            review.report["ai_review"] = {
+                "result": "skipped",
+                "reason_code": "self_review",
+                "explanation": SELF_REVIEW_NOTE.format(action=request.action, who=cfg.reviewer),
+            }
+            self._audit(request, "ai_review", review.execution_id, dict(review.report["ai_review"]))
+            return held
 
         task = ReviewTask(
             reviewer=cfg.reviewer,
@@ -512,17 +532,17 @@ class Gate:
             tenant_id=request.tenant_id,
             review_id=review.review_id,
             timeout_seconds=cfg.timeout_seconds,
-            input={
-                "review_id": review.review_id,
-                "execution_id": review.execution_id,
-                "action": request.action,
-                "requester": request.requester,
-                "params": request.params,
-                "computed_amount": held.computed_amount,
-                "hold_reason": reason,
-                "rules": review.report.get("rules", []),
-                "totals": review.report.get("totals", {}),
-            },
+            input=ReviewHoldInput(
+                review_id=review.review_id,
+                execution_id=review.execution_id,
+                action=request.action,
+                requester=request.requester,
+                params=request.params,
+                computed_amount=held.computed_amount,
+                hold_reason=reason,
+                rules=review.report.get("rules", []),
+                totals=review.report.get("totals", {}),
+            ).model_dump(mode="json"),
         )
         try:
             outcome = await asyncio.wait_for(self._reviewer(task), timeout=cfg.timeout_seconds)

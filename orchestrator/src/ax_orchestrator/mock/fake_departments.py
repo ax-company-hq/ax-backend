@@ -34,12 +34,8 @@ CARDS: dict[str, list[tuple[str, str, str | None]]] = {
         ("link_incident", "A", None),
         ("verify_rollback_target", "read", None),
     ],
-    "marketing": [
-        ("draft_notice", "read", None),
-        ("publish_notice", "A", None),
-        ("issue_coupon", "B", "finance"),
-    ],
-    "support": [("request_compensation", "A", None), ("send_reply", "A", None)],
+    "marketing": [("draft_notice", "read", None), ("publish_notice", "A", None)],
+    "support": [("send_reply", "A", None)],
     "finance": [("loss_aggregation", "read", None)],
     "hr": [("record_case", "A", None)],
 }
@@ -54,8 +50,10 @@ OWNERS = {
 }
 
 
-def fake_card(dept: str, *, empty: bool = False) -> dict[str, Any]:
-    skills = [] if empty else CARDS[dept]
+def fake_card(
+    dept: str, *, empty: bool = False, extra: list[tuple[str, str, str | None]] | None = None
+) -> dict[str, Any]:
+    skills = [] if empty else [*CARDS[dept], *(extra or [])]
     return {
         "name": dept,
         "owner": OWNERS[dept],
@@ -102,16 +100,13 @@ DEFAULT_OUTPUTS: dict[str, Callable[[AgentRequest], dict[str, Any]]] = {
         damage_amount=5_430_000,
     ),
     "rollback_deployment": lambda r: _ok(rolled_back_to=r.input.get("to_version")),
-    "find_related_prs": lambda r: _ok(candidates=[{"number": 412}, {"number": 418}]),
+    "find_related_prs": lambda r: _ok(candidates=[{"pr_number": 412}, {"pr_number": 418}]),
     "link_incident": lambda r: _ok(linked_paras=["PR #412", "PR #418"]),
-    "draft_notice": lambda r: _ok(notice_id="ntc_mock01"),
-    "publish_notice": lambda r: _ok(notice_id=r.input.get("notice_id") or "ntc_mock01"),
-    "request_compensation": lambda r: _ok(
-        eligible_customer_ids=r.input.get("customer_ids", []), amount_per_customer=5_000
-    ),
-    "issue_coupon": lambda r: _ok(
-        issued=len(r.input.get("customer_ids", [])),
-        total_amount=len(r.input.get("customer_ids", [])) * 5_000,
+    "draft_notice": lambda r: _ok(draft_id=f"drf_{r.input.get('kind', 'x')}"),
+    "publish_notice": lambda r: _ok(
+        notice_id=f"ntc_{r.input.get('draft_id', 'none')}",
+        channel_code="banner",
+        status="published",
     ),
     # 실제 재무 `LossReport` 모양(받지 못한 값은 None = 확인할 수 없음)
     "loss_aggregation": lambda r: _ok(
@@ -136,6 +131,7 @@ class FakeDepartments:
         self.calls: list[tuple[str, AgentRequest]] = []
         self.down: set[str] = set()
         self.empty_cards: set[str] = set()
+        self.extra_skills: dict[str, list[tuple[str, str, str | None]]] = {}  # 이관 후보용
         self._scripts: dict[tuple[str, str], deque[str]] = defaultdict(deque)
         self._seen_keys: dict[str, AgentResult] = {}
 
@@ -145,7 +141,7 @@ class FakeDepartments:
     async def fetch_card(self, dept: str) -> dict[str, Any] | None:
         if dept in self.down:
             return None
-        return fake_card(dept, empty=dept in self.empty_cards)
+        return fake_card(dept, empty=dept in self.empty_cards, extra=self.extra_skills.get(dept))
 
     async def __call__(self, dept: str, req: AgentRequest) -> AgentResult:
         self.calls.append((dept, req))
@@ -154,12 +150,12 @@ class FakeDepartments:
         key = req.meta.idempotency_key
         script = self._scripts[(dept, req.skill)]
         behavior = script.popleft() if script else "ok"
-        if behavior == "ok" and key and req.skill in {"issue_coupon", "publish_notice"}:
+        if behavior == "ok" and key and req.skill == "publish_notice":
             cached = self._seen_keys.get(f"{dept}:{key}")
             if cached is not None:  # 멱등: 같은 키는 같은 결과
                 return cached
         result = self._respond(dept, req, behavior)
-        if behavior == "ok" and key and req.skill in {"issue_coupon", "publish_notice"}:
+        if behavior == "ok" and key and req.skill == "publish_notice":
             self._seen_keys[f"{dept}:{key}"] = result
         return result
 

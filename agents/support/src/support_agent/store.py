@@ -63,7 +63,7 @@ class InquiryStore:
         user_id: int,
         customer_name: str,
         subject: str,
-        order_id: int | None,
+        order_id: str | None,
         order_no: str | None,
         first_message: str,
         analysis: Analysis,

@@ -30,17 +30,24 @@ SEND: SendFn = call_agent  # 테스트에서 바꿀 수 있다
 
 
 def unwrap(result: AgentResult) -> dict[str, Any]:
-    """결과를 출력 dict로 바꾸거나 `ShopError`로 올린다."""
+    """결과를 출력 dict로 바꾸거나 `ShopError`로 올린다.
+
+    고객지원은 중복 접수·없는 주문·잘못된 상태도 `status=completed`에 `outcome`만 달리해서 돌려준다
+    (출력은 `{message}`뿐이다). 그래서 `outcome`을 먼저 오류로 바꾸고, 그 뒤에 `completed`를
+    성공으로 본다.
+    """
     outcome = str(result.outcome or "")
-    if result.status == TaskStatus.COMPLETED:
-        return result.output
     message = str(result.output.get("message", "")) if result.output else ""
     if outcome == "not_found":
-        raise ShopError("CLAIM_NOT_FOUND", message or "찾을 수 없다", 404)
+        raise ShopError("NOT_FOUND", message or "찾을 수 없다", 404)
+    if outcome == "duplicate_claim":
+        raise ShopError("DUPLICATE_CLAIM", message or "이미 접수된 클레임이 있다", 409)
     if outcome == "invalid_state":
         raise ShopError("INVALID_STATE", message or "현재 상태에서는 할 수 없다", 409)
     if outcome.startswith("not_executed_"):
         raise ShopError("NOT_EXECUTED", "실행되지 않았다 (승인 대기 또는 거부 상태)", 409)
+    if result.status == TaskStatus.COMPLETED:
+        return result.output
     if result.status == TaskStatus.CANCELED:
         raise ShopError("UPSTREAM_TIMEOUT", "고객지원이 제때 응답하지 않았다", 504)
     if result.status == TaskStatus.REJECTED:

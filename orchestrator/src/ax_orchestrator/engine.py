@@ -306,7 +306,6 @@ class Engine:
         if hold.approved:
             inc.log(f"{run.label}: 사람이 승인 — 재개")
             run.status = "running"
-            run.attempts += 1
             again = await self._send(
                 inc, step, step.skill, {**payload, "review_decision": "approved"}, dept
             )

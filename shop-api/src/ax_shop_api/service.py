@@ -11,7 +11,7 @@ import sqlite3
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from ax_contracts.schemas import EventType, PaymentFailedData
@@ -43,6 +43,9 @@ class PaymentOutcome:
 # 배송비: 품목 합계(포인트 차감 전)가 기준 미만이면 부과한다(시연용 값, 고객지원 시드와 같다)
 SHIPPING_FEE = 3000
 FREE_SHIPPING_FROM = 50000
+
+# 약속 배송일: 결제가 성공한 시각 + 이 일수(시연용 값). 고객에게 약속한 도착 기한이다
+PROMISED_DELIVERY_DAYS = 3
 
 BASELINE_LATENCY_MS = 180.0  # 평소 p95 기준(시연용)
 
@@ -172,6 +175,8 @@ class Shop:
             "refunded_amount": refunded,
             "shipping_fee": order["shipping_fee"],
             "points_used": order["points_used"],
+            "promised_delivery_at": order["promised_delivery_at"],
+            "shipped_at": order["shipped_at"],
             "delivered_at": order["delivered_at"],
             "created_at": order["created_at"],
             "items": [
@@ -320,6 +325,11 @@ class Shop:
                 ("paid" if outcome.ok else "payment_failed", now, order_id),
             )
             if outcome.ok:
+                promised = datetime.now(UTC) + timedelta(days=PROMISED_DELIVERY_DAYS)
+                conn.execute(
+                    "UPDATE orders SET promised_delivery_at = ? WHERE order_id = ?",
+                    (promised.strftime("%Y-%m-%dT%H:%M:%SZ"), order_id),
+                )
                 data = {
                     "payment_id": payment_id,
                     "order_id": order_id,
@@ -357,9 +367,33 @@ class Shop:
                 raise ShopError("ORDER_NOT_PAID", "결제된 주문만 배송 완료로 표시할 수 있다", 409)
             if order["delivered_at"] is None:
                 moment = (delivered_at or datetime.now(UTC)).astimezone(UTC)
+                stamp = moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+                if order["shipped_at"] is not None and stamp < order["shipped_at"]:
+                    raise ShopError("INVALID_TIME", "도착 시각은 발송 시각보다 빠를 수 없다", 409)
                 conn.execute(
-                    "UPDATE orders SET delivered_at = ? WHERE order_id = ?",
-                    (moment.strftime("%Y-%m-%dT%H:%M:%SZ"), order_id),
+                    "UPDATE orders SET delivered_at = ? WHERE order_id = ?", (stamp, order_id)
+                )
+        return self.get_order(order_id)
+
+    def mark_shipped(self, order_id: str, shipped_at: datetime | None = None) -> dict[str, Any]:
+        """발송 시각을 적는다(시연·시드용 관리 API). 상태는 바꾸지 않고 이벤트도 내지 않는다.
+
+        결제된 주문만 가능하고, 이미 적혀 있으면 그대로 돌려준다. 이미 도착한 주문이면 도착 시각보다
+        늦게 발송할 수 없다.
+        """
+        with self.db.tx() as conn:
+            order = conn.execute("SELECT * FROM orders WHERE order_id = ?", (order_id,)).fetchone()
+            if order is None:
+                raise ShopError("ORDER_NOT_FOUND", "주문을 찾을 수 없다", 404)
+            if order["status"] != "paid":
+                raise ShopError("ORDER_NOT_PAID", "결제된 주문만 발송으로 표시할 수 있다", 409)
+            if order["shipped_at"] is None:
+                moment = (shipped_at or datetime.now(UTC)).astimezone(UTC)
+                stamp = moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+                if order["delivered_at"] is not None and stamp > order["delivered_at"]:
+                    raise ShopError("INVALID_TIME", "발송 시각은 도착 시각보다 늦을 수 없다", 409)
+                conn.execute(
+                    "UPDATE orders SET shipped_at = ? WHERE order_id = ?", (stamp, order_id)
                 )
         return self.get_order(order_id)
 
