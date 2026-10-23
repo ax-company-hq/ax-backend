@@ -99,3 +99,37 @@ def test_escalated_records_are_read_and_shown_as_needs_human(monkeypatch):
     assert "escalated" in seen[0].kinds
     (line,) = res.json()["data"]
     assert line["outcome"] == "needs_human"
+
+
+def test_dejafix_can_be_asked_by_any_of_its_names(monkeypatch):
+    """팀 기준 이름 `dejafix`·`infra-dejafix`·에이전트 이름 `infra`가 같은 줄을 돌려준다."""
+    from datetime import UTC, datetime
+
+    from ax_contracts.data_access.common_log import LogRecord
+
+    monkeypatch.delenv("DASHBOARD_MOCK", raising=False)
+    monkeypatch.delenv("AGENT_TEMPLATE_MOCK", raising=False)
+
+    def rec(n, source, requester):
+        return LogRecord.model_validate(
+            {
+                "log_id": f"log_d{n}",
+                "context_id": "ctx_inc_1",
+                "occurred_at": datetime(2026, 10, 22, 9, n, tzinfo=UTC),
+                "source": source,
+                "kind": "result_sent",
+                "skill": "rollback_deployment",
+                "task_status": "completed",
+                "requester": requester,
+            }
+        )
+
+    records = [rec(1, "infra", "orchestrator"), rec(2, "support", "orchestrator")]
+    communications.set_reader(lambda q: CommonLogResult(records=records))
+    client = TestClient(app)
+    for name in ("dejafix", "infra-dejafix", "infra"):
+        data = client.get(URL, params={"dept": name}).json()["data"]
+        assert [x["from_agent"] for x in data] == ["infra"], name  # 응답은 에이전트 이름 그대로
+    support = client.get(URL, params={"dept": "support"}).json()["data"]
+    assert [x["from_agent"] for x in support] == ["support"]
+    assert communications.agent_name("hr") == "hr"  # 이름이 같은 부서는 그대로
