@@ -22,9 +22,10 @@ from ax_orchestrator.engine import Engine
 from ax_orchestrator.hybrid import HybridDepartments, real_depts_from_env
 from ax_orchestrator.manager import IncidentManager
 from ax_orchestrator.mock.fake_departments import FakeDepartments
-from ax_orchestrator.models import Incident
+from ax_orchestrator.models import Incident, now
 from ax_orchestrator.plans.scenario_a import scenario_a
 from ax_orchestrator.registry import Registry
+from ax_orchestrator.usage import BUCKET_SECONDS, WINDOW_SECONDS, RecordingCaller, UsageRecorder
 
 STATIC = Path(__file__).parent / "static"
 DEPTS = ["infra", "data", "planning", "marketing", "support", "finance", "hr"]
@@ -53,6 +54,7 @@ class AppState:
         self.manager: IncidentManager | None = None
         self.published: list[dict[str, Any]] = []
         self.modes: dict[str, str] = {}
+        self.usage = UsageRecorder()  # 사건·옵션이 바뀌어도 부서별 사용량은 이어서 쌓는다
 
     async def build(self, demo: DemoRequest | None = None) -> IncidentManager:
         demo = demo or DemoRequest()
@@ -73,7 +75,7 @@ class AppState:
         await self.registry.load(DEPTS, caller.fetch_card)
         engine = Engine(
             self.registry,
-            caller,
+            RecordingCaller(caller, self.usage),
             publish=self._publish,
             hold_timeout=self.hold_timeout,
             retry_delay=0.2,
@@ -122,6 +124,59 @@ async def registry() -> dict:
     for dept in view["depts"]:
         dept["mode"] = state.modes.get(dept["name"], "mock")
     return {"data": view, "meta": {"mock": True, "modes": state.modes}}
+
+
+@app.get("/api/departments")
+async def departments() -> dict:
+    """부서별 카드·skill·사용량(총괄이 부른 호출을 센 실측)과 최근 호출. 화면의 부서 카드가 쓴다."""
+    _require_mock()
+    if state.manager is None:
+        await state.build()
+    view = state.registry.view()
+    current = now()
+    items: list[dict[str, Any]] = []
+    for dept in view["depts"]:
+        name = dept["name"]
+        skills = []
+        for skill in dept["skills"]:
+            per_skill = state.usage.summary(name, current, skill["id"])
+            skills.append(
+                {
+                    **skill,
+                    **{k: per_skill[k] for k in ("calls", "errors", "success_rate", "avg_ms")},
+                    "retries": per_skill["retries"],
+                    "series": state.usage.series(name, current, skill["id"]),
+                }
+            )
+        items.append(_dept_item(name, dept["owner"], True, None, skills, current))
+    for name, reason in view["unavailable"].items():
+        items.append(_dept_item(name, None, False, reason, [], current))
+    items.sort(key=lambda d: DEPTS.index(d["name"]) if d["name"] in DEPTS else len(DEPTS))
+    return {
+        "data": items,
+        "meta": {"mock": True, "window_seconds": WINDOW_SECONDS, "bucket_seconds": BUCKET_SECONDS},
+    }
+
+
+def _dept_item(
+    name: str,
+    owner: str | None,
+    available: bool,
+    reason: str | None,
+    skills: list[dict[str, Any]],
+    current: Any,
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "owner": owner,
+        "mode": state.modes.get(name, "mock"),
+        "available": available,
+        "unavailable_reason": reason,
+        "skills": skills,
+        "usage": state.usage.summary(name, current),
+        "series": state.usage.series(name, current),
+        "recent": state.usage.recent(name),
+    }
 
 
 @app.get("/api/registry/real")
