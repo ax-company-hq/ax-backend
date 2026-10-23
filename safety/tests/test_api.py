@@ -30,7 +30,7 @@ def test_execute_over_http(client: Any, coupon: Any) -> None:
     response = _post(client, coupon().model_dump(mode="json"))
     assert response.status_code == 200
     data = response.json()["data"]
-    assert (data["grade"], data["status"], data["computed_amount"]) == ("B", "executed", 20_000)
+    assert (data["grade"], data["status"], data["computed_amount"]) == ("A", "executed", 20_000)
     listed = client.get("/api/safety/executions", params={"context_id": "ctx_inc_0001"}).json()
     assert [r["execution_id"] for r in listed["data"]] == [data["execution_id"]]
 
