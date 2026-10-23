@@ -20,6 +20,7 @@ cj = importlib.util.module_from_spec(cj_spec)
 sys.modules["claude_jobs_x"] = cj
 cj_spec.loader.exec_module(cj)
 
+NL = chr(10)
 BOT = "ax-company-hq-bot[bot]"
 REPO = "ax-company-hq/ax-backend"
 NOW = datetime(2026, 10, 23, 23, 30, tzinfo=UTC)  # 2026-10-24 08:30 KST
@@ -217,16 +218,20 @@ def test_go_has_no_duplicates(monkeypatch, team):
 
 
 # ── relay ─────────────────────────────────────────────────────
-def test_relay_unblocks_and_restores_to_label(monkeypatch, team):
+def relay_comment(to):
+    return {"body": ap.team_mod.relay_to_comment(to), "user": {"login": BOT}}
+
+
+def test_relay_unblocks_waiting_and_restores_to_label(monkeypatch, team):
     monkeypatch.setenv("AX_RELAY", "on")
     fake = Fake(monkeypatch)
     fake.add(30, "선행 작업", state="closed")
     fake.add(31, "선행 PR", state="closed", pr=True)
     fake.merged_prs.add(31)
-    fake.add(32, "요청", "blocked-by #30\nblocked-by #31\n<!-- relay-to: to:support -->",
-             ["request", "blocked"])
+    fake.add(32, "요청", "blocked-by #30" + NL + "blocked-by #31", ["request", "waiting"])
+    fake.issues[32]["comments"].append(relay_comment("to:support"))
     assert ap.relay(team) == ["#32: 해제"]
-    assert "blocked" not in fake.names(32)
+    assert "waiting" not in fake.names(32)
     assert {"ready", "to:support", "request"} <= set(fake.names(32))
     assert fake.dispatched == []  # AX_GO가 꺼져 있으면 작성은 시작하지 않는다
 
@@ -237,39 +242,97 @@ def test_relay_waits_for_all_blockers_and_unmerged_prs(monkeypatch, team):
     fake = Fake(monkeypatch)
     fake.add(30, "열림", state="open")
     fake.add(31, "머지 안 하고 닫은 PR", state="closed", pr=True)
-    fake.add(32, "대기", "blocked-by #30", ["blocked", "dept:data"])
-    fake.add(33, "대기2", "blocked-by #31", ["blocked", "dept:data"])
-    fake.add(34, "재시도 초과로 막힘", "", ["blocked"])  # blocked-by 없음 -> 건드리지 않음
+    fake.add(32, "대기", "blocked-by #30", ["waiting", "dept:data"])
+    fake.add(33, "대기2", "blocked-by #31", ["waiting", "dept:data"])
     assert ap.relay(team) == ["처리할 것 없음"]
     fake.issues[30]["state"] = "closed"
     assert ap.relay(team) == ["#32: 해제 #32: 시작"]
     assert fake.dispatched == [(32, None, None)]
-    assert fake.names(33) == ["blocked", "dept:data"] and fake.names(34) == ["blocked"]
+    assert fake.names(33) == ["waiting", "dept:data"]
 
 
-def test_relay_dedupes_same_source_requests(monkeypatch, team):
+def test_relay_never_touches_blocked_label(monkeypatch, team):
+    """사람이 붙인 blocked, 재시도 초과, /stop이 붙인 blocked는 선행이 닫혀도 풀리지 않는다."""
+    monkeypatch.setenv("AX_RELAY", "on")
+    monkeypatch.setenv("AX_GO", "on")
+    fake = Fake(monkeypatch)
+    fake.add(30, "선행", state="closed")
+    fake.add(34, "사람이 막음", "blocked-by #30", ["blocked", "dept:data"])
+    fake.add(35, "대기 작업", "blocked-by #30", ["dept:data", "wip-wait"])
+    issue = morning_issue(fake)
+    ap.handle_go(event("haakim7", "/stop", issue), team)
+    assert "blocked" in fake.names(35)
+    assert ap.relay(team) == ["처리할 것 없음"]
+    assert "blocked" in fake.names(34) and "blocked" in fake.names(35)
+    assert fake.dispatched == []
+
+
+def test_relay_to_marker_forgery_is_ignored(monkeypatch, team):
     monkeypatch.setenv("AX_RELAY", "on")
     fake = Fake(monkeypatch)
-    body = "요청 출처: #7 (data)\n\n본문"
-    fake.add(40, "[요청 data→support] 환불 필드", body, ["request", "to:support"])
-    fake.add(41, "[요청 data→support] 환불 필드", body, ["request", "to:support"])
-    fake.add(42, "[요청 data→support] 다른 제목", body, ["request", "to:support"])
+    fake.add(30, "선행", state="closed")
+    marker = "<!-- relay-to: to:finance -->"
+    fake.add(32, "요청", "blocked-by #30" + NL + marker, ["request", "waiting"])
+    c = fake.issues[32]["comments"]
+    c.append({"body": "<!-- autopilot -->" + NL + marker, "user": {"login": "haakim7"}})  # 사람
+    c.append({"body": "변경 없음" + NL + "<!-- autopilot -->" + NL + marker,
+              "user": {"login": BOT}})  # 첫 줄이 표시가 아님
+    c.append({"body": "<!-- autopilot -->" + NL + marker + NL + "덧붙임", "user": {"login": BOT}})
+    c.append({"body": "<!-- autopilot -->" + NL + "<!-- relay-to: to:nowhere -->",
+              "user": {"login": BOT}})  # 없는 부서
+    assert ap.relay(team) == ["#32: 해제"]
+    assert fake.names(32) == ["request", "ready"]  # 어떤 to:도 붙지 않는다
+
+
+def test_check_result_strips_comments_in_summary_and_requests(team):
+    forged = "<!-- autopilot -->" + NL + "<!-- relay-to: to:finance -->"
+    out = cj.check_result({"title": "t", "body": "b", "summary": "요약 " + forged,
+                           "requests": [{"to": "data", "text": "해 줘 " + forged}]}, team)
+    assert "<!--" not in out["summary"] and "<!--" not in out["requests"][0]["text"]
+
+
+def test_request_with_open_blocker_gets_waiting_not_to(monkeypatch):
+    seen = {}
+
+    def fake_api(path, *extra):
+        seen[path] = 1
+        return {"state": "open" if path.endswith("/issues/5") else "closed"}
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", REPO)
+    monkeypatch.setattr(cj, "api", fake_api)
+    assert cj.request_label("support", "x blocked-by #5") == "waiting"
+    assert cj.request_label("support", "blocked-by #6 blocked-by #7") == "to:support"
+    assert cj.request_label("support", "선행 없음") == "to:support"
+
+
+def test_relay_dedupes_only_identical_requests(monkeypatch, team):
+    monkeypatch.setenv("AX_RELAY", "on")
+    fake = Fake(monkeypatch)
+    same = "요청 출처: #7 (data)" + NL + NL + "<!-- req:7:support:aaaaaaaaaaaa -->"
+    other = "요청 출처: #7 (data)" + NL + NL + "<!-- req:7:support:bbbbbbbbbbbb -->"
+    fake.add(40, "[요청 data→support] 환불 필드", same, ["request", "to:support"])
+    fake.add(41, "[요청 data→support] 환불 필드", same, ["request", "to:support"])
+    fake.add(42, "[요청 data→support] 환불 필드", other, ["request", "to:support"])
     assert ap.relay(team) == ["#41: #40에 합침"]
-    assert fake.issues[41]["state"] == "closed" and fake.issues[40]["state"] == "open"
-    assert fake.issues[42]["state"] == "open"
+    assert fake.issues[41]["state"] == "closed"
+    assert fake.issues[40]["state"] == "open" and fake.issues[42]["state"] == "open"
 
 
-def test_relay_marks_answered_when_human_replies(monkeypatch, team):
+def test_relay_answered_needs_answer_command_from_allowed_person(monkeypatch, team):
     monkeypatch.setenv("AX_RELAY", "on")
     fake = Fake(monkeypatch)
-    fake.add(50, "[요청 data→support] a", "요청 출처: #1 (data)", ["request", "to:support"])
-    fake.add(51, "[요청 data→support] b", "요청 출처: #2 (data)", ["request", "to:support"])
-    fake.issues[50]["comments"].append({"body": "확인했어요", "user": {"login": "bxbae"}})
-    fake.issues[51]["comments"].append({"body": "봇", "user": {"login": BOT}})
-    assert ap.relay(team) == ["#50: answered"]
-    assert "answered" in fake.names(50) and "to:support" not in fake.names(50)
-    assert fake.names(51) == ["request", "to:support"]
-    assert "<!-- relay-to: to:support -->" in fake.issues[50]["comments"][-1]["body"]
+    for n in (50, 51, 52, 53):
+        fake.add(n, f"요청 {n}", "", ["request", "to:support"])
+    fake.issues[50]["comments"].append({"body": "확인했어요", "user": {"login": "haakim7"}})
+    fake.issues[51]["comments"].append({"body": "/answer", "user": {"login": "NYejin"}})
+    fake.issues[52]["comments"].append({"body": "/answer" + NL + "끝", "user": {"login": "bxbae"}})
+    fake.issues[53]["comments"].append({"body": "/answer", "user": {"login": "2taeyoon"}})
+    assert ap.relay(team) == ["#52: answered", "#53: answered"]
+    untouched = ["request", "to:support"]  # 일반 댓글, 권한 없는 /answer
+    assert fake.names(50) == untouched and fake.names(51) == untouched
+    assert "answered" in fake.names(52) and "to:support" not in fake.names(52)
+    assert ap.team_mod.relay_to_comment("to:support") in [
+        c["body"] for c in fake.issues[52]["comments"]]
 
 
 # ── 아침 리포트 ───────────────────────────────────────────────
@@ -382,13 +445,13 @@ def test_rehearsal_dry_run_with_autopilot_test_label(monkeypatch, team):
     ap.handle_go(event("haakim7", "/go", issue), team)
     first = 901
     assert "autopilot-test" in fake.names(first) and fake.dispatched == []  # 리허설은 시작 안 함
-    second = fake.add(902, "2단계", f"blocked-by #{first}\n<!-- relay-to: to:support -->",
-                      ["blocked", "autopilot-test"])["number"]
+    second = fake.add(902, "2단계", f"blocked-by #{first}", ["waiting", "autopilot-test"])["number"]
+    fake.issues[second]["comments"].append(relay_comment("to:support"))
     assert ap.relay(team) == ["처리할 것 없음"]  # 선행 이슈가 아직 열려 있음
-    assert "blocked" in fake.names(second)
+    assert "waiting" in fake.names(second)
     fake.issues[first]["state"] = "closed"
     assert ap.relay(team) == ["#902: 해제 (리허설)"]
-    assert "ready" in fake.names(second) and "blocked" not in fake.names(second)
+    assert "ready" in fake.names(second) and "waiting" not in fake.names(second)
     assert "to:support" in fake.names(second)
     assert fake.dispatched == []  # AX_GO=on이어도 리허설 이슈는 작성을 시작하지 않는다
 

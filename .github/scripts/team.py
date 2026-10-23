@@ -852,6 +852,14 @@ def requeue(repo: str, team: Team, issue: int, reason: str, pr: int | None = Non
     return ",".join(add)
 
 
+# relay가 되돌릴 to: 라벨을 적어 두는 봇 댓글. 이 형식과 정확히 같은 봇 댓글만 믿는다
+RELAY_TO_COMMENT = re.compile(r"<!-- autopilot -->\n<!-- relay-to: (to:[a-z0-9-]+) -->")
+
+
+def relay_to_comment(label: str) -> str:
+    return f"<!-- autopilot -->\n<!-- relay-to: {label} -->"
+
+
 WRITE_WORKFLOW = "_claude-write.yml"
 
 

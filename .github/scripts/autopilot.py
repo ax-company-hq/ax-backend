@@ -12,7 +12,7 @@
                                        아침 이슈를 만들고 morning.json을 쓴다
   go            이벤트 페이로드(GITHUB_EVENT_PATH)의 댓글을 처리한다 (/go, /stop)
   go-check      같은 댓글이 처리 대상(code owner의 명령)인지만 본다 (토큰 없이, 출력 ok=true|false)
-  relay         blocked-by 해제 · answered · 중복 합치기
+  relay         waiting 해제 · /answer · 중복 합치기
 
 규칙: LLM은 규모 판정 한 번뿐이고 그 실행은 cap에 잡힌다(morning.yml run 제목). 작성 시작은
 team.dispatch_write를 거친다. 이슈·댓글에는 `<!-- autopilot -->` 표시를 붙이고 이 표시가 있는
@@ -50,7 +50,7 @@ TASK_LINE = re.compile(
 TASK_NAME = re.compile(r"\*\*\d+\.\s*(?P<name>.+?)\*\*")
 TASK_MARKER = re.compile(r"<!-- morning-task:(\d+) -->")
 BLOCKED_BY = re.compile(r"(?i)\bblocked-by\s+#(\d+)")
-RELAY_TO = re.compile(r"<!-- relay-to: (to:[a-z0-9-]+) -->")
+WAIT_LABEL = "waiting"  # relay 전용 대기 라벨 (blocked와 다름)
 GO_CMD = re.compile(r"^/go(?:\s+(\d+))?\s*$")
 SIZES = ("S", "M", "L")
 HANDLED = "<!-- go-handled:{id} -->"
@@ -521,30 +521,32 @@ def is_done(number: int) -> bool:
 
 
 def stored_to(team: team_mod.Team, issue: dict) -> str | None:
-    """본문(또는 봇·팀원 댓글)에 저장된 `<!-- relay-to: to:<부서> -->`의 라벨."""
-    texts = [issue.get("body") or ""]
-    if not RELAY_TO.search(texts[0]):
-        for c in api(f"repos/{repo()}/issues/{issue['number']}/comments?per_page=100") or []:
-            if team.is_trusted((c.get("user") or {}).get("login", "")):
-                texts.append(c.get("body") or "")
-    for text in texts:
-        m = RELAY_TO.search(text)
+    """되돌릴 to: 라벨. 봇 댓글이면서 relay가 남기는 형식과 정확히 같은 것만 믿는다.
+
+    이슈 본문과 다른 댓글의 표시는 위조할 수 있어 보지 않는다. 여러 개면 가장 마지막 것.
+    """
+    found = None
+    for c in api(f"repos/{repo()}/issues/{issue['number']}/comments?per_page=100") or []:
+        if (c.get("user") or {}).get("login") != team.bot_login:
+            continue
+        m = team_mod.RELAY_TO_COMMENT.fullmatch((c.get("body") or "").strip())
         if m and m.group(1)[3:] in team.depts:
-            return m.group(1)
-    return None
+            found = m.group(1)
+    return found
 
 
 def relay_unblock(team: team_mod.Team) -> list[str]:
+    """`waiting` 라벨 이슈만 다룬다 (blocked는 사람 확인·/stop용이라 건드리지 않는다)."""
     done = []
-    for issue in list_open_issues("blocked"):
+    for issue in list_open_issues(WAIT_LABEL):
         labels = labels_of(issue)
-        if "needs-human" in labels:
+        if "needs-human" in labels or "blocked" in labels:
             continue
         refs = sorted({int(n) for n in BLOCKED_BY.findall(issue.get("body") or "")})
         if not refs or not all(is_done(n) for n in refs):
             continue
         num = issue["number"]
-        remove_label(num, "blocked")
+        remove_label(num, WAIT_LABEL)
         add = ["ready"]
         to = stored_to(team, issue)
         if to and to not in labels:
@@ -558,48 +560,58 @@ def relay_unblock(team: team_mod.Team) -> list[str]:
         started = ""
         if switch("AX_GO"):
             started = " " + team_mod.dispatch_write(repo(), team, num)
-        say(num, f"blocked-by {note}이 모두 닫혀 blocked를 풀었습니다 (ready).{started}")
+        say(num, f"blocked-by {note}이 모두 닫혀 대기를 풀었습니다 (ready).{started}")
         done.append(f"#{num}: 해제{started}")
     return done
 
 
-def relay_answered(team: team_mod.Team) -> list[str]:
-    """request 이슈에 팀원(사람)이 답하면 answered를 붙이고 대기·요청 라벨을 거둔다.
+def answer_allowed(team: team_mod.Team, login: str, to_label: str | None) -> bool:
+    """`/answer`를 쓸 수 있는 사람: code owner 또는 요청 대상 부서 담당자."""
+    if login.lower() in code_owners(team):
+        return True
+    dept = to_label[3:] if to_label else None
+    return bool(dept in team.depts and login in team.owners(dept))
 
-    거두는 to: 라벨은 `<!-- relay-to: -->` 댓글로 남겨 둔다 (사람이 되돌릴 수 있게).
+
+def relay_answered(team: team_mod.Team) -> list[str]:
+    """request 이슈에 `/answer` 댓글(첫 줄)이 있으면 answered를 붙이고 to:·wip-wait를 거둔다.
+
+    거두는 to: 라벨은 봇 댓글(relay-to 형식)로 남겨 사람이 되돌릴 수 있게 한다.
     """
     done = []
     for issue in list_open_issues("request"):
         labels = labels_of(issue)
         if "answered" in labels or "in-progress" in labels:
             continue
+        to = next((lb for lb in labels if lb.startswith("to:")), None)
         comments = api(f"repos/{repo()}/issues/{issue['number']}/comments?per_page=100") or []
         replied = [c for c in comments
-                   if (c.get("user") or {}).get("login") in team.members
-                   and MARK not in (c.get("body") or "")]
+                   if ((c.get("body") or "").strip().splitlines() or [""])[0].strip() == "/answer"
+                   and MARK not in (c.get("body") or "")
+                   and answer_allowed(team, (c.get("user") or {}).get("login", ""), to)]
         if not replied:
             continue
         num = issue["number"]
-        to = next((lb for lb in labels if lb.startswith("to:")), None)
         add_labels(num, ["answered"])
         for lb in [x for x in (to, "wip-wait") if x]:
             remove_label(num, lb)
-        keep = f"\n<!-- relay-to: {to} -->" if to else ""
-        say(num, f"사람이 답해 answered로 표시했습니다. 자동 작성은 멈춥니다.{keep}")
+        if to:
+            team_mod.post_comment(repo(), num, team_mod.relay_to_comment(to))
+        say(num, "/answer로 answered 처리했습니다. 자동 작성은 멈춥니다.")
         done.append(f"#{num}: answered")
     return done
 
 
-SOURCE = re.compile(r"요청 출처: #(\d+) \(([a-z0-9-]+)\)")
+REQ_MARKER = re.compile(r"<!-- req:(\d+):([a-z0-9-]+):([0-9a-f]{12}) -->")
 
 
 def request_key(issue: dict) -> tuple | None:
-    src = SOURCE.search(issue.get("body") or "")
+    """같은 출처·같은 부서·같은 요청 본문(digest)일 때만 같은 요청이다."""
+    m = REQ_MARKER.search(issue.get("body") or "")
     to = next((lb for lb in labels_of(issue) if lb.startswith("to:")), None)
-    if not src or not to:
+    if not m or not to:
         return None
-    title = re.sub(r"^\[요청 [^\]]*\]\s*", "", issue["title"]).strip().lower()
-    return (src.group(1), src.group(2), to, title)
+    return (m.group(1), m.group(2), m.group(3), to)
 
 
 def relay_dedupe(team: team_mod.Team) -> list[str]:
@@ -617,7 +629,7 @@ def relay_dedupe(team: team_mod.Team) -> list[str]:
         for dup in issues[1:]:
             if "in-progress" in labels_of(dup):
                 continue
-            say(dup["number"], f"같은 출처·제목의 요청 #{keep}과 합칩니다 (중복).")
+            say(dup["number"], f"같은 출처·부서·내용의 요청 #{keep}과 합칩니다 (중복).")
             add_labels(dup["number"], ["obsolete"])
             api(f"repos/{repo()}/issues/{dup['number']}", "-X", "PATCH", "-f", "state=closed",
                 "-f", "state_reason=not_planned")
