@@ -384,6 +384,18 @@ claude-review.yml — 트리거: pull_request_target [opened, synchronize, reope
 - 매일 정리 report에 "지난 24시간 핵심 파일 변경" 목록 (core-change 라벨)
 - (보류) 감사 에이전트 2개 구조(#213)
 
+### 13. 시나리오 A e2e · 회귀 처리 · 토큰 분리 (오토파일럿 PR-A)
+
+모든 스위치는 repo 변수이고 꺼져 있으면(기본) 아무 동작도 하지 않는다.
+
+- `team.yml` `token_owner`(부서, 선택): 그 부서 Claude 실행의 토큰·하루 cap 주인. 없으면 `owners[0]`. 리뷰어 배정·담당 표시는 계속 `owners`를 쓴다. `wip_overrides`(`{부서: {open_bot_prs, in_progress_issues}}`)는 부서별 WIP 한도로 `wip` 기본값보다 먼저 쓴다
+- `e2e/`(일반 테스트 폴더, workspace 멤버 아님 — 루트 pyproject·uv.lock을 바꾸지 않는다, 사람 경로): 시나리오 A 단계 표(총괄 12 + 고객 경로 5)를 plan에서 읽어 만들고 단독/연결 점수를 낸다. `AX_E2E_MODE=mock|real`(real은 PR-C 전 스텁). 같은 입력 3회가 모두 같아야 pass, 상태는 pass/pending/broken/regressed. 결과 형식은 `contracts/.../data_access/dev_status.py`(DevStatus)의 부분
+- `scenario-a.yml`: dev push마다 1회(실행은 직렬, 진행 중 취소 없음, 대기 중인 건 최신 1개만 남음) + 매일 00:30 KST. `AX_E2E=on`일 때만 job이 돈다. 직전 결과는 아티팩트에서 받고, 첫 실행은 기준선만 남긴다
+- `e2e_follow.py`: `AX_E2E=on`이면 regressed만 `dept:<부서>` `bug` `from:e2e` 이슈로 연다(열린 같은 이슈가 있으면 댓글). `AX_GO=on`이면 `dispatch_write`로 작성을 시작한다. `AX_AUTO_REVERT=on`이면 회귀 직전 범위의 원인 PR이 하나일 때만 처리한다: 봇 PR이면 `revert/<번호>` PR, 사람 PR이면 작성자 멘션 + `needs-human`, 핵심 파일·기준표를 바꾼 PR은 `needs-human`, `revert/` 브랜치 PR은 다시 되돌리지 않는다. 되돌린 뒤에도 회귀면 이슈에 `needs-human`과 댓글로 사람에게 알린다(자동 정지는 하지 않는다). 이슈·revert는 이번 실행에서 **새로** 회귀한 단계에만 하고 원인 PR은 `last_pass_commit..sha` 범위에서 찾는다(이미 회귀 중인 단계는 반복하지 않는다). `follow` job은 dev ref에서만 돈다. LLM을 부르지 않는다
+- `morning.yml`(`AX_MORNING=on`): 매일 08:30 KST 이슈 `[morning] YYYY-MM-DD`(라벨 `from:morning`)를 만든다. 신호(연결·단독 n/17, 어제 revert, 열린 needs-human, 부서별 머지율)와 할 일 후보(pending·broken 단계를 부서 round-robin, 부서 토큰 주인의 남은 write cap이 3 이하면 체크 안 함, 열린 작업 이슈가 있으면 "진행 중")를 적고 `morning.json`(DevStatus의 일부)을 아티팩트로 남긴다. 규모(S/M/L)만 Claude 1회로 추정하며 run 제목이 `claude:data:size morning`이라 data 담당(재현)의 작성 1건으로 센다(스위치가 꺼지면 제목이 달라 세지 않음). cap이 없으면 규모는 생략한다
+- `go.yml`(`AX_GO=on`, `issue_comment`): 아침 이슈에 code owner(CODEOWNERS의 `*`·`/.github/` 사람)가 단 `/go [N]`·`/stop`만 처리한다. 체크된 후보마다 `dept:<부서>` 이슈(`from:morning`)를 만들고 `dispatch_write(mode="task")`로 시작한다(같은 단계의 열린 이슈가 있으면 건너뜀, 같은 댓글은 `go-handled` 표시로 한 번만). `/stop`은 대기 중(wip-wait)인 작성을 blocked로 바꾼다. 포크·PR 코드는 가져오지 않고(checkout `ref: dev`), 댓글 내용은 셸에 넣지 않으며, code owner가 아니면 봇 토큰을 만들기 전에 끝낸다
+- `relay.yml`(`AX_RELAY=on`): dev push와 3시간마다 `autopilot.py relay`. 라벨 `waiting`(선행 이슈 대기, relay 전용)이 붙고 `blocked-by #N`이 전부 닫힌(PR은 머지된) 이슈를 `ready`로 바꾸고 `waiting`을 뗀다. `blocked`(사람이 멈춤·재시도 초과·`/stop`)는 건드리지 않는다. 요청 이슈의 `blocked-by`가 열려 있으면 생성 시 `to:` 대신 `waiting`을 붙이고 봇이 `<!-- autopilot -->` + `<!-- relay-to: to:<부서> -->` 두 줄 댓글을 남긴다. relay는 이 형식과 정확히 같은 봇 댓글만 믿고 `to:`를 다시 붙인다(`AX_GO=on`이면 `dispatch_write`). `request` 이슈에 code owner 또는 대상 부서 담당자가 `/answer`로 시작하는 댓글을 달면 `answered`를 붙이고 `to:`·`wip-wait`를 뗀다(일반 댓글은 무시). 같은 출처·부서·`<!-- req:… -->` digest의 열린 요청 이슈만 가장 오래된 하나로 합친다. 라벨 `autopilot-test`가 붙은 이슈는 리허설이라 작성을 시작하지 않는다
+
 ### 완료 기준 (각 단계는 자기 범위에 해당하는 항목만)
 - team.py 단위 테스트: 리뷰어 표 모든 행, 같은 사람 대체, contracts 대체, 빈 목록 실패, check-diff(human_paths·루트 파일·notes 예외·uv.lock·심볼릭 링크 거부·bot_branches),
   사람 PR 다부서, dept-of-branch 별칭, cap 계산(token_dept 기준), requeue 단계

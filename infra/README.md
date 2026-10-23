@@ -18,6 +18,20 @@ docker compose -f infra/compose.yml config          # 설정 검사
 - 공용 서비스: `redis`(이벤트 버스, Redis Streams), `postgres`(pgvector, memory·공통 로그·각 서비스 DB, 볼륨 `pgdata`).
 - Postgres 기본 계정은 `ax` / `ax` / DB `ax`. 바꾸려면 `infra/.env`에 `COMPOSE_POSTGRES_*`를 적는다. compose 안에서의 주소는 `postgresql://ax:ax@postgres:5432/ax`, Redis는 `redis://redis:6379/0`.
 - 목 모드: 서비스별 `<부서>_MOCK=1` (예: `DATA_MOCK=1`).
+- 공통 로그(COM-08, #249): 모든 서비스에 `AX_COMMON_LOG_DB=/common-log/common_log.db`와 named volume `common-log`를 붙인다. 붙이는 파일은 `infra/common-log/<서비스>.yml`이고 `include`의 `path` 목록으로 각 서비스 compose 뒤에 합친다. SQLite WAL을 여러 컨테이너가 함께 쓰므로 Windows bind mount와 `:ro`(dashboard-api 포함)는 쓰지 않는다. `down -v`를 하면 공통 로그가 지워진다. 새 서비스를 추가하면 `common-log/<서비스>.yml`도 만든다.
+
+## 서버 PC 실행 (게이트웨이 한 포트)
+
+기본 `infra/compose.yml`(팀원 로컬 개발)은 지금처럼 각 서비스 포트를 연다. 서버 PC에서만 override를 함께 쓴다.
+
+```bash
+docker compose -f infra/compose.yml -f infra/compose.server.yml up -d --build
+```
+
+- `infra/compose.server.yml`: `gateway` 서비스 추가(공개 포트 `${AX_GATEWAY_PORT:-8080}`), 나머지 서비스는 `ports`를 비우고 `expose`만, 모든 서비스 `restart: unless-stopped`
+- gateway 이미지는 ax-frontend의 `nginx/Dockerfile`로 만든다. 두 레포를 같은 폴더에 나란히 clone하거나 `AX_FRONTEND_DIR`로 위치를 준다
+- 브라우저는 `/api/`(dashboard-api)와 `/shop-api/`(shop-api)만 부른다. 총괄·safety·부서 에이전트는 외부에 열리지 않는다
+- `down -v`는 공통 로그·DB 볼륨을 지우므로 서버 PC에서는 쓰지 않는다
 
 ## 포트
 

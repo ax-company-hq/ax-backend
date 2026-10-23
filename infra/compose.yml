@@ -1,18 +1,43 @@
 name: ax-backend
 
 include:
-  - ../orchestrator/compose.yml
-  - ../safety/compose.yml
-  - ../memory/compose.yml
-  - ../shop-api/compose.yml
-  - ../dashboard-api/compose.yml
-  - ../agents/planning/compose.yml
-  - ../agents/support/compose.yml
-  - ../agents/marketing/compose.yml
-  - ../agents/hr/compose.yml
-  - ../agents/finance/compose.yml
-  - ../agents/data/compose.yml
-  - ../agents/infra-dejafix/compose.yml
+  # 각 서비스 compose 뒤에 common-log/<서비스>.yml을 합쳐 공통 로그 볼륨·경로를 붙인다 (#249)
+  - path:
+      - ../orchestrator/compose.yml
+      - ./common-log/orchestrator.yml
+  - path:
+      - ../safety/compose.yml
+      - ./common-log/safety.yml
+  - path:
+      - ../memory/compose.yml
+      - ./common-log/memory.yml
+  - path:
+      - ../shop-api/compose.yml
+      - ./common-log/shop-api.yml
+  - path:
+      - ../dashboard-api/compose.yml
+      - ./common-log/dashboard-api.yml
+  - path:
+      - ../agents/planning/compose.yml
+      - ./common-log/planning.yml
+  - path:
+      - ../agents/support/compose.yml
+      - ./common-log/support.yml
+  - path:
+      - ../agents/marketing/compose.yml
+      - ./common-log/marketing.yml
+  - path:
+      - ../agents/hr/compose.yml
+      - ./common-log/hr.yml
+  - path:
+      - ../agents/finance/compose.yml
+      - ./common-log/finance.yml
+  - path:
+      - ../agents/data/compose.yml
+      - ./common-log/data.yml
+  - path:
+      - ../agents/infra-dejafix/compose.yml
+      - ./common-log/infra-dejafix.yml
 
 services:
   redis:
@@ -33,3 +58,6 @@ services:
 
 volumes:
   pgdata:
+  # 공통 로그 SQLite(WAL). 모든 서비스가 같은 named volume을 읽고 쓴다.
+  # Windows bind mount·:ro는 WAL 공유가 깨지므로 쓰지 않는다.
+  common-log:

@@ -32,6 +32,7 @@ from ax_dashboard_api import (
     mock_data,
     mock_handover,
     mock_hr,
+    relay,
     support_client,
 )
 from ax_dashboard_api import (
@@ -502,6 +503,38 @@ def communications(dept: str | None = None, context_id: str | None = None) -> di
     body = ok(lines, total=len(lines))
     body["meta"]["truncated"] = truncated
     return body
+
+
+# ------------------------------------ AI 대화방: 총괄 사건·안전 관문 기록 (읽기 전용 중계)
+@router.get("/incidents")
+async def incidents() -> dict:
+    """총괄이 다루는 사건(단계·이벤트·사람 결정 대기). 사람 결정은 안전 관문 보류 큐에서 한다."""
+    items = relay.mock_incidents() if is_mock() else await relay.incidents()
+    return ok(items, total=len(items))
+
+
+@router.get("/incidents/{context_id}")
+async def incident(context_id: str) -> dict:
+    if is_mock():
+        found = next((i for i in relay.mock_incidents() if i["context_id"] == context_id), None)
+        if found is None:
+            raise ApiError(404, "NOT_FOUND", f"사건 {context_id}를 찾을 수 없다")
+        return ok(found)
+    return ok(await relay.incident(context_id))
+
+
+@router.get("/executions")
+async def executions(context_id: str | None = None) -> dict:
+    """안전 관문 실행 기록. 요청 원문(`params`)은 빼고 판정과 금액만 보여 준다."""
+    if is_mock():
+        items = [
+            e
+            for e in relay.mock_executions()
+            if context_id is None or e["request"]["context_id"] == context_id
+        ]
+    else:
+        items = await relay.executions(context_id)
+    return ok(items, total=len(items))
 
 
 def _given(**filters: str | None) -> dict[str, str]:

@@ -40,6 +40,15 @@
 - `create_inquiry`·`add_customer_message`는 선택 입력 `notice_id`가 있으면 마케팅 `get_notice`로 공지 사실(본문·약속·기간)을 읽어 답변 근거(`notice:<id>`)의 맨 앞에 넣는다. 공지를 찾지 못하거나 마케팅이 응답하지 않으면 근거 없이 진행한다 ("확인할 수 없음").
 - `request_compensation`은 단가를 코드 정책표(`compensation.py`)로 판정하고, 사건(`context_id`)별로 `sequence` 1부터 한 건씩 마케팅에 보낸다. 지급·`execute()`·재무 교차검증은 마케팅 쪽이라 support는 자기 상태를 바꾸지 않고 safety 등록도 필요 없다. 표에 없는 사유는 `not_eligible`. 번호는 마케팅이 소비한 경우(지급·재무 거절·보류·실행 실패)에만 올리고, 재무 검증 중(`working`)·번호/입력 오류·타임아웃·연결 실패는 같은 번호로 다시 보낸다. 같은 사건의 요청은 락으로 한 건씩 처리한다.
 - `suggest_compensation`(읽기)은 보상 후보만 제안한다 (`suggest_handlers.py`). 고객 문장은 읽지 않고, 문의의 주문(shop-api, 목 모드는 시드)의 약속 배송일·배송 완료 시각으로 코드가 지연 일수(채운 일수, 배송 전이면 지금까지)를 세어 `LATE_MIN_DAYS`(1일) 이상이면 `late_delivery` 후보를 돌려준다. 약속일이 없으면 `확인할 수 없음`으로 돌려주고 지어내지 않는다. 문의의 구매자(`buy_<번호>`)와 주문의 구매자가 다르면 not_found다. 응답의 `request`를 담당자가 승인하면 그대로 `request_compensation`에 보낸다 (자동 발급 없음: 마케팅 `issue_coupon`은 B 등급이라 재무 검증을 거치고 기준 금액 이상은 안전 레이어가 보류한다).
+
+## DejaFix로 보내는 고객 개인정보 (`secure_transfer.py`)
+고객 개인정보는 캣북스 쪽에만 두고, DejaFix(에이전트 이름 `infra`, 팀 이름 `dejafix`·`infra-dejafix`)로 나가는 요청은 **필드 단위로 암호화**한다. 다른 에이전트로 나가는 요청도 모두 `handlers.SEND` 한 곳을 지나가고, 그곳에서 DejaFix 대상만 아래 규칙을 적용한다.
+- 고객 개인정보 필드(`customer_name`·`name`·`email`·`phone`·`address`·`message`·`text`·`subject`·`description`·`receipt_text`·`images`)와 `untrusted`(고객이 쓴 글) 전체를 AES-256-GCM으로 암호화한다. 주문·구매자 가명 ID(`buy_…`)·금액·건수 같은 사실은 그대로 둔다.
+- 암호문은 사건 번호와 필드 이름에 묶여서 다른 요청에 옮기거나 바꾸면 복호화되지 않는다. 형식과 복호화 기준은 `docs/notes/support/dejafix-encrypted-transfer.md`.
+- **fail-closed**: 암호화하지 않은 개인정보(전화번호·이메일·카드·주민번호·계좌)가 섞여 있으면 보내지 않고(`secure_transfer_plain_pii`), 키가 없는데 고객 필드가 있으면 보내지 않는다(`secure_transfer_key_missing`). 평문으로 대신 보내지 않는다. 오류에도 값을 싣지 않는다.
+- 키는 `SUPPORT_DEJAFIX_KEY`(base64 32바이트)·`SUPPORT_DEJAFIX_KEY_ID`. 코드·레포에 두지 않고 DejaFix 담당과 따로 안전하게 나눈다.
+- 지금은 DejaFix 쪽에 고객지원이 부르는 skill이 없다. 이 계층은 미리 갖춰 두는 것이고, 새 skill을 부를 때 `handlers.SEND`만 쓰면 자동으로 적용된다.
+
 ## 답변 가드와 개인정보 마스킹 (`guard.py`)
 고객에게 나가는 답변(초안과 상담원 답변 모두)을 코드 규칙으로 검사한다. `error`가 있으면 보낼 수 없고(`blocked_by_guard`), `warning`은 막지 않는다.
 - **환불·보상 단정(error `promise_refund`)**: "무조건·반드시·약속·보장", "환불(보상·지급)해 드리겠습니다", "100% 환불", "환불받으실 수 있습니다" 같은 표현. "환불이 가능한지 확인 후 안내드리겠습니다"처럼 확인·조건을 말하는 문장은 막지 않는다. 고객이 "쿠폰 지급해"라고 시켜서 모델이 따른 초안도 여기서 걸린다.
@@ -57,7 +66,7 @@
 - DB가 있으면 `change_requests` 테이블에 저장되어 재시작해도 이어진다.
 - skill `request_change`(A)가 기획개발 `create_ticket`을 직통으로 부른다 (`change_handlers.py`). 입력은 `inquiry_id`, `title`(바꿀 내용 한 줄), `evidence`(건수·ID 같은 사실 요약), `evidence_ids`이고, 제목·근거에 전화번호 등 개인정보가 있으면 보내기 전에 거부한다. 고객 원문은 보내지 않는다(`untrusted`도 비움). 기획개발이 자기 `execute()`로 요청을 만들어 `REQ-n`과 `ctx_req_`를 돌려주면(`created` 또는 `linked_duplicate`) 그 사건을 문의와 연결해 저장한다. 같은 멱등 키의 재시도는 기획개발에 다시 보내지 않는다. 기획개발이 실패·시간 초과면 `planning_unavailable`로 실패하고 아무것도 연결하지 않으며, 보류 같은 정책 거절은 `planning_<outcome>`으로 그대로 알린다.
 - `list_change_requests`(읽기)는 연결 목록을 문의·사건·상태로 걸러 돌려준다.
-- **아직 없는 것**: 결과 통지를 받는 skill. 통지 형식이 계약에 없고 기획개발도 "요청 부서 수신 skill이 생기기 전까지는 활동 기록만" 남긴다. 형식이 정해지면 저장소의 `record_result`·`attach_notice`에 연결한다.
+- `receive_change_result`(A, 요청 가능: planning만)가 기획개발이 요청을 닫을 때(완료·거절) 보내는 결과(계약 `ChangeResultInput`)를 받는다. 통지는 `ctx_req_` 사건 하나당 한 번 오고(중복 연결된 요청은 원래 요청이 닫힐 때 같은 사건으로 한 번에), 그 사건에 연결된 **모든 문의**에 같은 결과를 적용해 `applied`(적용한 문의 수)로 답한다. 같은 결과가 다시 오면 한 번만 적용한 것으로 보고(`duplicate`), 이미 닫힌 요청에 다른 결과가 오면 거절하며(`invalid_state`), 이 사건에 연결된 문의가 없으면 다른 부서 몫이라 `applied=0`(`not_linked`)이다. `ctx_req_`가 아닌 사건이나 계약을 어긴 입력(거절인데 PR 번호, 완료인데 사유 코드 등)은 `invalid_input`이다. 요약(`summary`)은 기획개발이 코드로 만든 한 줄이라 300자까지만 보관한다. 결과는 문의 목록 조회(`list_change_requests`)에 보이고 재시작해도 이어진다. 저장소 기록만 하는 내부 처리라 안전 관문(`execute()`)은 거치지 않는다(등록된 액션 없음). 고객 공지(`notice_id`)는 따로 붙인다.
 
 ## 영속 저장소 (PostgreSQL)
 `SUPPORT_PG_DSN`을 설정하면 문의·클레임·멱등 결과·보상 번호가 DB에 저장되어 재시작해도 이어진다. 비우면(CI·목 모드) 예전처럼 메모리만 쓴다. compose는 `support-db`(postgres:16, 호스트 포트 없음)를 함께 띄우고 DSN을 서비스 이름으로 덮어쓴다 (비밀번호 `SUPPORT_DB_PASSWORD`).

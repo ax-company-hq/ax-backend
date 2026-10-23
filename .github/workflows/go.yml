@@ -1,0 +1,63 @@
+name: go
+
+# 아침 이슈(`[morning] YYYY-MM-DD`)에 code owner가 단 `/go [N]` · `/stop` 댓글을 처리한다 (AX_GO=on일 때만).
+#   /go      체크된 후보마다 dept:<부서> 이슈를 만들고 작성을 시작한다 (/go 3: 앞에서 3개만, 중복 없음)
+#   /stop    대기 중(wip-wait)인 작성을 blocked로 바꾼다
+# 보안: issue_comment는 기본 브랜치(dev)의 워크플로를 실행하고 포크·PR 코드는 가져오지 않는다.
+#   - checkout은 ref: dev 뿐이다 (PR head를 받지 않는다). 이 워크플로는 PR 코멘트(issue.pull_request)를 무시한다
+#   - 댓글 내용은 셸·명령줄에 넣지 않는다: 이벤트 페이로드 파일을 파이썬이 읽는다
+#   - 봇 토큰을 만들기 전에 토큰 없이 댓글 작성자가 code owner(CODEOWNERS)인지부터 확인한다. 아니면 즉시 끝낸다
+#   - `<!-- autopilot -->` 표시가 있는 댓글과 봇 댓글은 무시한다 (루프 방지)
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+concurrency:
+  group: go-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  go:
+    if: >-
+      vars.AX_GO == 'on' &&
+      github.event.issue.pull_request == null &&
+      startsWith(github.event.issue.title, '[morning] ') &&
+      github.event.comment.user.type != 'Bot' &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    environment: bot
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: dev, persist-credentials: false, sparse-checkout: .github }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: team.py 의존성
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet --require-hashes -r .github/scripts/requirements.txt
+      - name: 처리 대상 확인 (토큰 없음, code owner의 명령만)
+        id: check
+        env:
+          AX_GO: ${{ vars.AX_GO }}
+        run: |
+          "$RUNNER_TEMP/venv/bin/python" -I .github/scripts/autopilot.py go-check
+      - name: ax-bot token
+        if: steps.check.outputs.ok == 'true'
+        id: bot
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ secrets.AX_BOT_APP_ID }}
+          private-key: ${{ secrets.AX_BOT_PRIVATE_KEY }}
+          permission-issues: write
+          permission-actions: write
+      - name: /go · /stop
+        if: steps.check.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          AX_GO: ${{ vars.AX_GO }}
+        run: |
+          "$RUNNER_TEMP/venv/bin/python" -I .github/scripts/autopilot.py go

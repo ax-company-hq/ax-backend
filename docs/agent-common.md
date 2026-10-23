@@ -47,8 +47,9 @@ Oct 21, 2026 · @재현
 | 항목 | \[공통\] 규칙 | 예 |
 | --- | --- | --- |
 | 필드 이름 | 우리가 정의하는 모든 필드는 **snake\_case**. A2A SDK가 정한 프로토콜 필드만 SDK 그대로 둔다 | `context_id`, `tenant_id`, `idempotency_key` |
-| ID | 접두사 + 문자열 | `ctx_`, `evt_`, `ord_`, `pay_`, `prd_`, `sel_`, `cpn_`, `exe_`, `rev_`, `card_` |
+| ID | 접두사 + 문자열 | `ctx_`, `evt_`, `ord_`, `pay_`, `prd_`, `sel_`, `buy_`, `cpn_`, `exe_`, `rev_`, `card_` |
 | context\_id 접두사 | 사건은 `ctx_inc_`, 변경 요청은 `ctx_req_`, 공지·패턴은 `ctx_ntc_`, 캠페인은 `ctx_cmp_`, 화면(대시보드) 호출은 `ctx_ui_`(dashboard-api가 발급), 쇼핑몰에서 시작한 고객 클레임은 `ctx_shop_`(shop-api가 발급) | `ctx_inc_0001` |
+| 구매자 ID (`buyer_id`) | `buy_` + 4자리 숫자(0 채움), 가명 ID. 사용자 번호 N은 `buy_{N:04d}`(1번 → `buy_0001`)로 대응한다. shop-api가 발급하고 개인정보를 담지 않는다 | `buy_0001` |
 | tenant\_id | 모든 테이블·요청·이벤트·카드에 포함, 값은 하나 | `shop-demo` |
 | 시간 | UTC ISO8601로 저장, 화면에서만 KST | `2026-10-21T05:41:00Z` |
 | 금액 | 정수 원(KRW) | `30000` |

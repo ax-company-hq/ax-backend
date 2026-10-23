@@ -112,6 +112,28 @@ test('gh pr merge blocked', () => {
   ok('gh pr view 3');
 });
 
+test('revert branch push allowed', () => {
+  ok('git push origin revert/123');
+  ok('git push -u origin revert/123');
+  no('git push origin revert/123 --force');
+});
+
+test('gh pr merge --auto allowed', () => {
+  ok('gh pr merge 3 --auto --squash');
+  ok('gh pr merge 12 --auto --merge -R ax-company-hq/ax-frontend');
+  ok('gh pr merge 7 --rebase --auto');
+});
+
+test('gh pr merge without --auto or with dangerous flags blocked', () => {
+  no('gh pr merge 3 --squash');
+  no('gh pr merge 3 --auto --squash --admin');
+  no('gh pr merge 3 --auto --squash --delete-branch');
+  no('gh pr merge 3 --auto --squash -d');
+  no('gh pr merge 3 --auto --squash; echo x');
+  no('gh pr merge 3 --auto --squash -R someone/else');
+  no('gh pr merge 3 --auto');
+});
+
 test('malformed stdin blocked', () => {
   assert.strictEqual(run('', 'data', 'garbage').status, 2);
 });
