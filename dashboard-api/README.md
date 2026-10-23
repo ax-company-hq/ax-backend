@@ -36,7 +36,7 @@
 | `/queue-entries/process` | 준비된 보상 큐 항목 지급 처리 |
 | `/reviews/{id}/status` | 후기 노출·숨김 |
 
-CORS 허용 출처는 `DASHBOARD_CORS_ORIGINS`(쉼표 구분, 기본 `http://localhost:3000,http://localhost:3001`)로 정한다.
+CORS 허용 출처는 `DASHBOARD_CORS_ORIGINS`(쉼표 구분, 기본 `http://localhost:3001,http://127.0.0.1:3001`)로 정한다.
 
 ### 문의 API 연결 (목 모드가 아닐 때)
 | 경로 | support skill |

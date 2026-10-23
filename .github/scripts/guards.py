@@ -251,11 +251,12 @@ def cmd_apply(args) -> int:
             check=True, capture_output=True, text=True, encoding="utf-8",
         ).stdout
         if MARKER.format(sha=sha) not in bodies:
-            subprocess.run(
-                ["gh", "api", "-X", "POST", f"repos/{repo}/issues/{n}/comments",
-                 "-f", f"body={plan['comment']}"],
-                check=True, capture_output=True,
-            )
+            # 봇 PR은 잠겨 있어 봇도 바로는 못 쓴다 → 잠금 해제·코멘트·재잠금 (team.post_comment).
+            # 코멘트가 실패해도 아래 requeue(PR 닫기·브랜치 삭제)는 해야 한다
+            try:
+                team_mod.post_comment(repo, n, plan["comment"])
+            except subprocess.CalledProcessError:
+                print("::warning::관문 실패 코멘트를 남기지 못함 (상태는 기록됨)")
     if plan.get("requeue"):
         rq = plan["requeue"]
         result = team_mod.requeue(repo, team, rq["issue"], rq["reason"], pr=n, head_sha=sha)

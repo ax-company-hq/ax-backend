@@ -170,7 +170,16 @@ async def test_safety_events_go_to_the_bus(coupon: Any) -> None:
     await verify.publish_safety_event(
         "safety.action_held",
         coupon(),
-        {"execution_id": "exe_1", "action": "issue_coupon", "review_id": "rev_1"},
+        {
+            "execution_id": "exe_1",
+            "action": "issue_coupon",
+            "requester": "marketing",
+            "grade": "C",
+            "computed_amount": 400000,
+            "threshold_version": 1,
+            "hold_reason": "over_threshold",
+            "review_id": "rev_1",
+        },
     )
     envelope = events.MOCK_PUBLISHED[-1]
     assert envelope.type == EventType.SAFETY_ACTION_HELD
@@ -191,3 +200,26 @@ def test_dashboard_origin_is_allowed(client: Any) -> None:
     assert ok.headers.get("access-control-allow-origin") == "http://localhost:3001"
     other = client.get("/api/safety/reviews", headers={"Origin": "http://evil.example"})
     assert "access-control-allow-origin" not in other.headers
+
+
+@pytest.mark.asyncio
+async def test_safety_events_follow_contract_models(coupon: Any) -> None:
+    """#91: 발행 data는 contracts 모델(SafetyActionHeldData 등) 형식이고, 틀리면 발행하지 않는다."""
+    from pydantic import ValidationError
+
+    from ax_contracts.schemas import SafetyActionHeldData
+
+    data = {
+        "execution_id": "exe_9",
+        "action": "issue_coupon",
+        "requester": "marketing",
+        "grade": "C",
+        "computed_amount": 400000,
+        "threshold_version": 1,
+        "hold_reason": "over_threshold",
+        "review_id": "rev_9",
+    }
+    await verify.publish_safety_event("safety.action_held", coupon(), data)
+    assert SafetyActionHeldData.model_validate(events.MOCK_PUBLISHED[-1].data).review_id == "rev_9"
+    with pytest.raises(ValidationError):
+        await verify.publish_safety_event("safety.action_held", coupon(), {"execution_id": "x"})

@@ -12,7 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from ax_agent_template.events import subscribe
 from ax_agent_template.server import create_agent_app
 from ax_contracts.schemas import AgentCard
-from finance_agent.handlers import HANDLERS, SUBSCRIBED_EVENTS, on_event, state
+from finance_agent.handlers import HANDLERS, SUBSCRIBED_EVENTS, on_event, recompute, state
+from finance_agent.selftest import SELF_TEST_TTL_HOURS, is_fresh, run_self_test
 
 # 대시보드(dashboard-web)는 조회(GET)만 한다. A2A(`POST /a2a`)는 에이전트끼리만 쓴다
 DEFAULT_CORS_ORIGINS = "http://localhost:3001,http://127.0.0.1:3001"
@@ -69,6 +70,31 @@ def add_read_api(app: FastAPI) -> None:
     def loss_reports() -> dict:
         rows = sorted(state().ledger.loss_reports.values(), key=lambda r: r["at"], reverse=True)
         return {"data": rows, "meta": {"count": len(rows)}}
+
+    @app.get("/api/finance/self-test")
+    async def self_test() -> dict:
+        """재무 AI 테스트 버튼: 가짜 자료로 판단 점검, 연결 확인. 상태를 바꾸지 않는다."""
+        result = await run_self_test(recompute, state().policy)
+        state().last_self_test = result
+        return {"data": result, "meta": {}}
+
+    @app.get("/api/finance/self-test/last")
+    def last_self_test() -> dict:
+        """마지막 테스트 결과. 12시간이 지나면 지운다(아침마다 새로 테스트하도록)."""
+        last = state().last_self_test
+        if last and not is_fresh(last):
+            state().last_self_test = last = None
+        return {"data": last, "meta": {"ttl_hours": SELF_TEST_TTL_HOURS}}
+
+    @app.get("/api/finance/ai-reviews")
+    def ai_reviews() -> dict:
+        rows = state().ledger.ai_reviews
+        return {"data": list(reversed(rows)), "meta": {"count": len(rows)}}
+
+    @app.get("/api/finance/threshold-reviews")
+    def threshold_reviews() -> dict:
+        rows = state().ledger.threshold_reviews
+        return {"data": list(reversed(rows)), "meta": {"count": len(rows)}}
 
     @app.get("/api/finance/market-ops")
     def market_ops() -> dict:

@@ -300,11 +300,51 @@ def test_refund_request_params_use_code_computed_amount(
     seen: dict[str, Any] = {}
 
     async def spy(action: str, params: dict, meta: Any, evidence: Any) -> ExecuteDecision:
-        seen.update(action=action, params=params, key=meta.idempotency_key)
+        seen.update(
+            action=action,
+            params=params,
+            key=meta.idempotency_key,
+            context=meta.context_id,
+            refs=evidence.ref_ids,
+        )
         return ExecuteDecision(execution_id="exe_1", grade="B", status="executed")
 
     monkeypatch.setattr(claim_handlers, "execute", spy)
     call(client, "process_claim_queue", {}, key="k-p", context="ctx_req_0009")
     assert seen["action"] == "refund_request"
     assert seen["params"]["refund_amount"] == 12000
-    assert seen["key"] == "ctx_req_0009:refund_request:claim:1"
+    # 키·사건은 클레임을 접수한 사건(ctx_req_0001) 기준이고, 처리를 요청한 사건은 근거에 남는다
+    assert seen["key"] == "ctx_req_0001:refund_request:claim:1"
+    assert seen["context"] == "ctx_req_0001"
+    assert "request:ctx_req_0009" in seen["refs"]
+
+
+def test_held_refund_is_paid_when_retried_after_approval_even_from_a_new_request(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """안전 레이어는 같은 키로 다시 요청해야 승인된 C 건을 `executed`로 돌려준다."""
+    create(client, order_id=102, user_id=2, type="cancel", reason="change_of_mind")
+    approved: set[str] = set()
+    keys: list[str] = []
+
+    async def safety(action: str, params: dict, meta: Any, evidence: Any) -> ExecuteDecision:
+        keys.append(meta.idempotency_key)
+        if meta.idempotency_key in approved:
+            return ExecuteDecision(execution_id="exe_1", grade="C", status="executed")
+        return ExecuteDecision(
+            execution_id="exe_1",
+            grade="C",
+            status="held",
+            hold_reason="over_threshold",
+            review_id="rev_1",
+        )
+
+    monkeypatch.setattr(claim_handlers, "execute", safety)
+    first = call(client, "process_claim_queue", {}, key="k-1", context="ctx_req_0101")["output"]
+    assert first["held"] == 1 and first["paid"] == 0
+
+    approved.add(keys[0])  # 담당자가 대시보드에서 승인
+    second = call(client, "process_claim_queue", {}, key="k-2", context="ctx_req_0102")["output"]
+    assert second["paid"] == 1 and second["held"] == 0
+    assert keys[0] == keys[1]  # 처리를 요청한 사건이 달라도 같은 키
+    assert call(client, "get_claim", {"claim_id": 1})["output"]["status"] == "completed"
