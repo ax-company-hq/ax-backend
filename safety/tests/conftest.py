@@ -24,6 +24,7 @@ def _mock_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SAFETY_HUMAN_TOKENS", raising=False)
     monkeypatch.delenv("SAFETY_MOCK", raising=False)  # CI는 SAFETY_MOCK=1이라 테스트마다 정한다
     monkeypatch.delenv("SAFETY_REVIEW_TIMEOUT_SECONDS", raising=False)  # 기본은 기준표 값(10분)
+    monkeypatch.delenv("SAFETY_AUTO_REVIEW", raising=False)  # AI 1차 판단은 기본 꺼짐
     events.reset_mock_bus()
 
 
