@@ -17,9 +17,10 @@
 | --- | --- |
 | `GET /api/shop/sellers`, `GET /api/shop/products[?seller_id&category_code]`, `GET /api/shop/products/{id}` | 판매자·상품 조회 |
 | `POST /api/shop/products`, `PATCH /api/shop/products/{id}` | 상품 등록·수정(판매 중지는 `active=false`) |
-| `POST /api/shop/orders` | 주문. 가격·총액은 DB 값으로 계산하고 재고를 차감한다 |
-| `GET /api/shop/orders[?buyer_id]`, `GET /api/shop/orders/{id}` | 주문 조회 |
+| `POST /api/shop/orders` | 주문. 가격·총액은 DB 값으로 계산하고 재고를 차감한다. 선택 `points_used`(원, 품목 합계 이하)를 받는다. `total_amount` = 품목 합계 − 포인트 + `shipping_fee`(품목 합계 5만 원 미만 3,000원, 이상 0원)로 **실제 결제(현금) 금액**이고 결제 `amount`와 같다 |
+| `GET /api/shop/orders[?buyer_id]`, `GET /api/shop/orders/{id}` | 주문 조회. 주문 필드 `shipping_fee`·`points_used`·`delivered_at`(배송 전 null), 품목 필드 `order_item_id`(`oit_`)·`title`(주문 당시 이름)·`points_share`(포인트를 품목 금액 비율로 나눈 몫, 남는 1원 단위는 뒤 품목부터)·`paid_amount`(= 단가×수량 − `points_share`), 결제 필드 `created_at`. 항상 `total_amount` = Σ`paid_amount` + `shipping_fee` |
 | `POST /api/shop/orders/{id}/payments` | 가짜 결제. `simulate`: `success`·`failure` |
+| `POST /api/shop/admin/orders/{id}/delivered` | 배송 완료 시각 기록(시연·시드용). `admin` 토큰만, 결제된 주문만(409 `ORDER_NOT_PAID`), 본문 `delivered_at`(시간대 있는 시각, 비우면 지금), 이미 있으면 처음 값을 유지한다. 주문 상태는 바꾸지 않고 `order.delivered` 이벤트도 내지 않는다 |
 | `GET·POST·DELETE /api/shop/admin/faults` | 장애 상태 조회·주입(`kind`: `latency`+`delay_ms`, `failure`)·해제. 주입은 `admin`, 해제는 `admin`·`infra` 토큰만(`Authorization: Bearer`) |
 | `GET /api/shop/banners`, `POST /api/shop/banners`, `DELETE /api/shop/banners/{notice_id}` | 공지 배너. 고객 화면은 토큰 없이 게시 중이고 기간 안인 배너만 읽고, 게시·해제는 `marketing` 토큰만(같은 `notice_id` 재게시는 첫 배너 그대로) |
 | `POST /api/shop/coupons`, `GET /api/shop/coupons[?buyer_id&purpose_code]`, `GET /api/shop/coupons/{id}` | 쿠폰. 발급은 `marketing` 토큰만, `idempotency_key` 필수(같은 키·같은 내용은 이전 쿠폰, 다르면 409), 총액은 서버가 건수×단가로 계산, 조회는 `marketing`·`support`·`finance`·`orchestrator` |

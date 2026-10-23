@@ -31,12 +31,15 @@ CREATE TABLE IF NOT EXISTS buyers (
 CREATE TABLE IF NOT EXISTS orders (
   order_id TEXT PRIMARY KEY, buyer_id TEXT NOT NULL REFERENCES buyers(buyer_id),
   status TEXT NOT NULL, total_amount INTEGER NOT NULL, tenant_id TEXT NOT NULL,
-  context_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  context_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  shipping_fee INTEGER NOT NULL DEFAULT 0, points_used INTEGER NOT NULL DEFAULT 0,
+  delivered_at TEXT
 );
 CREATE TABLE IF NOT EXISTS order_items (
   order_id TEXT NOT NULL REFERENCES orders(order_id), product_id TEXT NOT NULL,
   seller_id TEXT NOT NULL, qty INTEGER NOT NULL CHECK (qty > 0),
-  unit_price INTEGER NOT NULL, tenant_id TEXT NOT NULL, context_id TEXT
+  unit_price INTEGER NOT NULL, tenant_id TEXT NOT NULL, context_id TEXT,
+  title TEXT, points_share INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS payments (
   payment_id TEXT PRIMARY KEY, order_id TEXT NOT NULL REFERENCES orders(order_id),
@@ -62,6 +65,16 @@ CREATE TABLE IF NOT EXISTS coupons (
 );
 """
 
+# 이미 만들어진 DB 파일에 뒤늦게 붙은 열(`CREATE TABLE IF NOT EXISTS`는 열을 더하지 않는다)
+_ADDED_COLUMNS = {
+    "orders": (
+        ("shipping_fee", "INTEGER NOT NULL DEFAULT 0"),
+        ("points_used", "INTEGER NOT NULL DEFAULT 0"),
+        ("delivered_at", "TEXT"),
+    ),
+    "order_items": (("title", "TEXT"), ("points_share", "INTEGER NOT NULL DEFAULT 0")),
+}
+
 TENANT_ID = TENANT_ID_DEFAULT
 
 
@@ -73,6 +86,12 @@ class Db:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.executescript(SCHEMA)
+        for table, columns in _ADDED_COLUMNS.items():
+            have = {row["name"] for row in self._conn.execute(f"PRAGMA table_info({table})")}
+            for name, definition in columns:
+                if name not in have:
+                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+        self._conn.commit()
         self._lock = threading.RLock()
 
     @contextmanager
