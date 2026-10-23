@@ -39,7 +39,7 @@ from planning_agent.domain.autocheck import (
     spec_check,
     spec_wait_state,
 )
-from planning_agent.domain.clock import Clock, StepClock
+from planning_agent.domain.clock import Clock, default_clock_factory
 from planning_agent.domain.docs import gather_blocks, next_block_id
 from planning_agent.domain.handover import HandoverCheck, Item, check_handover, in_progress
 from planning_agent.domain.models import (
@@ -377,7 +377,9 @@ class PlanningService:
         gate: Gate | None = None,
         tenant_id: str = TENANT_ID_DEFAULT,
     ):
-        self._clock_factory: Callable[[], Clock] = (lambda: clock) if clock else StepClock
+        self._clock_factory: Callable[[], Clock] = (
+            (lambda: clock) if clock else default_clock_factory()
+        )
         self._gate = gate or template_gate
         self.tenant_id = tenant_id
         self.gate_calls: list[GateCall] = []
@@ -1320,8 +1322,13 @@ class PlanningService:
                 if h.pr in ids:
                     h.result = "장애 연결"
 
-        where = ", ".join(labels) or "-"
-        if follow_id and duplicate:
+        where = ", ".join(labels)
+        if not where:
+            # 연결할 PR이 없으면 문단에 장애를 표시하지 않는다 (재발 방지 요청만 알린다)
+            reply = "연결할 PR 없음 · 장애 표시 안 함" + (
+                f", 재발 방지 요청 {follow_id}" if follow_id else ""
+            )
+        elif follow_id and duplicate:
             reply = f"{where}에 장애 표시, 같은 요청 {follow_id}에 연결 (linked_duplicate)"
         elif follow_id:
             reply = f"{where}에 장애 표시, 재발 방지 요청 {follow_id} 등록"

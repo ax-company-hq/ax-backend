@@ -415,3 +415,35 @@ def test_seed_requests_are_not_advanced(service) -> None:
     before = {x.id: (x.state, x.spec) for x in service.state.requests}
     run(service.inbound("data_query"))
     assert {x.id: (x.state, x.spec) for x in service.state.requests} == before
+
+
+# ---- 총괄 혼합 모드 시연: 실제 시각·PR 없는 연결
+
+
+def test_link_without_prs_marks_nothing(service) -> None:
+    result = run(
+        service.link_incident(
+            context_id="ctx_inc_empty",
+            requester="orchestrator",
+            incident_context_id="ctx_inc_empty",
+            pr_numbers=[],
+            follow_up_title=None,
+            idempotency_key="ctx_inc_empty:link_incident:none",
+        )
+    )
+    assert result.output["linked_paras"] == []
+    replies = [a.text for a in acts(service, "ctx_inc_empty") if a.to == "orchestrator"]
+    assert replies and replies[-1] == "연결할 PR 없음 · 장애 표시 안 함"
+    assert not any(p.incident == "ctx_inc_empty" for sp in service.state.specs for p in sp.paras)
+
+
+def test_planning_clock_real_uses_wall_clock(monkeypatch) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from planning_agent.domain.clock import StepClock, default_clock_factory
+
+    monkeypatch.delenv("PLANNING_CLOCK", raising=False)
+    assert default_clock_factory() is StepClock
+    monkeypatch.setenv("PLANNING_CLOCK", "real")
+    clock = default_clock_factory()()
+    assert abs(clock() - datetime.now(UTC)) < timedelta(seconds=5)
