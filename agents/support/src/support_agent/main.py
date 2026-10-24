@@ -11,6 +11,7 @@ from support_agent.change_handlers import CHANGE_HANDLERS
 from support_agent.claim_handlers import CLAIM_HANDLERS
 from support_agent.handlers import HANDLERS
 from support_agent.insight_handlers import INSIGHT_HANDLERS
+from support_agent.suggest_handlers import SUGGEST_HANDLERS
 
 
 def _card_path() -> Path:
@@ -31,5 +32,11 @@ def load_card() -> AgentCard:
     return AgentCard.model_validate_json(_card_path().read_text(encoding="utf-8"))
 
 
-ALL_HANDLERS = {**HANDLERS, **CLAIM_HANDLERS, **INSIGHT_HANDLERS, **CHANGE_HANDLERS}
+ALL_HANDLERS = {
+    **HANDLERS,
+    **CLAIM_HANDLERS,
+    **INSIGHT_HANDLERS,
+    **CHANGE_HANDLERS,
+    **SUGGEST_HANDLERS,
+}
 app = create_agent_app(load_card(), ALL_HANDLERS)
