@@ -258,6 +258,26 @@
       "allowed_requesters": ["dashboard-api", "orchestrator"],
       "verifier": null,
       "priority": "recommended"
+    },
+    {
+      "id": "analyze_receipt",
+      "description": "영수증 글(untrusted.receipt_text)과 사진(untrusted.images)에서 금액·날짜·주문번호·배송비·품목을 코드가 뽑아 문의에 붙은 주문과 대조한다(읽기). 개인정보는 가린 뒤 읽고 원문은 저장하지 않는다. 사진은 이미지 분석이 연결됐을 때만 읽고 아니면 읽지 못했다고 알린다. 같음·다름·확인할 수 없음만 말하고 환불 판정은 하지 않는다.",
+      "input_schema": "agents/support/src/support_agent/analysis_schemas.py#AnalyzeReceiptInput",
+      "output_schema": "agents/support/src/support_agent/analysis_schemas.py#AnalyzeReceiptOutput",
+      "grade": "read",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "analyze_claim_request",
+      "description": "문의의 마지막 고객 메시지를 환불·교환·취소·이벤트 문의로 분류하고(LLM은 분류만, 못 쓰면 단어 규칙) 고객이 말한 품목을 주문과 맞춘 뒤, 접수했다면 어떻게 판정될지 규칙(claim_rules)으로 환불 범위를 미리 계산한다(읽기, 접수하지 않음). 담당자가 확인해 create_claim에 보낼 입력(suggested_claim)을 함께 돌려준다.",
+      "input_schema": "agents/support/src/support_agent/analysis_schemas.py#AnalyzeClaimRequestInput",
+      "output_schema": "agents/support/src/support_agent/analysis_schemas.py#AnalyzeClaimRequestOutput",
+      "grade": "read",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "recommended"
     }
   ]
 }

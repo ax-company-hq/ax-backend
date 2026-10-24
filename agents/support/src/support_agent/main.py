@@ -8,6 +8,7 @@ from pathlib import Path
 from ax_agent_template.server import create_agent_app
 from ax_contracts.schemas import AgentCard
 from support_agent.change_handlers import CHANGE_HANDLERS
+from support_agent.claim_analysis import ANALYSIS_HANDLERS
 from support_agent.claim_handlers import CLAIM_HANDLERS
 from support_agent.handlers import HANDLERS
 from support_agent.insight_handlers import INSIGHT_HANDLERS
@@ -37,6 +38,7 @@ ALL_HANDLERS = {
     **CLAIM_HANDLERS,
     **INSIGHT_HANDLERS,
     **CHANGE_HANDLERS,
+    **ANALYSIS_HANDLERS,
     **SUGGEST_HANDLERS,
 }
 app = create_agent_app(load_card(), ALL_HANDLERS)
