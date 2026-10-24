@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from support_agent.insight_schemas import (
     InquiryKpis,
     InquiryOverview,
+    KeywordCount,
     SurgeReport,
     TopicSurge,
     WaitingInquiry,
@@ -54,6 +55,23 @@ def kpis(store: InquiryStore) -> InquiryKpis:
         for a in analyses
         if a.timings_ms and {"classify", "draft"} <= set(a.timings_ms)
     ]
+    by_language: Counter[str] = Counter()
+    for conversation in conversations:
+        classified = [
+            m.analysis.classification
+            for m in conversation.messages
+            if m.role == "customer" and m.analysis and m.analysis.classification
+        ]
+        if classified:
+            by_language[classified[-1].language] += 1
+    keyword_counts: Counter[str] = Counter()
+    for analysis in analyses:
+        if analysis.classification:  # 한 메시지에서 같은 키워드는 한 번만 센다 (대소문자 무시)
+            keyword_counts.update({w.casefold() for w in analysis.classification.keywords})
+    top_keywords = [
+        KeywordCount(keyword=keyword, count=count)
+        for keyword, count in sorted(keyword_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
+    ]
     return InquiryKpis(
         conversations=len(conversations),
         by_status=dict(Counter(c.status for c in conversations)),
@@ -69,6 +87,9 @@ def kpis(store: InquiryStore) -> InquiryKpis:
         guard_findings=dict(findings),
         by_category=dict(Counter(c.category for c in conversations if c.category)),
         by_urgency=dict(Counter(c.urgency for c in conversations if c.urgency)),
+        by_sentiment=dict(Counter(c.sentiment for c in conversations if c.sentiment)),
+        by_language=dict(by_language),
+        top_keywords=top_keywords,
     )
 
 

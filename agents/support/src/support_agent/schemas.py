@@ -139,10 +139,12 @@ class LLMDrafts(AxModel):
 # ---------------------------------------------------------------- skill 입력
 class ListInquiriesInput(AxModel):
     status: InquiryStatus | None = None
+    user_id: int | None = None  # 이 고객의 문의만 (고객 화면을 대신 부르는 shop-api는 필수)
 
 
 class GetInquiryInput(AxModel):
     inquiry_id: int
+    user_id: int | None = None  # 이 고객의 문의일 때만 (shop-api는 필수, 남의 문의는 not_found)
 
 
 class CreateInquiryInput(AxModel):
@@ -160,6 +162,7 @@ class AddCustomerMessageInput(AxModel):
 
     inquiry_id: int
     notice_id: str | None = None
+    user_id: int | None = None  # shop-api는 필수: 이 고객의 문의에만 메시지를 덧붙일 수 있다
 
 
 class CheckReplyInput(AxModel):
