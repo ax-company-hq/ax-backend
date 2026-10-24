@@ -72,7 +72,7 @@ class StepRun:
         }
 
 
-TERMINAL = {"completed", "failed", "skipped", "rejected_by_human"}
+TERMINAL = {"completed", "failed", "skipped", "rejected_by_human", "transfer_queued"}
 
 
 @dataclass
