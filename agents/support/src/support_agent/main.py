@@ -12,6 +12,7 @@ from support_agent.claim_analysis import ANALYSIS_HANDLERS
 from support_agent.claim_handlers import CLAIM_HANDLERS
 from support_agent.handlers import HANDLERS
 from support_agent.insight_handlers import INSIGHT_HANDLERS
+from support_agent.payment_handlers import PAYMENT_HANDLERS
 from support_agent.suggest_handlers import SUGGEST_HANDLERS
 
 
@@ -40,5 +41,6 @@ ALL_HANDLERS = {
     **CHANGE_HANDLERS,
     **ANALYSIS_HANDLERS,
     **SUGGEST_HANDLERS,
+    **PAYMENT_HANDLERS,
 }
 app = create_agent_app(load_card(), ALL_HANDLERS)
