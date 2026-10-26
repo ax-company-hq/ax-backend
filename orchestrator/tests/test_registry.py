@@ -74,4 +74,4 @@ async def test_real_dev_cards_load() -> None:
     await reg.load(list(cards), fetch)
     assert reg.find("impact_analysis").dept == "data"
     assert reg.find("record_case").dept == "hr"
-    assert "infra" in reg.unavailable  # infra 카드가 비어 있는 현재 상태
+    assert reg.find("diagnose_incident").dept == "infra"  # infra 카드에 skill이 채워진 현재 상태
