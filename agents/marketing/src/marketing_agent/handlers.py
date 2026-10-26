@@ -1,4 +1,5 @@
-"""marketing skill 핸들러 (필수 4개: draft_notice, publish_notice, get_notice, issue_coupon).
+"""marketing skill 핸들러 (필수 4개: draft_notice, publish_notice, get_notice, issue_coupon,
+권장 1개: list_active_notices).
 
 - 상태를 바꾸는 일(공지 게시, 쿠폰 지급)은 `execute()`가 `executed`를 돌려준 뒤에만 한다.
 - 외부 입력(`request.untrusted`)은 읽지 않는다. 문안·금액은 사실 필드와 코드 계산으로만 만든다.
@@ -32,10 +33,12 @@ from ax_contracts.schemas import (
 from marketing_agent.coupons import CouponLedger, SequenceGap, total_value
 from marketing_agent.notice import NoticeStore, make_draft
 from marketing_agent.schemas import (
+    ActiveNotices,
     DraftNoticeInput,
     GetNoticeInput,
     IssueCouponInput,
     IssuedCoupon,
+    ListActiveNoticesInput,
     PublishedNotice,
     PublishNoticeInput,
 )
@@ -217,6 +220,32 @@ async def get_notice(request: AgentRequest) -> AgentResult:
     )
 
 
+async def list_active_notices(request: AgentRequest) -> AgentResult:
+    data = _parse(request, ListActiveNoticesInput)
+    if isinstance(data, AgentResult):
+        return data
+    items, total = STATE.notices.active(
+        component=data.component,
+        channel_code=data.channel_code,
+        at=data.at,
+        limit=data.limit,
+    )
+    listing = ActiveNotices(
+        items=items,
+        total=total,
+        unknown_reason=None if items else "조건에 맞는 게시 중인 공지가 없음",
+    )
+    summary = f"게시 중인 공지 {total}건 조회" if items else "조건에 맞는 게시 중인 공지가 없음"
+    return _result(
+        request,
+        TaskStatus.COMPLETED,
+        output=listing.model_dump(mode="json"),
+        evidence=_evidence(
+            ["list_active_notices"], summary, [item.notice_id for item in items if item.notice_id]
+        ),
+    )
+
+
 async def issue_coupon(request: AgentRequest) -> AgentResult:
     data = _parse(request, IssueCouponInput)
     if isinstance(data, AgentResult):
@@ -304,5 +333,6 @@ HANDLERS = {
     "draft_notice": draft_notice,
     "publish_notice": publish_notice,
     "get_notice": get_notice,
+    "list_active_notices": list_active_notices,
     "issue_coupon": issue_coupon,
 }
