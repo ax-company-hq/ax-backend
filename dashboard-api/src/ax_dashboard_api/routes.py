@@ -38,6 +38,7 @@ from ax_dashboard_api import (
 from ax_dashboard_api import (
     communications as communication_log,
 )
+from ax_dashboard_api.auth import require_human_for_writes
 from ax_dashboard_api.envelope import ApiError, is_mock, ok, require_mock
 from ax_dashboard_api.schemas import (
     AgentMessageBody,
@@ -60,7 +61,7 @@ from ax_dashboard_api.schemas import (
 
 HR_LIST_LIMIT = 200  # hr 조회 skill의 최대 건수
 
-router = APIRouter(prefix="/api/dashboard")
+router = APIRouter(prefix="/api/dashboard", dependencies=[Depends(require_human_for_writes)])
 # 목 데이터만 있는 경로 (클레임·보상 큐·후기·집계 등). 실제 연결은 이후 단계에서 바꾼다
 mock_only = APIRouter(dependencies=[Depends(require_mock)])
 
