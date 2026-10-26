@@ -35,6 +35,7 @@
 - 지시문: `.claude/commands/collab-loop.md`
 - 실행: ax-backend 폴더에서 `/loop 30m /collab-loop` (재현은 `/loop 30m /collab-loop 닥터`)
 - 시작 전: 작업 폴더가 `dev`이고 커밋 안 한 변경이 없어야 한다 (아니면 루프가 "작업 폴더 정리 필요"만 보고하고 끝낸다)
+- 부서 이름은 team.yml id로만 쓴다. 인프라 에이전트(DejaFix)는 `dejafix`, `infra`는 compose·서버 설정 폴더
 - 내 계정과 부서는 `.github/team.yml`에서 찾는다: `depts.<부서>.owners`·`token_owner`, 프론트는 `frontend_depts`. 리뷰 부서는 `reviewers`(바뀐 부서 → 리뷰 부서), 그 담당자는 그 부서의 `owners`
 
 ### 한 회차에 하는 일
@@ -43,7 +44,7 @@
 | --- | --- | --- |
 | A. PR | 내 PR·내 부서 봇 PR 정리(CI·변경 요청·충돌), 남의 PR 리뷰·승인, 자동 머지 예약 | 새 PR 2, 리뷰 3 |
 | B. 대화 | 협업 부서 에이전트와 `[협업]` 이슈 스레드에서 질문·제안·합의 | 답글 4, 새 스레드 1 |
-| C. 받은 요청 | `to:<내 부서>` 이슈의 skill을 테스트 먼저 만들어 PR | (새 PR 한도 안에서) |
+| C. 받은 요청 | `to:<내 부서>` 이슈 + 사람이 `loop-ok`를 붙인 `dept:<내 부서>` 이슈를 테스트 먼저 만들어 PR | (새 PR 한도 안에서) |
 | D. 보낼 요청 | 내 설계에 필요한 skill을 `to:<상대 부서>`로 요청 | 새 요청 2 |
 
 요청·합의가 없는 새 기능은 루프가 만들지 않는다 (사람이 별도 세션에서 한다).
@@ -60,6 +61,7 @@
 - 대상: data, memory, finance, safety, hr, orchestrator, support, marketing, planning, dejafix
 - 위치: `docs/notes/<부서>/agent-design.md` — **사람이 채운다**. 루프는 없으면 빈 틀만 PR로 올리고 내용은 지어내지 않는다
 - 틀 항목: 실제 회사의 이 부서, 벤치마킹 솔루션, 협업 부서, 1 고유 업무 3가지, 2 스스로 판단 / 사람에게 넘김, 3 받는 요청(내 skill), 4 하는 요청(필요한 skill), 5 기억, 6 지표, 7 하지 않는 일
+- 시나리오 문서(`docs/scenarios/*.md`, 예: `scn-a-server-incident.md`)도 같이 읽는다. skill 표·등급·호출 부서가 설계보다 구체적이면 시나리오가 기준이고, 다르면 "설계·시나리오 불일치"로 보고
 - 설계가 비어 있으면 그 부서 루프는 A·C만 하고 B·D는 하지 않는다 ("설계 미작성"으로 보고)
 - 그 밖의 부서(contracts, agent-template, infra, dashboard-api, shop-api, 프론트 앱)는 설계 문서 없이 A·C만 한다
 
@@ -83,6 +85,7 @@
 | `talk:<부서>` | 그 부서가 참여하는 스레드 (부서 15개 + shop-web·dashboard-web·planning-web) |
 | `talk-agreed` | 합의됨, 후속 요청 생성 |
 | `talk-decision` | 사람 결정 필요 |
+| `loop-ok` | 사람이 루프에 맡겨도 된다고 고른 `dept:<부서>` 이슈 |
 | `waiting` | 받은 요청이 `blocked-by #M`에 막혀 기다리는 중 |
 | `request`, `to:<부서>`, `in-progress`, `needs-human`, `blocked` | 기존 라벨 그대로 |
 
