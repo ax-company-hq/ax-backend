@@ -120,3 +120,62 @@ def test_orchestrator_url_comes_from_environment(monkeypatch) -> None:
     assert orchestrator_relay.base_url() == "http://orchestrator:8000"
     monkeypatch.delenv("SHOP_ORCHESTRATOR_URL")
     assert orchestrator_relay.base_url() == orchestrator_relay.DEFAULT_URL
+
+
+DEPARTMENTS = [
+    {
+        "name": "support",
+        "owner": "병환",
+        "mode": "mock",
+        "available": True,
+        "skills": [],
+        "usage": {"calls": 3},
+    }
+]
+DEPARTMENTS_URL = "/api/shop/admin/orchestrator/departments"
+
+
+def test_departments_are_passed_through_with_window_meta(client, monkeypatch) -> None:
+    meta = {"mock": True, "window_seconds": 3600, "bucket_seconds": 300}
+    seen = _upstream(
+        monkeypatch, lambda r: httpx.Response(200, json={"data": DEPARTMENTS, "meta": meta})
+    )
+    response = client.get(DEPARTMENTS_URL, headers=ADMIN)
+    assert response.status_code == 200
+    assert response.json() == {"data": DEPARTMENTS, "meta": meta}
+    assert [(r.method, r.url.path) for r in seen] == [("GET", "/api/departments")]
+
+
+def test_departments_meta_keeps_only_known_numbers(client, monkeypatch) -> None:
+    meta = {"mock": True, "window_seconds": "soon", "bucket_seconds": True, "extra": 1}
+    _upstream(monkeypatch, lambda r: httpx.Response(200, json={"data": [], "meta": meta}))
+    assert client.get(DEPARTMENTS_URL, headers=ADMIN).json()["meta"] == {"mock": True}
+
+
+def test_departments_only_admin_may_read(client, monkeypatch) -> None:
+    seen = _upstream(monkeypatch, lambda r: httpx.Response(200, json={"data": [], "meta": {}}))
+    assert client.get(DEPARTMENTS_URL).status_code == 401
+    assert client.get(DEPARTMENTS_URL, headers=INFRA).status_code == 403
+    assert seen == []
+
+
+def test_departments_orchestrator_down_is_502(client, monkeypatch) -> None:
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    _upstream(monkeypatch, refuse)
+    response = client.get(DEPARTMENTS_URL, headers=ADMIN)
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "UPSTREAM_UNAVAILABLE"
+
+
+def test_departments_real_mode_501_is_upstream_error(client, monkeypatch) -> None:
+    _upstream(monkeypatch, lambda r: httpx.Response(501, json={"detail": "not in real mode"}))
+    response = client.get(DEPARTMENTS_URL, headers=ADMIN)
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "UPSTREAM_ERROR"
+
+
+def test_departments_relay_is_read_only(client) -> None:
+    for method in ("post", "patch", "delete", "put"):
+        assert getattr(client, method)(DEPARTMENTS_URL, headers=ADMIN).status_code == 405

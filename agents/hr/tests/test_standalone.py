@@ -1,7 +1,8 @@
 """단독 테스트(다른 에이전트 없이): 공통 8항목과 hr 고유 4항목.
 
 공통: Agent Card · 결정성 · 루프 · 권한 · 멱등성 · 인젝션 · 계산 · 상태 변경(execute 경유).
-고유: 기록 3건→카드 2+기록만 1 · 인수인계 초안/빈자리/완성도 · 계획 비교 기각 판정 · 퇴직 보류.
+고유: 기록 3건→카드 2+기록만 1 · 인수인계 초안/빈자리/완성도 · 계획 비교 기각 판정 ·
+미완성 인수인계 확정 보류.
 """
 
 from __future__ import annotations
@@ -25,11 +26,6 @@ STATE_CHANGING = {
     "start_handover": "start_handover",
     "answer_handover_question": "answer_handover_question",
     "confirm_handover": "confirm_handover_incomplete",
-    "start_onboarding": "start_onboarding",
-    "request_assignment_change": "request_assignment_change",
-    "confirm_reassignment": "confirm_reassignment",
-    "confirm_offboarding": "confirm_offboarding",
-    "update_onboarding_step": "update_onboarding_step",
     "decide_candidate_card": "memory.card_write",
 }
 READ_ONLY = {
@@ -37,8 +33,6 @@ READ_ONLY = {
     "check_plan",
     "list_handovers",
     "list_open_questions",
-    "list_onboardings",
-    "list_changes",
     "list_candidate_cards",
     "get_audit_timeline",
 }
@@ -90,7 +84,7 @@ def test_agent_card_lists_all_skills_with_resolvable_schemas() -> None:
     card = load_card()
     ids = {s.id for s in card.skills}
     assert ids == set(HANDLERS) == STATE_CHANGING.keys() | READ_ONLY
-    assert len(ids) == 18
+    assert len(ids) == 11
     for skill in card.skills:
         for ref in (skill.input_schema, skill.output_schema):
             path, _, cls = ref.partition("#")
@@ -105,17 +99,16 @@ def test_agent_card_lists_all_skills_with_resolvable_schemas() -> None:
 
 def test_agent_card_grades_match_the_safety_registry_draft(svc) -> None:
     grades = {s.id: s.grade for s in load_card().skills}
-    assert grades["confirm_handover"] == "B" and grades["confirm_reassignment"] == "B"
-    assert grades["confirm_offboarding"] == "C"
+    assert grades["confirm_handover"] == "B"
     assert grades["record_case"] == grades["start_handover"] == "A"
     registry = svc.gate.registry
     assert registry["confirm_handover"].grade == "B"
-    assert registry["confirm_offboarding"].grade == "C"
+    assert registry["confirm_handover_incomplete"].grade == "C"
 
 
 def test_agent_card_is_served_over_http(client: TestClient) -> None:
     served = client.get("/.well-known/agent-card.json").json()
-    assert served["name"] == "hr" and len(served["skills"]) == 18
+    assert served["name"] == "hr" and len(served["skills"]) == 11
 
 
 # 2) 결정성 ----------------------------------------------------------------------
@@ -123,7 +116,7 @@ def test_same_input_same_state_gives_the_same_output(client: TestClient) -> None
     for inp, skill in [
         ({}, "get_roster"),
         ({"owner_id": "emp_01"}, "start_handover"),
-        ({"member_id": "emp_10", "area": "payment"}, "start_onboarding"),
+        ({}, "list_handovers"),
     ]:
         a = client.post("/a2a", json=body(skill, inp, ctx=f"ctx_{skill}")).json()
         b = client.post("/a2a", json=body(skill, inp, ctx=f"ctx_{skill}")).json()
@@ -169,20 +162,6 @@ def test_repeating_a_request_changes_state_only_once(svc, client: TestClient) ->
         len(svc.store.all("SELECT * FROM handover_questions")) == 2
     )  # 결정 카드가 있어 결정 항목은 자동
 
-    onb = body("start_onboarding", {"member_id": "emp_10", "area": "payment"}, "o")
-    client.post("/a2a", json=onb)
-    client.post("/a2a", json=onb)
-    assert len(svc.store.all("SELECT * FROM onboardings")) == 1
-
-    asg = body(
-        "request_assignment_change",
-        {"change_kind": "join", "member_id": "emp_10", "area": "inventory"},
-        "a",
-    )
-    client.post("/a2a", json=asg)
-    client.post("/a2a", json=asg)
-    assert len(svc.store.all("SELECT * FROM assignment_changes")) == 1
-
 
 def test_state_changing_requests_without_a_key_are_refused(client: TestClient) -> None:
     raw = body("start_handover", {"owner_id": "emp_01"})
@@ -205,7 +184,6 @@ def test_injected_instructions_do_not_change_state(svc, client: TestClient) -> N
     for skill, inp in [
         ("start_handover", {"owner_id": "emp_01"}),
         ("get_roster", {}),
-        ("start_onboarding", {"member_id": "emp_10", "area": "payment"}),
     ]:
         client.post("/a2a", json=body(skill, inp, untrusted=INJECTION, ctx=f"ctx_{skill}"))
     handovers = svc.store.all("SELECT status FROM handovers")
@@ -267,34 +245,11 @@ def test_state_changes_go_through_the_gate_and_reads_do_not(svc, client: TestCli
         "/a2a",
         json=body("confirm_handover", {"handover_id": start["output"]["handover_id"]}, "c"),
     )
-    client.post(
-        "/a2a",
-        json=body("start_onboarding", {"member_id": "emp_10", "area": "payment"}, "o"),
-    )
-    asg = client.post(
-        "/a2a",
-        json=body(
-            "request_assignment_change",
-            {"change_kind": "join", "member_id": "emp_10", "area": "inventory"},
-            "a",
-        ),
-    ).json()
-    client.post(
-        "/a2a",
-        json=body(
-            "confirm_reassignment",
-            {"change_id": asg["output"]["change_id"], "successor_id": "emp_10"},
-            "ra",
-        ),
-    )
     actions = {a for a, _ in svc.gate.calls}
     assert {
         "memory.card_write",
         "start_handover",
         "confirm_handover_incomplete",
-        "start_onboarding",
-        "request_assignment_change",
-        "confirm_reassignment",
     } <= actions
 
 
@@ -348,24 +303,11 @@ def test_check_plan_flags_a_previously_rejected_plan(client: TestClient) -> None
     assert [f["code"] for f in out["findings"]] == ["REJECTED_BEFORE"]
 
 
-def test_offboarding_is_held_until_a_person_approves(svc, client: TestClient) -> None:
-    chg = client.post(
-        "/a2a",
-        json=body(
-            "request_assignment_change",
-            {
-                "change_kind": "offboarding",
-                "member_id": "emp_01",
-                "area": "payment",
-                "successor_id": "emp_02",
-            },
-            "a",
-        ),
-    ).json()["output"]["change_id"]
-    client.post(
-        "/a2a",
-        json=body("confirm_reassignment", {"change_id": chg, "successor_id": "emp_02"}, "ra"),
-    )
-    held = client.post("/a2a", json=body("confirm_offboarding", {"change_id": chg}, "off")).json()
-    assert held["output"]["status"] == "held" and held["output"]["hold_id"]
-    assert svc.store.one("SELECT active FROM members WHERE member_id = 'emp_01'")["active"] == 1
+def test_incomplete_handover_confirmation_is_held_until_a_person_approves(
+    svc, client: TestClient
+) -> None:
+    start = client.post("/a2a", json=body("start_handover", {"owner_id": "emp_01"}, "s")).json()
+    hid = start["output"]["handover_id"]
+    held = client.post("/a2a", json=body("confirm_handover", {"handover_id": hid}, "c")).json()
+    assert held["output"]["status"] != "confirmed"
+    assert svc.store.one("SELECT status FROM handovers")["status"] != "confirmed"

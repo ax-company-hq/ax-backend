@@ -6,13 +6,14 @@ dashboard-web 옛 경로와의 대응은 README "엔드포인트" 표를 본다.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Query
 
 from ax_contracts.schemas.hr import (
     AnswerHandoverQuestionOutput,
     AuditEntry,
     ChangeStatus,
-    ChangeView,
     CheckPlanInput,
     CheckPlanOutput,
     DecideCandidateCardOutput,
@@ -21,14 +22,13 @@ from ax_contracts.schemas.hr import (
     HandoverQuestion,
     HandoverStatus,
     HandoverView,
-    OnboardingView,
-    StartOnboardingOutput,
 )
 from ax_contracts.schemas.record import Card
 from ax_dashboard_api import (
     claim_mapping,
     hr_client,
     mock_actions,
+    mock_customers,
     mock_data,
     mock_handover,
     mock_hr,
@@ -38,6 +38,7 @@ from ax_dashboard_api import (
 from ax_dashboard_api import (
     communications as communication_log,
 )
+from ax_dashboard_api.auth import require_human_for_writes
 from ax_dashboard_api.envelope import ApiError, is_mock, ok, require_mock
 from ax_dashboard_api.schemas import (
     AgentMessageBody,
@@ -60,7 +61,7 @@ from ax_dashboard_api.schemas import (
 
 HR_LIST_LIMIT = 200  # hr 조회 skill의 최대 건수
 
-router = APIRouter(prefix="/api/dashboard")
+router = APIRouter(prefix="/api/dashboard", dependencies=[Depends(require_human_for_writes)])
 # 목 데이터만 있는 경로 (클레임·보상 큐·후기·집계 등). 실제 연결은 이후 단계에서 바꾼다
 mock_only = APIRouter(dependencies=[Depends(require_mock)])
 
@@ -428,44 +429,29 @@ async def decide_candidate_card(card_id: str, body: CandidateDecisionBody) -> di
     return ok(DecideCandidateCardOutput.model_validate(out))
 
 
+# ------------------- 폐기 예정: 온보딩·발령 (hr에서 기능을 뺐다, #374·#377)
+# 경로를 지우면 깨지는 변경(`contracts-compat`)이라 응답만 바꿔 두고, 프론트(인사 화면)가 쓰지
+# 않게 된 뒤 따로 지운다. hr에는 이 skill이 없으니 부르지 않는다. 쿼리·본문 모양은 그대로 둔다.
+RETIRED_MESSAGE = "온보딩·발령 기능은 인사 에이전트에서 빠졌다. 이 경로는 폐기 예정이다"
+
+
 @router.get("/onboardings")
 async def onboardings(member_id: str | None = None, area: str | None = None) -> dict:
-    if is_mock():
-        items = mock_hr.BOARD.list_onboardings(member_id, area)
-    else:
-        out = await hr_client.call("list_onboardings", _given(member_id=member_id, area=area))
-        items = [OnboardingView.model_validate(o) for o in out["onboardings"]]
-    return ok(items, total=len(items))
+    return ok([], total=0)
 
 
 @router.post("/onboardings/{onboarding_id}/steps/{step_id}")
 async def update_onboarding_step(
     onboarding_id: str, step_id: str, body: OnboardingStepBody
 ) -> dict:
-    """단계 완료 표시(또는 취소). 진행률은 hr(목은 코드)이 다시 센 값이다."""
-    if is_mock():
-        return ok(mock_hr.BOARD.update_step(onboarding_id, step_id, body.done))
-    out = await hr_client.call(
-        "update_onboarding_step",
-        {"onboarding_id": onboarding_id, "step_id": step_id, "done": body.done},
-        target=f"onboarding:{onboarding_id}:{step_id}:{body.done}",
-    )
-    return ok(StartOnboardingOutput.model_validate(out))
+    raise ApiError(410, "ENDPOINT_RETIRED", RETIRED_MESSAGE)
 
 
 @router.get("/assignment-changes")
 async def assignment_changes(
     status: ChangeStatus | None = None, area: str | None = None, member_id: str | None = None
 ) -> dict:
-    """발령·퇴직·입사·교대 요청. 시작·확정은 통합 에이전트가 하고 화면은 조회만 한다."""
-    if is_mock():
-        items = mock_hr.BOARD.list_changes(status, area, member_id)
-    else:
-        out = await hr_client.call(
-            "list_changes", _given(status=status, area=area, member_id=member_id)
-        )
-        items = [ChangeView.model_validate(c) for c in out["changes"]]
-    return ok(items, total=len(items))
+    return ok([], total=0)
 
 
 @router.get("/roster")
@@ -494,6 +480,68 @@ async def plan_checks(body: CheckPlanInput) -> dict:
         return ok(mock_hr.BOARD.check_plan(body.draft))
     out = await hr_client.call("check_plan", {"draft": body.draft.model_dump(mode="json")})
     return ok(CheckPlanOutput.model_validate(out))
+
+
+# ---------------------------------------- 고객관리 탭 (읽기 전용: support skill이 코드로 센 값)
+# 응답 모양은 support 출력을 그대로 둔다 (위험 단계·보상 제안은 코드가 사실에서 낸 값이다).
+@router.get("/customers/at-risk")
+async def customers_at_risk(
+    min_level: Literal["medium", "high"] = "medium", limit: int = Query(20, ge=1, le=50)
+) -> dict:
+    """이탈·재문의 위험이 기준 단계 이상인 구매자 (점수 높은 순)."""
+    if is_mock():
+        out = mock_customers.at_risk(min_level, limit)
+    else:
+        out = await support_client.call(
+            "list_at_risk_customers", {"min_level": min_level, "limit": limit}
+        )
+    return ok(out["items"], total=out["total"])
+
+
+@router.get("/customers/{buyer_id}/signals")
+async def customer_signals(buyer_id: str) -> dict:
+    """구매자 한 명의 위험 신호와 이유별 점수."""
+    if is_mock():
+        return ok(mock_customers.signals(buyer_id))
+    return ok(await support_client.call("customer_signals", {"buyer_id": buyer_id}))
+
+
+@router.get("/conversations/{conversation_id}/compensation-suggestion")
+async def compensation_suggestion(conversation_id: int) -> dict:
+    """문의의 주문 사실로 보상 쿠폰 후보를 제안한다 (읽기). 요청은 사람이 승인해 따로 보낸다."""
+    if is_mock():
+        return ok(mock_customers.compensation_suggestion(conversation_id))
+    return ok(await support_client.call("suggest_compensation", {"inquiry_id": conversation_id}))
+
+
+@router.get("/conversations/{conversation_id}/payment-diagnosis")
+async def payment_diagnosis(conversation_id: int) -> dict:
+    """문의의 주문에서 결제가 어디서 막혔는지 (읽기)."""
+    if is_mock():
+        return ok(mock_customers.payment_diagnosis(conversation_id))
+    return ok(await support_client.call("diagnose_payment", {"inquiry_id": conversation_id}))
+
+
+@router.get("/inquiry-surge")
+async def inquiry_surge() -> dict:
+    """최근 창의 분류별 문의 급증 (평소 대비)."""
+    if is_mock():
+        return ok(mock_customers.inquiry_surge())
+    return ok(await support_client.call("detect_inquiry_surge"))
+
+
+@router.get("/change-requests")
+async def change_requests(
+    inquiry_id: int | None = None,
+    status: Literal["requested", "completed", "declined"] | None = None,
+) -> dict:
+    """문의에서 기획개발로 보낸 변경 요청과 처리 상태."""
+    if is_mock():
+        out = mock_customers.change_requests(inquiry_id, status)
+    else:
+        payload = {k: v for k, v in {"inquiry_id": inquiry_id, "status": status}.items() if v}
+        out = await support_client.call("list_change_requests", payload)
+    return ok(out["items"], total=len(out["items"]))
 
 
 @router.get("/communications")

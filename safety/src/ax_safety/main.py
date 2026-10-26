@@ -64,6 +64,22 @@ def _error(status: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(status_code=status, content={"error": {"code": code, "message": message}})
 
 
+def _log_refusal(request: ExecuteRequest, reason_code: str) -> None:
+    """인증 단계 거부를 공통 로그 `rejected`로 남긴다 (data `blocked_counts`가 읽는다).
+
+    본문의 requester는 믿을 수 없으므로 `requester` 칸에는 넣지 않는다.
+    """
+    log_event(
+        request.context_id,
+        request.tenant_id,
+        "rejected",
+        {"reason_code": reason_code, "action": request.action},
+        source="safety",
+        skill=request.action,
+        task_status="rejected",
+    )
+
+
 def create_app(
     gate: Gate | None = None,
     *,
@@ -113,6 +129,7 @@ def create_app(
                 "auth_rejected",
                 detail={"claimed_requester": request.requester, "reason": str(exc)},
             )
+            _log_refusal(request, "UNAUTHORIZED")
             return _error(401, "UNAUTHORIZED", str(exc))
         if requester != request.requester:
             gate.store.append_audit(
@@ -122,14 +139,21 @@ def create_app(
                 "requester_mismatch",
                 detail={"claimed_requester": request.requester, "token_requester": requester},
             )
+            _log_refusal(request, "FORBIDDEN")
             return _error(403, "FORBIDDEN", "본문의 requester가 토큰과 다르다")
 
         decision = await gate.execute(request)
+        # 공통 로그 종류는 계약 `LogKind`만 저장소에 남는다. 판정은 `execute_decided`다.
         log_event(
             request.context_id,
             request.tenant_id,
-            "safety_decision",
+            "execute_decided",
             decision.model_dump(mode="json", exclude_none=True),
+            source="safety",
+            skill=request.action,
+            task_status=decision.status,
+            grade=decision.grade,
+            requester=request.requester,
         )
         return JSONResponse(content=_ok(decision.model_dump(mode="json")))
 

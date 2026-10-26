@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import os
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -16,12 +18,13 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
+from ax_agent_template import events
 from ax_agent_template.config import set_agent_name
 from ax_contracts.schemas import EventEnvelope, EventType
 from ax_orchestrator.a2a import build_a2a_app
 from ax_orchestrator.engine import Engine
 from ax_orchestrator.hybrid import HybridDepartments, real_depts_from_env
-from ax_orchestrator.manager import IncidentManager
+from ax_orchestrator.manager import SUBSCRIBED, IncidentManager
 from ax_orchestrator.mock.fake_departments import FakeDepartments
 from ax_orchestrator.models import Incident, now
 from ax_orchestrator.plans.scenario_a import scenario_a
@@ -99,7 +102,37 @@ class AppState:
 
 
 state = AppState()
-app = FastAPI(title="ax-orchestrator")
+
+
+async def start_event_bus() -> bool:
+    """이벤트 버스(Redis Streams)를 구독해 `manager.process`로 넘긴다 (ORC-02).
+
+    목 모드이거나 `REDIS_URL`이 없으면 구독하지 않는다(그때는 개발용 `POST /api/events`만 쓴다).
+    판정 규칙은 입구와 상관없이 같은 `manager.process`다. 같은 `event_id`는 한 번만 처리된다.
+    """
+    if state.mock or not events.redis_configured():
+        return False
+    set_agent_name("orchestrator")
+    manager = state.manager or await state.build()
+
+    async def on_event(env: EventEnvelope) -> None:
+        await manager.process(env)
+
+    events.subscribe(SUBSCRIBED, on_event)
+    events.start_consumer()
+    return True
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    await start_event_bus()
+    try:
+        yield
+    finally:
+        await events.stop_consumer()
+
+
+app = FastAPI(title="ax-orchestrator", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -233,7 +266,7 @@ async def inject(req: DemoRequest | None = None) -> dict:
 async def receive_event(env: EventEnvelope) -> dict:
     """다른 부서가 이벤트를 보내 볼 수 있는 개발용 입구(목·혼합 모드).
 
-    실제 전달은 Redis Streams(agent-template TODO)로 바뀌며, 그때도 판단은 같은 `manager.process`다.
+    실제 전달은 Redis Streams 구독(`start_event_bus`)이고, 그때도 판단은 같은 `manager.process`다.
     """
     _require_mock()
     manager = state.manager or await state.build()

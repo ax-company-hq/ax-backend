@@ -1,5 +1,43 @@
 {
   "name": "infra",
   "owner": "예진",
-  "skills": []
+  "description": "인프라(DejaFix 어댑터) — 장애가 나면 배포 이력으로 원인 후보를 진단하고, 원인 배포를 직전 정상 버전으로 롤백하고(B, 조건 밖이면 사람 승인 C), 서버 지표와 결제 실패율로 복구를 확인한다. 복구 예상 시각은 주지 않는다",
+  "url": "http://infra-dejafix:8107/a2a",
+  "version": "0.1.0",
+  "capabilities": {
+    "streaming": true,
+    "push_notifications": false
+  },
+  "skills": [
+    {
+      "id": "diagnose_incident",
+      "description": "component(예: payment)를 받아 그 구성요소를 바꾼 최근 배포를 원인 후보로 돌려준다. 후보가 있으면 status suspected + suspects[service·version·deployed_at·change_summary·confidence low/mid/high], 진단 구간 안에 배포가 없으면 undetermined. 확신도는 코드 규칙(후보 수·배포 뒤 경과 시간)으로 정한다. 사실과 후보만 주고 복구 예상 시각은 주지 않는다. 상태를 바꾸지 않는다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/infra.py#DiagnoseIncidentInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/infra.py#DiagnoseIncidentOutput",
+      "grade": "read",
+      "allowed_requesters": ["orchestrator", "marketing", "support"],
+      "verifier": null,
+      "priority": "required"
+    },
+    {
+      "id": "rollback_deployment",
+      "description": "원인 배포(service·from_version)를 배포 이력의 직전 정상 버전(to_version, 비우면 infra가 정함)으로 되돌린다. 반드시 execute(rollback_deployment)를 거치고 params에 suspect_count·low_confidence·irreversible_count·prior_rollbacks(0 이상 정수)를 넣는다. 조건 안(확신도 high·후보 1개·되돌릴 수 없는 변경 없음·첫 롤백)이면 planning 교차검증 뒤 자동 실행(B), 밖이면 사람 승인 보류(C, input-required human_input). 승인 뒤 같은 요청을 다시 보내면 실행한다. 데모에서 롤백은 판매 사이트 장애 주입 해제다. 결과 output에 rolled_back_to·execution_id·grade를 준다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/infra.py#RollbackDeploymentParams",
+      "output_schema": "contracts/src/ax_contracts/schemas/execute.py#ExecuteDecision",
+      "grade": "B",
+      "allowed_requesters": ["orchestrator"],
+      "verifier": "planning",
+      "priority": "required"
+    },
+    {
+      "id": "verify_recovery",
+      "description": "component와 since(사건 시작)를 받아 서버 지표(판매 사이트 장애·감시 상태)와 데이터분석 anomaly_detection의 결제 실패율을 함께 확인한다. 둘 다 정상이어야 recovered=true. 정상이 아니면 30초 간격으로 최대 5번 다시 확인하고(마감 안에서), 그래도 아니면 recovered=false로 돌려준다. 데이터 결과를 못 받으면 business_metrics_ok=null이고 복구로 보지 않는다. 상태를 바꾸지 않는다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/infra.py#VerifyRecoveryInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/infra.py#VerifyRecoveryOutput",
+      "grade": "read",
+      "allowed_requesters": ["orchestrator"],
+      "verifier": null,
+      "priority": "required"
+    }
+  ]
 }

@@ -10,12 +10,10 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 
 from ax_contracts.schemas import AgentRequest, AgentResult
-from hr_agent.assignment import service as assignment
 from hr_agent.cards import decision as card_decision
 from hr_agent.cards import service as cards
 from hr_agent.clients.errors import UpstreamError, bind_meta
 from hr_agent.handover import service as handover
-from hr_agent.onboarding import service as onboarding
 from hr_agent.planning_check import service as planning_check
 from hr_agent.results import failed
 from hr_agent.roster import service as roster
@@ -41,22 +39,6 @@ async def answer_handover_question(request: AgentRequest) -> AgentResult:
 
 async def confirm_handover(request: AgentRequest) -> AgentResult:
     return await handover.confirm_handover(get_services(), request)
-
-
-async def start_onboarding(request: AgentRequest) -> AgentResult:
-    return await onboarding.start_onboarding(get_services(), request)
-
-
-async def request_assignment_change(request: AgentRequest) -> AgentResult:
-    return await assignment.request_assignment_change(get_services(), request)
-
-
-async def confirm_reassignment(request: AgentRequest) -> AgentResult:
-    return await assignment.confirm_reassignment(get_services(), request)
-
-
-async def confirm_offboarding(request: AgentRequest) -> AgentResult:
-    return await assignment.confirm_offboarding(get_services(), request)
 
 
 async def check_plan(request: AgentRequest) -> AgentResult:
@@ -92,17 +74,10 @@ _HANDLERS = {
     # 대시보드 인사 화면용 조회와 사람 입력(온보딩 단계 완료, 후보 카드 승인·거절)
     "list_handovers": _with_services(views.list_handovers),
     "list_open_questions": _with_services(views.list_open_questions),
-    "list_onboardings": _with_services(views.list_onboardings),
-    "list_changes": _with_services(views.list_changes),
     "list_candidate_cards": _with_services(views.list_candidate_cards),
     "get_audit_timeline": _with_services(views.get_audit_timeline),
-    "update_onboarding_step": _with_services(onboarding.update_onboarding_step),
     "decide_candidate_card": _with_services(card_decision.decide_candidate_card),
     "check_plan": check_plan,
-    "request_assignment_change": request_assignment_change,
-    "confirm_reassignment": confirm_reassignment,
-    "confirm_offboarding": confirm_offboarding,
-    "start_onboarding": start_onboarding,
     "record_case": record_case,
     "get_roster": get_roster,
     "start_handover": start_handover,

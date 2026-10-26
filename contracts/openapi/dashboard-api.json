@@ -591,6 +591,76 @@
         "summary": "Decide Candidate Card"
       }
     },
+    "/api/dashboard/change-requests": {
+      "get": {
+        "description": "문의에서 기획개발로 보낸 변경 요청과 처리 상태.",
+        "operationId": "change_requests_api_dashboard_change_requests_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "inquiry_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Inquiry Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "requested",
+                    "completed",
+                    "declined"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Change Requests Api Dashboard Change Requests Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Change Requests"
+      }
+    },
     "/api/dashboard/claims": {
       "get": {
         "operationId": "claims_api_dashboard_claims_get",
@@ -1180,6 +1250,48 @@
         "summary": "Check Reply"
       }
     },
+    "/api/dashboard/conversations/{conversation_id}/compensation-suggestion": {
+      "get": {
+        "description": "문의의 주문 사실로 보상 쿠폰 후보를 제안한다 (읽기). 요청은 사람이 승인해 따로 보낸다.",
+        "operationId": "compensation_suggestion_api_dashboard_conversations__conversation_id__compensation_suggestion_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Compensation Suggestion Api Dashboard Conversations  Conversation Id  Compensation Suggestion Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Compensation Suggestion"
+      }
+    },
     "/api/dashboard/conversations/{conversation_id}/customer-messages": {
       "post": {
         "operationId": "customer_message_api_dashboard_conversations__conversation_id__customer_messages_post",
@@ -1229,6 +1341,48 @@
           }
         },
         "summary": "Customer Message"
+      }
+    },
+    "/api/dashboard/conversations/{conversation_id}/payment-diagnosis": {
+      "get": {
+        "description": "문의의 주문에서 결제가 어디서 막혔는지 (읽기).",
+        "operationId": "payment_diagnosis_api_dashboard_conversations__conversation_id__payment_diagnosis_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Payment Diagnosis Api Dashboard Conversations  Conversation Id  Payment Diagnosis Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Payment Diagnosis"
       }
     },
     "/api/dashboard/conversations/{conversation_id}/reject-draft": {
@@ -1372,6 +1526,107 @@
           }
         },
         "summary": "Summary"
+      }
+    },
+    "/api/dashboard/customers/at-risk": {
+      "get": {
+        "description": "이탈·재문의 위험이 기준 단계 이상인 구매자 (점수 높은 순).",
+        "operationId": "customers_at_risk_api_dashboard_customers_at_risk_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "min_level",
+            "required": false,
+            "schema": {
+              "default": "medium",
+              "enum": [
+                "medium",
+                "high"
+              ],
+              "title": "Min Level",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Customers At Risk Api Dashboard Customers At Risk Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Customers At Risk"
+      }
+    },
+    "/api/dashboard/customers/{buyer_id}/signals": {
+      "get": {
+        "description": "구매자 한 명의 위험 신호와 이유별 점수.",
+        "operationId": "customer_signals_api_dashboard_customers__buyer_id__signals_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "buyer_id",
+            "required": true,
+            "schema": {
+              "title": "Buyer Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Customer Signals Api Dashboard Customers  Buyer Id  Signals Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Customer Signals"
       }
     },
     "/api/dashboard/executions": {
@@ -1773,6 +2028,27 @@
           }
         },
         "summary": "Incident"
+      }
+    },
+    "/api/dashboard/inquiry-surge": {
+      "get": {
+        "description": "최근 창의 분류별 문의 급증 (평소 대비).",
+        "operationId": "inquiry_surge_api_dashboard_inquiry_surge_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Inquiry Surge Api Dashboard Inquiry Surge Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Inquiry Surge"
       }
     },
     "/api/dashboard/kb-chunks": {
