@@ -13,7 +13,11 @@ from ax_contracts.schemas import (
     ExecuteDecision,
     RequestMeta,
 )
-from ax_contracts.schemas.event import EVENT_DATA_MODELS, SupportInquiryReceivedData
+from ax_contracts.schemas.event import (
+    EVENT_DATA_MODELS,
+    SupportInquiryReceivedData,
+    SupportInquiryResolvedData,
+)
 from support_agent import events, handlers
 from support_agent.main import app
 from support_agent.schemas import Analysis
@@ -226,3 +230,59 @@ def test_numeric_order_ids_are_read_as_strings(client: TestClient) -> None:
     stored = {k: v for k, v in result["output"].items() if k != "execution_id"}
     legacy = Conversation.model_validate({**stored, "order_id": 7})
     assert legacy.order_id == "7"
+
+
+def resolved() -> list[EventEnvelope]:
+    return [e for e in bus.MOCK_PUBLISHED if e.type == EventType.SUPPORT_INQUIRY_RESOLVED]
+
+
+def set_status(client: TestClient, inquiry_id: int, status: str, key: str) -> dict[str, Any]:
+    return call(client, "set_inquiry_status", {"inquiry_id": inquiry_id, "status": status}, {}, key)
+
+
+def test_closing_an_inquiry_publishes_one_resolved_event_with_facts_only(
+    client: TestClient,
+) -> None:
+    inquiry_id = create(client)["output"]["id"]
+    assert resolved() == []  # 접수만으로는 나가지 않는다
+    set_status(client, inquiry_id, "resolved", "s-1")
+    (event,) = resolved()
+    assert event.data == {
+        "inquiry_id": inquiry_id,
+        "order_id": None,
+        "status": "resolved",
+        "resolution": "answered",
+        "claim_id": None,
+        "claim_decision": None,
+        "coupon_id": None,
+        "refund_amount": None,
+    }
+    assert event.idempotency_key == f"ctx_req_0001:support.inquiry_resolved:{inquiry_id}"
+    assert not event.untrusted  # 고객 원문은 싣지 않는다
+
+
+def test_an_escalated_inquiry_is_published_as_escalated(client: TestClient) -> None:
+    inquiry_id = create(client)["output"]["id"]
+    set_status(client, inquiry_id, "escalated", "s-1")
+    (event,) = resolved()
+    assert (event.data["status"], event.data["resolution"]) == ("escalated", "escalated")
+
+
+def test_reopening_publishes_nothing(client: TestClient) -> None:
+    inquiry_id = create(client)["output"]["id"]
+    set_status(client, inquiry_id, "open", "s-1")
+    assert resolved() == []
+
+
+def test_closing_twice_leaves_one_event_id(client: TestClient) -> None:
+    inquiry_id = create(client)["output"]["id"]
+    set_status(client, inquiry_id, "resolved", "s-1")
+    set_status(client, inquiry_id, "open", "s-2")
+    set_status(client, inquiry_id, "resolved", "s-3")
+    assert (
+        len({e.event_id for e in resolved()}) == 1
+    )  # 같은 문의는 같은 event_id라 한 번만 전달된다
+
+
+def test_resolved_event_is_registered_with_its_data_model() -> None:
+    assert EVENT_DATA_MODELS[EventType.SUPPORT_INQUIRY_RESOLVED] is SupportInquiryResolvedData

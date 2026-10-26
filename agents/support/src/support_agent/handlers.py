@@ -379,6 +379,7 @@ async def set_inquiry_status(request: AgentRequest) -> AgentResult:
 
     async def apply() -> tuple[dict[str, Any], bool]:
         conversation = STORE.set_status(parsed.inquiry_id, parsed.status)
+        await events.emit_inquiry_resolved(request, conversation)
         return conversation.model_dump(mode="json"), False
 
     return await _write(

@@ -317,7 +317,7 @@ def test_follow_up_messages_replies_and_status_use_the_pinned_incident(world: Wo
     call("send_reply", {"inquiry_id": inquiry_id}, untrusted={"text": "확인 중입니다"}, key="k-3")
     call("set_inquiry_status", {"inquiry_id": inquiry_id, "status": "resolved"}, key="k-4")
     assert world.executed_contexts == [INCIDENT] * 3
-    assert published_contexts() == [INCIDENT]  # 후속 메시지 접수 이벤트
+    assert published_contexts() == [INCIDENT] * 2  # 후속 메시지 접수 이벤트 + 해결 이벤트 (#327)
     assert len(world.asked) == 1  # 후속 요청은 다시 묻지 않는다
 
 

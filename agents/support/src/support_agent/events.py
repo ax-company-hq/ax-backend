@@ -4,6 +4,11 @@
 - `data`는 사실 필드만 담는다 (`SupportInquiryReceivedData`). 판단 문장은 넣지 않는다.
 - 고객 원문은 봉투의 `untrusted`에만 담고, 전화번호·이메일은 가린 뒤 넣는다.
 - 같은 문의·같은 메시지 수는 같은 `event_id`라서 재전송해도 한 번만 전달된다.
+
+`support.inquiry_resolved`: 문의를 닫을 때(해결·이관) 문의당 한 번 발행한다 (#327).
+- `data`는 사실 필드만 담는다 (`SupportInquiryResolvedData`). 고객 원문은 싣지 않는다.
+- 지금은 `resolution`을 상태에서만 정한다 (`resolved` → `answered`, `escalated` → `escalated`).
+  클레임·쿠폰·환불 필드는 문의와 그 기록을 잇는 정보가 생기면 채운다 (없으면 비운다).
 """
 
 from __future__ import annotations
@@ -15,7 +20,7 @@ from datetime import UTC, datetime
 from ax_agent_template.events import publish
 from ax_agent_template.logging import log_event
 from ax_contracts.schemas import AgentRequest, EventEnvelope, EventType
-from ax_contracts.schemas.event import SupportInquiryReceivedData
+from ax_contracts.schemas.event import SupportInquiryReceivedData, SupportInquiryResolvedData
 from support_agent import guard
 from support_agent.schemas import Conversation
 
@@ -59,9 +64,35 @@ def build_inquiry_received(request: AgentRequest, conversation: Conversation) ->
     )
 
 
-async def emit_inquiry_received(request: AgentRequest, conversation: Conversation) -> None:
-    """이벤트를 발행한다. 발행 실패는 문의 접수를 막지 않는다 (사실은 이미 저장됐다)."""
-    envelope = build_inquiry_received(request, conversation)
+def inquiry_resolved_key(context_id: str, inquiry_id: int) -> str:
+    return f"{context_id}:{EventType.SUPPORT_INQUIRY_RESOLVED.value}:{inquiry_id}"
+
+
+def build_inquiry_resolved(request: AgentRequest, conversation: Conversation) -> EventEnvelope:
+    """닫힌 문의에서 이벤트 봉투를 만든다. 문의당 한 번이라 키에 문의 번호만 쓴다."""
+    key = inquiry_resolved_key(request.meta.context_id, conversation.id)
+    escalated = conversation.status == "escalated"
+    order_id = conversation.order_id
+    data = SupportInquiryResolvedData(
+        inquiry_id=conversation.id,
+        order_id=order_id if order_id and order_id.startswith("ord_") else None,
+        status="escalated" if escalated else "resolved",
+        resolution="escalated" if escalated else "answered",
+    )
+    return EventEnvelope(
+        event_id=f"evt_{hashlib.sha256(key.encode()).hexdigest()[:12]}",
+        type=EventType.SUPPORT_INQUIRY_RESOLVED,
+        occurred_at=datetime.now(UTC),
+        tenant_id=request.meta.tenant_id,
+        context_id=request.meta.context_id,
+        source=SOURCE,
+        idempotency_key=key,
+        data=data.model_dump(mode="json"),
+    )
+
+
+async def _publish(request: AgentRequest, envelope: EventEnvelope) -> None:
+    """발행 실패는 요청을 막지 않는다 (사실은 이미 저장됐다)."""
     try:
         await publish(envelope)
     except NotImplementedError:  # Redis 연동 전(TODO)
@@ -72,4 +103,14 @@ async def emit_inquiry_received(request: AgentRequest, conversation: Conversatio
             {"type": envelope.type.value},
         )
     except Exception:
-        logger.warning("support.inquiry_received 발행 실패", exc_info=True)
+        logger.warning("%s 발행 실패", envelope.type.value, exc_info=True)
+
+
+async def emit_inquiry_received(request: AgentRequest, conversation: Conversation) -> None:
+    await _publish(request, build_inquiry_received(request, conversation))
+
+
+async def emit_inquiry_resolved(request: AgentRequest, conversation: Conversation) -> None:
+    """문의가 해결·이관으로 닫힐 때 한 번 발행한다 (`open`으로 되돌리면 발행하지 않는다)."""
+    if conversation.status in ("resolved", "escalated"):
+        await _publish(request, build_inquiry_resolved(request, conversation))
