@@ -41,7 +41,7 @@ CLAIM = {
     "context_id": "ctx_ui_0001",
     "order_id": "101",
     "order_no": "ORD-2026-0101",
-    "buyer_id": "usr_1",
+    "buyer_id": "buy_0001",
     "customer": "김하늘",
     "type": "return",
     "reason": "defect",
@@ -386,8 +386,8 @@ def test_string_order_and_buyer_ids_pass_through_and_user_id_is_derived(
 ) -> None:
     fake.outputs["list_claims"] = {
         "items": [
-            claim(id=1, order_id="ord_0201", buyer_id="usr_7"),
-            claim(id=2, order_id="ord_0202", buyer_id="buyer-x"),  # usr_<번호> 형식이 아니다
+            claim(id=1, order_id="ord_0201", buyer_id="buy_0007"),
+            claim(id=2, order_id="ord_0202", buyer_id="buyer-x"),  # buy_<번호> 형식이 아니다
         ]
     }
     rows = {c["id"]: c for c in client.get(BASE + "/claims").json()["data"]}
@@ -401,3 +401,13 @@ def test_detail_keeps_string_item_ids(client: TestClient, fake: Fake) -> None:
     assert data["order_id"] == "ord_0201"
     assert data["lines"][0]["order_item_id"] == "itm_1"
     assert data["receipt"]["items"][0]["id"] == "itm_1"
+
+
+def test_user_numbers_and_buyer_ids_convert_both_ways() -> None:
+    from ax_dashboard_api import claim_mapping
+
+    assert claim_mapping.buyer_id_for(1) == "buy_0001"
+    assert claim_mapping.buyer_id_for(123) == "buy_0123"
+    assert claim_mapping._user_id("buy_0001") == 1
+    assert claim_mapping._user_id("buy_0123") == 123
+    assert claim_mapping._user_id("usr_1") is None and claim_mapping._user_id("buyer-x") is None

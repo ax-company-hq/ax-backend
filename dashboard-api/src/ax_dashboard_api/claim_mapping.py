@@ -81,11 +81,18 @@ def _inspection(value: str | None, *, received: bool) -> str | None:
     return INSPECTION_OUT.get(value, value)
 
 
+BUYER_PREFIX = "buy_"
+
+
+def buyer_id_for(user_id: int) -> str:
+    """화면의 숫자 고객 번호 → 구매자 ID (1 → `buy_0001`, shop-api 형식)."""
+    return f"{BUYER_PREFIX}{user_id:04d}"
+
+
 def _user_id(buyer_id: str) -> int | None:
-    """구매자 ID(`usr_<번호>`)에서 화면이 쓰는 숫자 고객 번호를 꺼낸다. 형식이 다르면 None."""
-    prefix = "usr_"
-    if buyer_id.startswith(prefix) and buyer_id[len(prefix) :].isdecimal():
-        return int(buyer_id[len(prefix) :])
+    """구매자 ID(`buy_<4자리>`)에서 화면이 쓰는 숫자 고객 번호를 꺼낸다. 형식이 다르면 None."""
+    if buyer_id.startswith(BUYER_PREFIX) and buyer_id[len(BUYER_PREFIX) :].isdecimal():
+        return int(buyer_id[len(BUYER_PREFIX) :])
     return None
 
 

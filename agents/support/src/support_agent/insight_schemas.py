@@ -7,6 +7,11 @@ from pydantic import Field
 from ax_contracts.schemas.common import AxModel
 
 
+class KeywordCount(AxModel):
+    keyword: str
+    count: int  # 이 키워드가 나온 고객 메시지 수
+
+
 class InquiryKpis(AxModel):
     """상담원 화면 KPI. 비율은 분모가 0이면 None이다 (0으로 채우지 않는다)."""
 
@@ -24,6 +29,9 @@ class InquiryKpis(AxModel):
     guard_findings: dict[str, int] = Field(default_factory=dict)
     by_category: dict[str, int] = Field(default_factory=dict)
     by_urgency: dict[str, int] = Field(default_factory=dict)
+    by_sentiment: dict[str, int] = Field(default_factory=dict)
+    by_language: dict[str, int] = Field(default_factory=dict)  # 문의별 마지막 고객 메시지 언어
+    top_keywords: list[KeywordCount] = Field(default_factory=list)  # 많이 나온 순, 최대 10개
 
 
 class WaitingInquiry(AxModel):

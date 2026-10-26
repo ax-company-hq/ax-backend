@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime
 
 # 사유 코드 → 쿠폰 1건 단가(원). 표에 없는 사유는 보상 대상이 아니다.
 UNIT_VALUE_BY_REASON: dict[str, int] = {
@@ -20,6 +21,18 @@ UNIT_VALUE_BY_REASON: dict[str, int] = {
     "defect": 3000,
 }
 MAX_COUNT = 3
+# 약속한 배송일을 이만큼(일) 이상 넘기면 지연 보상 후보다. 정책표와 같은 시드다.
+LATE_MIN_DAYS = 1
+
+
+def days_late(
+    promised_at: datetime | None, delivered_at: datetime | None, now: datetime
+) -> int | None:
+    """약속 배송일을 넘긴 일수 (배송 완료 전이면 지금까지). 약속일을 모르면 None이다."""
+    if promised_at is None:
+        return None
+    end = delivered_at or now
+    return max((end - promised_at).days, 0)
 
 
 @dataclass(frozen=True)
