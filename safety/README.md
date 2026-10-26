@@ -8,6 +8,7 @@
 - A 즉시 실행 (SAF-03), B 교차검증 (SAF-04): 레지스트리의 검증자 skill(planning `verify_rollback_target`, data `fraud_score` 등)을 A2A로 부른다. 쿠폰·환불은 A이고 금액 규칙(계산·불일치·한도)에 걸리면 C
 - C 보류 큐 (SAF-05): 근거 리포트와 함께 보류, 사람 토큰으로만 결정, 기한 안에 결정이 없으면 자동 거절. 기한은 데모 기본 10분, 운영은 `SAFETY_REVIEW_TIMEOUT_SECONDS`(예: 86400=24시간)로 덮어쓴다
 - 감사 로그 (SAF-06): 접수·검증·판정·인증 거부·보류 결정을 `context_id`와 함께 남긴다
+- 공통 로그 (COM-08): 판정마다 `execute_decided`(grade·status·action·requester), 인증 거부는 `rejected`(`reason_code` = `UNAUTHORIZED`/`FORBIDDEN`)를 `AX_COMMON_LOG_DB`에 남긴다. 대시보드 "안전 관문 로그"와 data `kpi_summary`가 이것을 읽는다. 계약 `LogKind`에 없는 종류는 저장소에 남지 않는다
 - fail-closed (SAF-08): 미등록 액션·금액 필드 오류·총액 불일치·검증 무응답은 실행하지 않는다
 - 누적 한도 (SAF-10): 일일(UTC)·사건별·고객별 누적 금액 규칙
 - 규칙 기반 검증 (SAF-11): 금액은 코드가 건수 × 단가로 다시 계산한다
