@@ -86,6 +86,17 @@ def test_refund_limit_proposal_is_clamped_to_step() -> None:
     assert "31,000원" in prop["reason"]
 
 
+def test_step_ratio_and_labels_live_in_finance_policy() -> None:
+    """제안 폭은 재무 설정(`finance_policy.toml`)에서 읽는다 (ai_review_policy.toml 아님)."""
+    from finance_agent import finance_config as fc
+
+    assert fc.load_config().proposal.max_step_ratio == 0.3
+    assert policy.KEY_KO["refund_single"] == "환불 한 건"
+    data, _ = policy.policy_report(bk.seed_books())
+    labels = {r["key"]: r["label"] for r in data["rules"]}
+    assert labels.get("refund_single") == "환불 한 건"
+
+
 def test_no_proposal_without_enough_samples(kit) -> None:
     refunds = [
         {"refund_id": f"rfd_{i}", "amount": 1000, "created_at": kit.at("2026-10-22")}

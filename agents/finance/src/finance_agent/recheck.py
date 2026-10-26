@@ -1,8 +1,7 @@
 """금액 다시 계산 (순수 규칙). 예전 `verify_amount` skill의 계산 코드다.
 
-재무 재설계(2026-10-23)로 건별 교차검증 skill은 없어졌다. 같은 계산을 이제 두 곳에서 쓴다.
-- 캣북스 클레임 확인(`catbooks.py`): 환불이 결제 금액 − 이미 환불한 금액 안인지
-- 사후 감사(`audit.py`, `amount_recheck_failed`): 관문을 통과한 쿠폰·환불을 원천 자료로 다시 계산
+재무 재설계(2026-10-23)로 건별 교차검증 skill은 없어졌다. 같은 계산을 이제 사후 감사
+(`audit.py`, `amount_recheck_failed`)가 쓴다: 관문을 통과한 쿠폰·환불을 원천 자료로 다시 계산한다.
 
 입출력 형식(`VerifyAmountInput`·`VerifyAmountOutput`)은 contracts 원본을 그대로 쓴다.
 근거가 없으면 통과시키지 않는다(`source_unavailable`). 상태를 바꾸지 않는다.

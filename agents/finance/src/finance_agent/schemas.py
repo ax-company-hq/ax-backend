@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import Field
 
@@ -71,27 +71,6 @@ class SettlementHoldOutput(AxModel):
     reason_code: str
     execution_id: str | None = None
     review_id: str | None = None
-
-
-# ---------------------------------- review_threshold_change (safety → finance, 기준 바꾸기 판단)
-class ThresholdReviewInput(AxModel):
-    """안전 장치 범위 안의 기준 바꾸기 요청. 숫자·`stats`는 safety가 코드로 센 값이다.
-
-    요청한 사람이 쓴 이유는 `untrusted.reason_untrusted_text`로 오며 판단에 쓰지 않는다.
-    """
-
-    change_id: str
-    key: str
-    current_value: int | None = None
-    new_value: int
-    baseline: int | None = None
-    stats: dict[str, Any] = Field(default_factory=dict)
-
-
-class ThresholdReviewOutput(AxModel):
-    decision: Literal["approve", "reject", "escalate"]
-    reason_code: str
-    explanation: str
 
 
 # ---------------------------------------------- closing_report (orchestrator·data → finance, 읽기)

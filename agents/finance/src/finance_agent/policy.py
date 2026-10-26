@@ -7,7 +7,8 @@
 - 소진율 `ratio` = 사용액 ÷ 한도. 경보: `ratio ≥ over_ratio` → over, `ratio ≥ warn_ratio`이거나
   이번 달 예상(`used_month ÷ 지난 날수 × 그 달 날수`)이 예산을 넘으면 → warn, 아니면 ok.
 - 제안: 최근 `window_days`일 값의 `percentile` 분위(가장 가까운 순위)를 `round_to` 단위로 올린 값.
-  한 번에 바꾸는 폭은 기준 바꾸기 재량 한도(`ai_review_policy.toml` `max_step_ratio`) 안으로 자른다.
+  한 번에 바꾸는 폭은 `finance_policy.toml` `[proposal] max_step_ratio` 안으로 자른다(제안일 뿐,
+  적용은 사람이 기준표 PR로 한다).
 """
 
 from __future__ import annotations
@@ -18,11 +19,23 @@ from typing import Any
 
 from finance_agent import finance_config as fc
 from finance_agent.books import Books, in_range
-from finance_agent.review import load_policy
-from finance_agent.threshold_review import KEY_KO
 
 HOW_TO_CHANGE = "기준표(safety/.../thresholds.toml) PR로 사람이 바꿉니다."
 SHOWN_METRICS = {"amount", "unit", "daily_total", "context_total", "customer_total"}
+
+# 기준표(thresholds.toml) 키의 쉬운 이름. 정책표 화면의 `label`에 쓴다.
+KEY_KO = {
+    "coupon_total": "쿠폰 한 번 총액",
+    "coupon_unit": "쿠폰 한 장 금액",
+    "coupon_daily": "하루 쿠폰 합계",
+    "compensation_per_context": "장애 한 건 보상 합계",
+    "compensation_per_customer": "고객 한 명 보상 합계",
+    "refund_single": "환불 한 건",
+    "seller_risk": "판매자 위험 점수",
+    "pr_changed_lines": "PR 바뀐 줄 수",
+    "pr_changed_files": "PR 바뀐 파일 수",
+    "review_timeout_seconds": "사람 결정 마감(초)",
+}
 
 
 def _alert(ratio: float | None, projected_over: bool = False) -> str | None:
@@ -152,7 +165,7 @@ def policy_report(books: Books) -> tuple[dict[str, Any], list[str]]:
 
 def proposals(books: Books) -> list[dict[str, Any]]:
     cfg = fc.load_config().proposal
-    step = load_policy().threshold_change.max_step_ratio
+    step = cfg.max_step_ratio
     limits = threshold_limits(books)
     today = fc.today()
     start = fc.day_start(today - timedelta(days=cfg.window_days - 1))

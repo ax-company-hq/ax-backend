@@ -36,10 +36,10 @@
 | `verify_amount` (재무 skill) | 쿠폰·환불 B 건마다 안전 관문이 재무에 재계산 요청 | **삭제.** 건별 검사는 안전 관문 코드 규칙(금액 계산·`claimed_fields` 불일치·기준표 한도) |
 | `issue_coupon`, `refund_request` (registry) | B, verifier finance | **A**, verifier 없음. 금액이 기준표 한도를 넘거나 계산이 안 맞으면 지금처럼 C |
 | `review_hold` (재무 skill, #110) | C 보류 건 AI 1차 판단 | **삭제.** #110·#266은 닫는다. ⑦ 사후 감사로 대신 |
-| `review_threshold_change` (#124·#276) | AI가 기준 변경 판단 | 유지하되 ⑤의 한도 제안과 같은 방향. 이번 범위에서는 #124를 머지하지 않고, ⑤는 *제안 기록*만 한다(적용은 기준표 PR) |
+| `review_threshold_change` (#124·#276) | AI가 기준 변경 판단 | **삭제 (2026-10-26).** 재무는 한도를 제안만 하고 사람이 기준표 PR로 바꾼다. 제안 폭은 `finance_policy.toml` `[proposal] max_step_ratio` |
 | `loss_aggregation` | 손실 리포트 | **유지**(① 결산·리포트의 일부). 총괄 입력 그대로 |
 | `seller_review`, `settlement_hold` | 판매자 심사, 정산 보류 | **유지**(③의 일부). 보류된 판매자는 정산 묶음에서 빠진다 |
-| 캣북스 연동(#146) | 환불·교환 신청 읽기 | 유지(읽기 전용). ⑦ 감사 자료로도 쓴다 |
+| 캣북스 연동(#146) | 환불·교환 신청 읽기 | **삭제 (2026-10-26).** 신청을 건별로 다시 확인하는 일이라 재무 일이 아니다(건별 검사는 안전 관문) |
 | 장부(`coupon.issued`, `payment.refunded` 구독) | 쿠폰·환불 합계 | 유지. ①·⑤의 자료 |
 
 ## 5. 데이터
@@ -69,8 +69,8 @@
 - `POST /api/finance/settlements/batch` → 보류 아닌 판매자들을 묶어 `confirm_settlement`를 `execute()`로 요청(C → 안전 관문 보류 큐). 응답에 `review_id`
 - `GET /api/finance/policy` → 정책표(`rules[]` = {key, label, limit, used_today, used_month, ratio, alert}), 한도 *제안* `proposals[]` = {key, current, proposed, reason}
 - `GET /api/finance/audit?days=7` → `AuditReport`: `findings[]` = {code, severity, title, detail, refs[]}, `stats`(환불 건수·금액, 환불률 지난주 대비, 쿠폰 건수, 관문 보류·거절 수)
-- 유지: `GET /api/finance/ledger`, `/loss-reports`, `/self-test`, `/self-test/last`, `/catbooks/sync`, `/catbooks/items`, `/market-ops`
-- 삭제: `/api/finance/verifications`, `/api/finance/ai-reviews`
+- 유지: `GET /api/finance/ledger`, `/loss-reports`, `/self-test`, `/self-test/last`, `/market-ops`
+- 삭제: `/api/finance/verifications`, `/api/finance/ai-reviews`, `/catbooks/sync`·`/catbooks/items`·`/threshold-reviews`(2026-10-26, 4장)
 
 사람 토큰: 안전 관문과 같은 형식(`Authorization: Bearer human:<이름>`). 재무 화면은 `VITE_SAFETY_HUMAN_TOKEN`을 쓴다.
 
@@ -83,8 +83,8 @@
 | `settlement_hold` | B | orchestrator | 유지 |
 | `closing_report` | read | orchestrator, data | 새로. 기간 손익 요약 |
 | `audit_report` | read | orchestrator, data | 새로. 사후 감사 결과 |
-| `review_threshold_change` | read | safety | #124용으로 남겨 둠(코드 유지) |
 | ~~`verify_amount`~~, ~~`review_hold`~~ | | | 삭제 |
+| ~~`review_threshold_change`~~ | | | 삭제 (2026-10-26): AI가 기준 변경을 결정하면 "재무는 제안만"과 충돌 |
 
 ## 8. 대시보드 재무 화면 (`/finance`)
 
@@ -93,7 +93,7 @@
 2. **지금 사람이 할 일**: 정산 묶음 승인 대기, 결산 확정 대기, 대사 불일치, 감사 의심 건
 3. **오늘의 재무** 카드: 총거래액, 순매출(수수료), 환불, 쿠폰 비용, PG 수수료
 4. 탭 또는 섹션 5개: ① 결산·리포트 ② 매출·PG 대사 ③ 판매자 정산 ⑤ 예산·한도 정책 ⑦ 내부통제·감사
-5. 장애 손실 리포트, 캣북스에서 들어온 일(유지)
+5. 장애 손실 리포트(유지). 캣북스에서 들어온 일은 삭제(2026-10-26, 4장)
 
 없애는 화면: 거래별 검증 목록, AI가 결정한 건 목록, 네 갈래 처리 흐름 막대(건별 승인 중심이라).
 

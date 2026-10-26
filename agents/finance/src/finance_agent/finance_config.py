@@ -51,6 +51,7 @@ class ProposalConfig(_Strict):
     percentile: float = Field(gt=0, le=1)
     round_to: int = Field(ge=1)
     min_change_ratio: float = Field(ge=0)
+    max_step_ratio: float = Field(gt=0, le=1)
 
 
 class AuditConfig(_Strict):

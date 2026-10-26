@@ -14,8 +14,8 @@
 | ③ 판매자 정산 | `settlement.py` | 정산금 = 판매액 − 수수료 − 판매자 부담 쿠폰 − 환불, 보류 사유. 묶음 지급은 `execute("confirm_settlement")`(항상 C) |
 | ⑤ 예산·한도 | `policy.py` | 정책표·소진율·경보, 한도 *제안*(적용은 기준표 PR) |
 | ⑦ 사후 감사 | `audit.py` | 쪼개기·반복 환불·쿠폰 중복·환불률 급변·재계산 실패·관문 보류 추이 |
-| 금액 다시 계산 | `recheck.py` | 예전 `verify_amount` 계산. 캣북스 확인과 사후 감사가 쓴다 |
-| 설정 | `finance_policy.toml` | 수수료율(기본 10%, 문구 8%), 주 정산, PG 3.1%, 예산, 감사 기준 |
+| 금액 다시 계산 | `recheck.py` | 예전 `verify_amount` 계산. 사후 감사가 쓴다 |
+| 설정 | `finance_policy.toml` | 수수료율(기본 10%, 문구 8%), 주 정산, PG 3.1%, 예산, 한도 제안(한 번에 30% 안), 감사 기준 |
 
 | skill | 등급 | 요청자 | 우선순위 | 하는 일 |
 | --- | --- | --- | --- | --- |
@@ -24,23 +24,16 @@
 | `settlement_hold` | B (검증자 data) | orchestrator | recommended | 위험 판매자 정산 보류 요청 (DEP-FIN-04). 보류된 판매자는 정산 묶음에서 빠진다 |
 | `closing_report` | read | orchestrator, data | optional | 기간 손익 요약 (`ClosingReportInput`·`ClosingReportOutput`) |
 | `audit_report` | read | orchestrator, data | optional | 사후 감사 결과 (`AuditReportInput`·`AuditReportOutput`) |
-| `review_threshold_change` | read | safety | recommended | 기준 바꾸기 판단. safety가 안전 장치(원래 값의 0.5~2배 등)를 먼저 검사한 요청만 온다 |
 
 없앤 것: `verify_amount`(B 쿠폰·환불 교차검증), `review_hold`(C 보류 건 AI 1차 판단), `/api/finance/verifications`, `/api/finance/ai-reviews`.
-`ai_review_policy.toml`(사람 전용)은 그대로이고 `[threshold_change]`만 쓴다.
-
-`review_threshold_change` 판단 규칙 (`threshold_review.py`, 값은 `ai_review_policy.toml`의 `[threshold_change]`, 사람만 변경):
-- 입력 `{change_id, key, current_value, new_value, baseline, stats}`. `stats`(`holds_24h`·`executed_today`·`ai_approved_24h`·`human_approved_24h`·`expired_24h`)는 safety가 코드로 센 값
-- 변경 폭 `|new − current| / current > max_step_ratio(0.3)` → `escalate`(`big_step`)
-- 낮추기 → `approve`(`tighten`), `review_timeout_seconds`는 폭 안이면 `approve`
-- 올리기 → `holds_24h ≥ min_holds_to_raise(3)`이면 `approve`(`raise_with_holds`), 아니면 `escalate`(`insufficient_evidence`, "근거 부족")
-- 값이 잘못됐거나 지금 값과 같으면 `reject`. 요청 이유는 `untrusted.reason_untrusted_text`로 오며 읽지 않는다. 같은 `change_id`는 같은 판단
-- 출력 `{decision: approve|reject|escalate, reason_code, explanation}` (설명은 쉬운 한국어, 숫자는 코드 계산)
+재무 일이 아니라 없앤 것(2026-10-26): 캣북스 클레임 연동(`catbooks.py`, 환불·교환 신청을 건별로 다시 확인 → 건별 검사는 안전 관문의 일, `/api/finance/catbooks/*`, `FINANCE_CATBOOKS_*`),
+`review_threshold_change`(AI가 기준 변경을 판단 → 재무는 제안만 하고 사람이 기준표 PR로 바꾼다, `/api/finance/threshold-reviews`).
+`ai_review_policy.toml`(사람 전용)은 이제 코드가 읽지 않는다. 사람이 지우는 PR을 올린다.
 
 ## 2. 실행 방법
 `docker compose -f infra/compose.yml up finance` / 목 모드: `FINANCE_MOCK=1` (장부 시드 `src/finance_agent/finance_books_seed.json`, 손실 리포트·심사 시드 `mock_seed.json`)
 
-혼자 띄우기(목 모드, 레포 루트): `FINANCE_MOCK=1 FINANCE_CATBOOKS_POLL_SECONDS=0 uv run uvicorn finance_agent.main:app --port 8105`
+혼자 띄우기(목 모드, 레포 루트): `FINANCE_MOCK=1 uv run uvicorn finance_agent.main:app --port 8105`
 (정산 묶음을 실제 safety 보류 큐로 보내려면 `AX_SAFETY_URL=http://localhost:8001`. 없으면 템플릿 목 execute가 바로 `executed`를 돌려준다)
 
 테스트: `uv run pytest agents/finance`
@@ -64,10 +57,9 @@ safety·finance를 목 모드로 띄운 뒤 `uv run python agents/finance/demo/s
   `GET /api/finance/reconciliation?date=`, `POST /api/finance/reconciliation/{payment_id}/note`(사람 토큰),
   `GET /api/finance/settlements?period=YYYY-Www`, `POST /api/finance/settlements/batch`(토큰 선택, safety 없으면 503 `safety_unavailable`),
   `GET /api/finance/policy`, `GET /api/finance/audit?days=7`
-- 기존 조회 API: `/api/finance/ledger`(사건별 보상 지급·주문별 환불 누적), `/api/finance/market-ops`(판매자 심사·정산 보류 결과), `/api/finance/loss-reports`, `/api/finance/threshold-reviews`, `/api/finance/self-test`(재무 AI 테스트 버튼: 가짜 자료로 계산 규칙 점검 + 안전 장치·쇼핑몰·데이터 AI·캣북스 연결 확인, 상태를 바꾸지 않음), `/api/finance/self-test/last`, `/api/finance/catbooks/sync`, `/api/finance/catbooks/items`
+- 기존 조회 API: `/api/finance/ledger`(사건별 보상 지급·주문별 환불 누적), `/api/finance/market-ops`(판매자 심사·정산 보류 결과), `/api/finance/loss-reports`, `/api/finance/self-test`(재무 AI 테스트 버튼: 가짜 자료로 계산 규칙 점검 + 안전 장치·쇼핑몰·데이터 AI 연결 확인, 상태를 바꾸지 않음), `/api/finance/self-test/last`
 - 사람 토큰: 안전 관문과 같은 형식 `Authorization: Bearer human:<이름>`(목 모드) 또는 `FINANCE_HUMAN_TOKENS`/`SAFETY_HUMAN_TOKENS`의 토큰 (`human.py`)
 - CORS: `FINANCE_CORS_ORIGINS`(기본 `http://localhost:3001,http://127.0.0.1:3001`). 사람 결정 경로 3개만 POST·Authorization 허용, 나머지는 GET만
-- 캣북스 연결(`src/finance_agent/catbooks.py`): 캣북스 관리자 API `GET /api/admin/claims`·`/api/admin/claims/{id}`·`/api/admin/queue`를 읽어 환불 금액을 확인한다. 서버가 도는 동안 `FINANCE_CATBOOKS_POLL_SECONDS`(기본 45)초마다 가져온다. 주소는 `FINANCE_CATBOOKS_URL`(기본 `http://host.docker.internal:8030`)
 - 구독 이벤트: `coupon.issued`(보상 쿠폰 지급 누적), `payment.refunded`(환불 누적)
 - 부르는 것: data `impact_analysis`(`failed_order_count`·`affected_customer_count`·`damage_amount` + 영향 고객 ID `affected_customer_ids`), data `fraud_score`(`risk_score` 0~100), safety `execute()`(판매자 승인·정산 보류·정산 묶음 `confirm_settlement`), shop-api·safety 조회 API(장부)
 

@@ -12,7 +12,6 @@ from ax_agent_template import events
 from finance_agent import handlers, selftest
 from finance_agent.handlers import recompute
 from finance_agent.main import app
-from finance_agent.review import load_policy
 from finance_agent.sources import MockSources
 
 REGISTRY = {
@@ -29,7 +28,6 @@ ROUTING = "쿠폰·환불은 규칙 검사, 정산 확정은 사람 승인"
 @pytest.fixture(autouse=True)
 def _mock_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_TEMPLATE_MOCK", "1")
-    monkeypatch.setenv("FINANCE_CATBOOKS_URL", "http://catbooks")
     events.reset_mock_bus()
     handlers.reset_state(MockSources())
 
@@ -51,12 +49,12 @@ def _network(up: set[str], registry: dict | None = None, thresholds: dict | None
 
 
 async def _run(client: httpx.AsyncClient) -> dict[str, Any]:
-    return await selftest.run_self_test(recompute, load_policy(), http_client=client)
+    return await selftest.run_self_test(recompute, http_client=client)
 
 
 @pytest.mark.asyncio
 async def test_all_green_when_everything_is_up() -> None:
-    result = await _run(_network({"safety", "shop-api", "data", "catbooks"}))
+    result = await _run(_network({"safety", "shop-api", "data"}))
     assert result["result"] == "pass", [c for c in result["checks"] if not c["ok"]]
     assert result["passed"] == result["total"] >= 14
     names = {c["name"] for c in result["checks"]}
@@ -69,20 +67,12 @@ async def test_missing_data_sources_only_warn() -> None:
     result = await _run(_network({"safety"}))
     assert result["result"] == "warn"
     bad = {c["name"]: c["level"] for c in result["checks"] if not c["ok"]}
-    assert bad == {"쇼핑몰 연결": "warn", "데이터 AI 연결": "warn", "캣북스 연결": "warn"}
-
-
-@pytest.mark.asyncio
-async def test_catbooks_down_only_warns() -> None:
-    result = await _run(_network({"safety", "shop-api", "data"}))
-    assert result["result"] == "warn"
-    bad = [(c["name"], c["level"]) for c in result["checks"] if not c["ok"]]
-    assert bad == [("캣북스 연결", "warn")]
+    assert bad == {"쇼핑몰 연결": "warn", "데이터 AI 연결": "warn"}
 
 
 @pytest.mark.asyncio
 async def test_safety_down_fails() -> None:
-    result = await _run(_network({"shop-api", "data", "catbooks"}))
+    result = await _run(_network({"shop-api", "data"}))
     assert result["result"] == "fail"
     failed = {c["name"] for c in result["checks"] if not c["ok"] and c["level"] == "fail"}
     assert {"안전 장치 연결", ROUTING} <= failed
@@ -98,21 +88,19 @@ async def test_old_finance_routing_or_missing_settlement_action_fails() -> None:
             {"action": "confirm_settlement", "base_grade": "C", "verifier": None},
         ]
     }
-    result = await _run(_network({"safety", "shop-api", "data", "catbooks"}, old))
+    result = await _run(_network({"safety", "shop-api", "data"}, old))
     by = {c["name"]: c for c in result["checks"]}
     assert (by[ROUTING]["ok"], by[ROUTING]["level"]) == (False, "fail")
     assert result["result"] == "fail"
 
     no_settle = {"actions": REGISTRY["actions"][:2]}
-    result = await _run(_network({"safety", "shop-api", "data", "catbooks"}, no_settle))
+    result = await _run(_network({"safety", "shop-api", "data"}, no_settle))
     assert not {c["name"]: c for c in result["checks"]}[ROUTING]["ok"]
 
 
 @pytest.mark.asyncio
 async def test_thresholds_unreadable_only_warns() -> None:
-    result = await _run(
-        _network({"safety", "shop-api", "data", "catbooks"}, thresholds={"version": 1})
-    )
+    result = await _run(_network({"safety", "shop-api", "data"}, thresholds={"version": 1}))
     bad = [(c["name"], c["level"]) for c in result["checks"] if not c["ok"]]
     assert bad == [("기준표 읽기", "warn")]
     assert result["result"] == "warn"
@@ -121,7 +109,7 @@ async def test_thresholds_unreadable_only_warns() -> None:
 @pytest.mark.asyncio
 async def test_module_checks_cover_every_new_module() -> None:
     """결산·대사·정산·예산·감사 규칙 점검이 모두 통과한다(가짜 자료, 실제 기록 없음)."""
-    result = await _run(_network({"safety", "shop-api", "data", "catbooks"}))
+    result = await _run(_network({"safety", "shop-api", "data"}))
     by = {c["name"]: c for c in result["checks"]}
     for name in (
         "결산 계산 공식",
@@ -129,7 +117,7 @@ async def test_module_checks_cover_every_new_module() -> None:
         "판매자 정산 공식",
         "예산 경보 기준",
         "사후 감사 규칙",
-        "기준 바꾸기 판단 기준표 읽기",
+        "한도 제안 설정 읽기",
     ):
         assert by[name]["ok"], (name, by[name]["detail"])
     assert "13,000원" in by["판매자 정산 공식"]["detail"]
@@ -145,8 +133,7 @@ async def test_broken_judgement_is_caught(monkeypatch: pytest.MonkeyPatch) -> No
 
     result = await selftest.run_self_test(
         always_approve,
-        load_policy(),
-        http_client=_network({"safety", "shop-api", "data", "catbooks"}),
+        http_client=_network({"safety", "shop-api", "data"}),
     )
     failed = {c["name"] for c in result["checks"] if not c["ok"]}
     assert "금액을 틀리게 적은 쿠폰 막기" in failed and "결제보다 큰 환불 막기" in failed
@@ -155,7 +142,7 @@ async def test_broken_judgement_is_caught(monkeypatch: pytest.MonkeyPatch) -> No
 
 @pytest.mark.asyncio
 async def test_self_test_leaves_no_trace_in_real_records() -> None:
-    await _run(_network({"safety", "shop-api", "data", "catbooks"}))
+    await _run(_network({"safety", "shop-api", "data"}))
     ledger, records = handlers.state().ledger, handlers.state().records
     assert records.closings == {} and records.batches == {} and ledger.refunds == {}
 

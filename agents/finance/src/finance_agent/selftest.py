@@ -1,11 +1,10 @@
 """재무 AI 자체 점검 (대시보드 "재무 AI 테스트" 버튼).
 
-담당자가 아침마다 눌러서 재무 AI의 계산 규칙이 맞는지, 안전 장치·원천 데이터·캣북스와
-연결돼 있는지 본다.
+담당자가 아침마다 눌러서 재무 AI의 계산 규칙이 맞는지, 안전 장치·원천 데이터와 연결돼 있는지 본다.
 
 - 규칙 점검은 **테스트 전용 가짜 자료**로 돌린다. 실제 기록(결산 확정, 대사 메모, 정산 묶음,
   환불 누적)에는 아무것도 남기지 않는다. 숫자는 실제 리포트와 같은 코드가 계산한다.
-  점검 대상: 금액 다시 계산(`recheck`, 캣북스 확인·사후 감사가 씀), ① 결산 공식, ② 대사 상태 분류,
+  점검 대상: 금액 다시 계산(`recheck`, 사후 감사가 씀), ① 결산 공식, ② 대사 상태 분류,
   ③ 정산 공식, ⑤ 예산 경보, ⑦ 감사 규칙(시드 장부에서 6가지 의심 코드가 모두 잡히는지).
 - 연결 점검은 실제 주소(`agent_url`)에 `GET`만 보낸다. 상태를 바꾸지 않는다.
 - 결과 수준: `fail`(계산이 틀리거나 안전 장치가 끊김 → 바로 확인 필요), `warn`(원천 데이터에 닿지
@@ -26,11 +25,9 @@ from ax_contracts.schemas import RequestMeta, VerifyAmountInput
 from finance_agent import finance_config as fc
 from finance_agent.audit import audit_report
 from finance_agent.books import Books, seed_books
-from finance_agent.catbooks import catbooks_url
 from finance_agent.closing import compute_totals
 from finance_agent.policy import _alert
 from finance_agent.reconciliation import classify
-from finance_agent.review import ReviewPolicy
 from finance_agent.settlement import statements
 from finance_agent.sources import MockSources
 
@@ -173,7 +170,7 @@ async def _guard(name: str, run: Any, checks: list[Check]) -> None:
 
 
 async def _recompute_checks(recompute: Any) -> list[Check]:
-    """금액 다시 계산 규칙. 캣북스 확인과 사후 감사(`amount_recheck_failed`)가 이 코드를 쓴다."""
+    """금액 다시 계산 규칙. 사후 감사(`amount_recheck_failed`)가 이 코드를 쓴다."""
     meta = _meta()
     cases = [
         (
@@ -239,7 +236,7 @@ async def _recompute_checks(recompute: Any) -> list[Check]:
     return checks
 
 
-async def _module_checks(policy: ReviewPolicy) -> list[Check]:
+async def _module_checks() -> list[Check]:
     checks: list[Check] = []
     books = _tiny_books()
 
@@ -309,8 +306,8 @@ async def _module_checks(policy: ReviewPolicy) -> list[Check]:
         )
 
     async def policy_file() -> tuple[bool, str]:
-        step = policy.threshold_change.max_step_ratio
-        return step > 0, f"한도 제안은 한 번에 {round(step * 100)}% 안에서만 바꿈"
+        step = fc.load_config().proposal.max_step_ratio
+        return 0 < step <= 1, f"한도 제안은 한 번에 {round(step * 100)}% 안에서만 바꿈"
 
     for name, run in (
         ("결산 계산 공식", closing_formula),
@@ -318,7 +315,7 @@ async def _module_checks(policy: ReviewPolicy) -> list[Check]:
         ("판매자 정산 공식", settlement_formula),
         ("예산 경보 기준", budget_alerts),
         ("사후 감사 규칙", audit_rules),
-        ("기준 바꾸기 판단 기준표 읽기", policy_file),
+        ("한도 제안 설정 읽기", policy_file),
     ):
         await _guard(name, run, checks)
     return checks
@@ -396,27 +393,15 @@ async def _connection_checks(client: httpx.AsyncClient) -> list[Check]:
                 level="warn",
             )
         )
-
-    status, _ = await _get_json(client, f"{catbooks_url()}/api/health")
-    checks.append(
-        Check(
-            "캣북스 연결",
-            status == 200,
-            "캣북스 쇼핑몰이 응답함"
-            if status == 200
-            else "캣북스에 닿지 않음. 캣북스 환불·교환 건을 새로 가져오지 못합니다",
-            level="warn",
-        )
-    )
     return checks
 
 
 async def run_self_test(
-    recompute: Any, policy: ReviewPolicy, http_client: httpx.AsyncClient | None = None
+    recompute: Any, http_client: httpx.AsyncClient | None = None
 ) -> dict[str, Any]:
     started = time.perf_counter()
     checks = await _recompute_checks(recompute)
-    checks += await _module_checks(policy)
+    checks += await _module_checks()
     client = http_client or httpx.AsyncClient()
     try:
         checks += await _connection_checks(client)

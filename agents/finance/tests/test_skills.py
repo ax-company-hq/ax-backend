@@ -133,14 +133,9 @@ def test_agent_card(client: TestClient) -> None:
         "settlement_hold",
         "closing_report",
         "audit_report",
-        "review_threshold_change",
     }
     assert skills["closing_report"].allowed_requesters == ["orchestrator", "data"]
-    assert skills["review_threshold_change"].allowed_requesters == ["safety"]
-    assert (
-        skills["review_threshold_change"].grade,
-        skills["review_threshold_change"].priority,
-    ) == ("read", "recommended")
+    assert "review_threshold_change" not in skills  # 한도는 제안만, 사람이 기준표 PR로 바꾼다
     assert skills["audit_report"].allowed_requesters == ["orchestrator", "data"]
     assert (skills["audit_report"].grade, skills["loss_aggregation"].priority) == (
         "read",
@@ -148,7 +143,7 @@ def test_agent_card(client: TestClient) -> None:
     )
     assert (skills["seller_review"].grade, skills["seller_review"].verifier) == ("B", "data")
     served = client.get("/.well-known/agent-card.json").json()
-    assert served["name"] == "finance" and len(served["skills"]) == 6
+    assert served["name"] == "finance" and len(served["skills"]) == 5
 
 
 # ------------------------------------------- 금액 다시 계산 (예전 verify_amount, recheck.py)

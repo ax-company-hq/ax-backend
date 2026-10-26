@@ -7,10 +7,10 @@
 | `settlement_hold` | B | orchestrator | 마켓운영: 위험 판매자 정산 보류 요청 (DEP-FIN-04) |
 | `closing_report` | read | orchestrator, data | ① 기간 손익 요약 (`closing.py`) |
 | `audit_report` | read | orchestrator, data | ⑦ 사후 감사 결과 (`audit.py`) |
-| `review_threshold_change` | read | safety | 기준 바꾸기 판단 (`threshold_review.py`) |
 
 `verify_amount`·`review_hold`는 재무 재설계(2026-10-23)로 없앴다. 금액 다시 계산 규칙은
-`recheck.py`에 남아 캣북스 확인과 사후 감사가 쓴다.
+`recheck.py`에 남아 사후 감사가 쓴다. 캣북스 클레임 건별 확인과 `review_threshold_change`(AI가 기준
+변경을 판단)도 재무 일이 아니라 없앴다. 한도는 제안만 하고(`policy.py`) 사람이 기준표 PR로 바꾼다.
 
 - 숫자는 전부 코드로 계산한다. 요청 쪽이 적은 총액·등급은 믿지 않는다.
 - 상태 변경(판매자 승인, 정산 보류)은 `execute()`가 `executed`를 돌려준 뒤에만 기록한다.
@@ -42,7 +42,6 @@ from finance_agent import audit, closing
 from finance_agent import finance_config as fc
 from finance_agent.books import Books, load_books
 from finance_agent.recheck import recompute
-from finance_agent.review import ReviewPolicy, load_policy
 from finance_agent.schemas import (
     AuditReportInput,
     AuditReportOutput,
@@ -54,10 +53,8 @@ from finance_agent.schemas import (
     SellerReviewOutput,
     SettlementHoldInput,
     SettlementHoldOutput,
-    ThresholdReviewInput,
 )
 from finance_agent.sources import LiveSources, MockSources, Sources, order_key
-from finance_agent.threshold_review import decide_threshold
 
 __all__ = ["HANDLERS", "SUBSCRIBED_EVENTS", "on_event", "recompute", "reset_state", "state"]
 
@@ -72,10 +69,6 @@ class Ledger:
         self.done: dict[str, AgentResult] = {}  # 멱등성 키 → 끝난 상태 변경 결과
         self.market_ops: list[dict[str, Any]] = []  # 판매자 심사·정산 보류 결과 기록
         self.loss_reports: dict[str, dict[str, Any]] = {}  # context_id → 마지막 손실 리포트
-        self.catbooks_items: dict[str, dict[str, Any]] = {}  # 캣북스 클레임 확인 결과
-        self.catbooks_sync: dict[str, Any] | None = None  # 마지막 캣북스 가져오기 요약
-        self.threshold_reviewed: dict[str, AgentResult] = {}  # change_id → 기준 바꾸기 판단
-        self.threshold_reviews: list[dict[str, Any]] = []  # 대시보드 조회용 기준 바꾸기 판단
 
     def compensation(self, context_id: str) -> dict[str, int]:
         return self.coupons.get(context_id, {"count": 0, "total": 0})
@@ -85,7 +78,6 @@ class State:
     def __init__(self, sources: Sources | None = None) -> None:
         self.sources: Sources = sources or (MockSources() if is_mock("finance") else LiveSources())
         self.ledger = Ledger()
-        self.policy: ReviewPolicy = load_policy()
         self.last_self_test: dict[str, Any] | None = None  # 마지막 "재무 AI 테스트" 결과
         self.records = FinanceRecords()
         self.books_loader: Callable[[], Awaitable[Books]] = load_books  # 테스트에서 바꾼다
@@ -370,44 +362,6 @@ async def settlement_hold(request: AgentRequest) -> AgentResult:
     return result
 
 
-# ---------------------------------------------------------------- review_threshold_change
-async def review_threshold_change(request: AgentRequest) -> AgentResult:
-    """safety의 기준 바꾸기 요청 판단. 요청 이유(`request.untrusted`)는 읽지 않는다."""
-    data = _parse(request, ThresholdReviewInput)
-    if isinstance(data, AgentResult):
-        return data
-    ledger = state().ledger
-    if data.change_id in ledger.threshold_reviewed:  # 같은 요청은 같은 판단
-        return ledger.threshold_reviewed[data.change_id].model_copy(update={"meta": request.meta})
-    output = decide_threshold(data, state().policy.threshold_change)
-    result = _result(
-        request,
-        TaskStatus.COMPLETED,
-        outcome=output.decision,
-        output=output.model_dump(mode="json"),
-        evidence=_evidence(
-            ["ai_review_policy:threshold_change", f"safety:stats:{data.key}"],
-            output.explanation,
-            [data.change_id],
-        ),
-    )
-    ledger.threshold_reviewed[data.change_id] = result
-    ledger.threshold_reviews.append(
-        {
-            "change_id": data.change_id,
-            "context_id": request.meta.context_id,
-            "key": data.key,
-            "current_value": data.current_value,
-            "new_value": data.new_value,
-            "baseline": data.baseline,
-            "stats": data.stats,
-            **output.model_dump(mode="json"),
-            "at": _now().isoformat(),
-        }
-    )
-    return result
-
-
 # ------------------------------------------------------- closing_report·audit_report (읽기)
 BOOK_QUERIES = [
     "shop-api:/api/shop/orders",
@@ -482,5 +436,4 @@ HANDLERS = {
     "settlement_hold": settlement_hold,
     "closing_report": closing_report,
     "audit_report": audit_report,
-    "review_threshold_change": review_threshold_change,
 }

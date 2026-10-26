@@ -30,6 +30,7 @@ window_days = 14                    # 한도 제안에 쓰는 최근 기간
 percentile = 0.95                   # 이 분위 값을 기준으로 제안
 round_to = 10000                    # 제안 값은 이 단위로 올림
 min_change_ratio = 0.1              # 지금 값과 10% 넘게 다를 때만 제안
+max_step_ratio = 0.3                # 한 번 제안에서 지금 값의 30% 넘게 바꾸지 않음 (적용은 기준표 PR)
 
 [audit]
 near_limit_ratio = 0.9              # 한도의 90% 이상 ~ 한도 이하면 "한도 바로 아래"

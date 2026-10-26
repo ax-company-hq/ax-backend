@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import logging
 import os
 import re
-from collections.abc import AsyncIterator
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -17,7 +14,6 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from ax_agent_template.events import subscribe
 from ax_agent_template.server import create_agent_app
 from ax_contracts.schemas import AgentCard
-from finance_agent import catbooks
 from finance_agent.finance_api import add_finance_api
 from finance_agent.handlers import HANDLERS, SUBSCRIBED_EVENTS, on_event, recompute, state
 from finance_agent.selftest import SELF_TEST_TTL_HOURS, is_fresh, run_self_test
@@ -104,7 +100,7 @@ def add_read_api(app: FastAPI) -> None:
     @app.get("/api/finance/self-test")
     async def self_test() -> dict:
         """재무 AI 테스트 버튼: 가짜 자료로 판단 점검, 연결 확인. 상태를 바꾸지 않는다."""
-        result = await run_self_test(recompute, state().policy)
+        result = await run_self_test(recompute)
         state().last_self_test = result
         return {"data": result, "meta": {}}
 
@@ -116,53 +112,14 @@ def add_read_api(app: FastAPI) -> None:
             state().last_self_test = last = None
         return {"data": last, "meta": {"ttl_hours": SELF_TEST_TTL_HOURS}}
 
-    @app.get("/api/finance/catbooks/sync")
-    async def catbooks_sync() -> dict:
-        """캣북스에서 지금 가져와 확인한다. 캣북스는 읽기만 하고 재무 기록만 갱신한다."""
-        summary = await catbooks.sync()
-        return {"data": summary, "meta": {"poll_seconds": catbooks.poll_seconds()}}
-
-    @app.get("/api/finance/catbooks/items")
-    def catbooks_items() -> dict:
-        """캣북스에서 들어온 처리할 일. 최근 신청 먼저."""
-        rows = catbooks.items_newest_first()
-        return {
-            "data": rows,
-            "meta": {
-                "count": len(rows),
-                "sync": state().ledger.catbooks_sync,
-                "poll_seconds": catbooks.poll_seconds(),
-            },
-        }
-
-    @app.get("/api/finance/threshold-reviews")
-    def threshold_reviews() -> dict:
-        rows = state().ledger.threshold_reviews
-        return {"data": list(reversed(rows)), "meta": {"count": len(rows)}}
-
     @app.get("/api/finance/market-ops")
     def market_ops() -> dict:
         rows = state().ledger.market_ops
         return {"data": list(reversed(rows)), "meta": {"count": len(rows)}}
 
 
-@contextlib.asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """서버가 도는 동안 캣북스를 주기적으로 가져온다 (`FINANCE_CATBOOKS_POLL_SECONDS=0`이면 끔)."""
-    interval = catbooks.poll_seconds()
-    task = asyncio.create_task(catbooks.poll_forever(interval)) if interval else None
-    try:
-        yield
-    finally:
-        if task:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-
-
 def create_app() -> FastAPI:
     app = create_agent_app(load_card(), HANDLERS)
-    app.router.lifespan_context = lifespan
     app.add_middleware(DashboardCORS, origins=cors_origins())
     add_read_api(app)
     add_finance_api(app)
