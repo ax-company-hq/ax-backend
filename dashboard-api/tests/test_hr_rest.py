@@ -8,11 +8,8 @@ from fastapi.testclient import TestClient
 from ax_contracts.schemas import AgentRequest, AgentResult, TaskStatus
 from ax_contracts.schemas.hr import (
     AuditEntry,
-    ChangeView,
     CheckPlanOutput,
     GetRosterOutput,
-    OnboardingView,
-    StartOnboardingOutput,
 )
 from ax_dashboard_api import hr_client, mock_hr
 from ax_dashboard_api.main import app
@@ -94,11 +91,11 @@ def mock_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 
 def test_mock_lists_match_the_contract_models(mock_client: TestClient) -> None:
+    # 온보딩·발령은 hr에서 빠져 폐기 예정이다 (#374·#377): 목 모드도 빈 목록을 돌려준다
     onboardings = mock_client.get(BASE + "/onboardings").json()
-    parsed = [OnboardingView.model_validate(o) for o in onboardings["data"]]
-    assert onboardings["meta"]["total"] == 1 and parsed[0].progress == 20
-    changes = mock_client.get(BASE + "/assignment-changes").json()["data"]
-    assert [ChangeView.model_validate(c).change_kind for c in changes] == ["offboarding", "join"]
+    assert onboardings["data"] == [] and onboardings["meta"]["total"] == 0
+    changes = mock_client.get(BASE + "/assignment-changes").json()
+    assert changes["data"] == [] and changes["meta"]["total"] == 0
     roster = GetRosterOutput.model_validate(mock_client.get(BASE + "/roster").json()["data"])
     assert roster.gap_areas == ["search"] and {e.area for e in roster.entries} >= {"payment"}
 
@@ -107,7 +104,7 @@ def test_mock_filters(mock_client: TestClient) -> None:
     get = mock_client.get
     assert get(BASE + "/onboardings", params={"member_id": "emp_99"}).json()["data"] == []
     only = get(BASE + "/assignment-changes", params={"status": "confirmed"}).json()["data"]
-    assert [c["change_id"] for c in only] == ["chg_0002"]
+    assert only == []  # 폐기 예정이라 필터와 상관없이 비어 있다
     assert get(BASE + "/assignment-changes", params={"status": "nope"}).status_code == 422
     payment = GetRosterOutput.model_validate(
         get(BASE + "/roster", params={"area": "payment"}).json()["data"]
@@ -116,19 +113,20 @@ def test_mock_filters(mock_client: TestClient) -> None:
 
 
 def test_mock_step_completion_recounts_progress_and_can_be_undone(mock_client: TestClient) -> None:
+    # 단계 완료 표시는 폐기됐다: 어떤 본문이든 410이다
     url = BASE + "/onboardings/onb_0001/steps/stp_onb_0001_2"
-    done = StartOnboardingOutput.model_validate(mock_client.post(url, json={}).json()["data"])
-    assert done.progress == 40 and done.steps[1].done
-    again = mock_client.post(url, json={"done": True})  # 이미 그 상태면 그대로 성공
-    assert again.status_code == 200 and again.json()["data"]["progress"] == 40
-    undone = mock_client.post(url, json={"done": False}).json()["data"]
-    assert undone["progress"] == 20
+    gone = mock_client.post(url, json={})
+    assert gone.status_code == 410 and gone.json()["error"]["code"] == "ENDPOINT_RETIRED"
+    assert mock_client.post(url, json={"done": True}).status_code == 410
+    assert mock_client.post(url, json={"done": False}).status_code == 410
 
 
 def test_mock_unknown_onboarding_or_step_is_404(mock_client: TestClient) -> None:
-    assert mock_client.post(BASE + "/onboardings/onb_9/steps/stp_1", json={}).status_code == 404
+    # 없는 온보딩·단계도 폐기 경로라 404가 아니라 410이다
+    assert mock_client.post(BASE + "/onboardings/onb_9/steps/stp_1", json={}).status_code == 410
     unknown = mock_client.post(BASE + "/onboardings/onb_0001/steps/stp_9", json={})
-    assert unknown.status_code == 404 and unknown.json()["error"]["code"] == "NOT_FOUND"
+    assert unknown.status_code == 410 and unknown.json()["error"]["code"] == "ENDPOINT_RETIRED"
+    assert "인사 에이전트에서 빠졌다" in unknown.json()["error"]["message"]
 
 
 def test_mock_activity_is_listed_by_context(mock_client: TestClient) -> None:
@@ -186,45 +184,30 @@ def client(fake: Fake) -> TestClient:
 
 
 def test_onboardings_are_listed_with_filters(client: TestClient, fake: Fake) -> None:
-    fake.outputs["list_onboardings"] = {"onboardings": [ONBOARDING], "collected_at": NOW}
     body = client.get(BASE + "/onboardings", params={"member_id": "emp_10"}).json()
-    assert body["data"][0]["onboarding_id"] == "onb_1" and body["meta"]["total"] == 1
-    assert fake.last("list_onboardings").input == {"member_id": "emp_10"}
-    assert fake.last("list_onboardings").meta.token == "test-token"
+    assert body["data"] == [] and body["meta"]["total"] == 0  # 폐기 예정: 빈 목록
+    assert fake.sent == []  # hr은 이 skill이 없으니 부르지 않는다
 
 
 def test_step_completion_goes_to_hr_with_a_target_key(client: TestClient, fake: Fake) -> None:
-    fake.outputs["update_onboarding_step"] = {
-        "onboarding_id": "onb_1",
-        "steps": [STEP],
-        "progress": 100,
-    }
     response = client.post(BASE + "/onboardings/onb_1/steps/stp_1", json={"done": False})
-    assert response.status_code == 200 and response.json()["data"]["progress"] == 100
-    sent = fake.last("update_onboarding_step")
-    assert sent.input == {"onboarding_id": "onb_1", "step_id": "stp_1", "done": False}
-    assert (
-        sent.meta.idempotency_key
-        == f"{sent.meta.context_id}:update_onboarding_step:onboarding:onb_1:stp_1:False"
-    )
+    assert response.status_code == 410 and response.json()["error"]["code"] == "ENDPOINT_RETIRED"
+    assert fake.sent == []  # hr을 부르지 않는다
+    assert "폐기 예정" in response.json()["error"]["message"]  # 이유를 쉬운 말로 알린다
 
 
 def test_an_unknown_step_is_404_from_hr(client: TestClient, fake: Fake) -> None:
-    fake.overrides["update_onboarding_step"] = {
-        "outcome": "UNKNOWN_STEP",
-        "output": {"message": "없는 단계다"},
-    }
     response = client.post(BASE + "/onboardings/onb_1/steps/stp_9", json={})
-    assert response.status_code == 404 and response.json()["error"]["code"] == "NOT_FOUND"
+    assert response.status_code == 410 and response.json()["error"]["code"] == "ENDPOINT_RETIRED"
+    assert fake.sent == []
 
 
 def test_changes_are_listed_with_filters(client: TestClient, fake: Fake) -> None:
-    fake.outputs["list_changes"] = {"changes": [CHANGE], "collected_at": NOW}
     body = client.get(
         BASE + "/assignment-changes", params={"status": "requested", "area": "search"}
     ).json()
-    assert body["data"][0]["change_id"] == "chg_1"
-    assert fake.last("list_changes").input == {"status": "requested", "area": "search"}
+    assert body["data"] == [] and body["meta"]["total"] == 0  # 폐기 예정: 빈 목록
+    assert fake.sent == []
 
 
 def test_roster_is_one_object_with_gap_areas(client: TestClient, fake: Fake) -> None:
@@ -259,5 +242,5 @@ def test_a_bad_plan_check_body_never_reaches_hr(client: TestClient, fake: Fake) 
 def test_hr_failures_are_502_and_504(client: TestClient, fake: Fake) -> None:
     fake.overrides["get_roster"] = {"status": TaskStatus.FAILED, "outcome": "UPSTREAM_UNAVAILABLE"}
     assert client.get(BASE + "/roster").status_code == 502
-    fake.overrides["list_changes"] = {"status": TaskStatus.CANCELED, "outcome": "TIMEOUT"}
-    assert client.get(BASE + "/assignment-changes").status_code == 504
+    fake.overrides["get_roster"] = {"status": TaskStatus.CANCELED, "outcome": "TIMEOUT"}
+    assert client.get(BASE + "/roster").status_code == 504

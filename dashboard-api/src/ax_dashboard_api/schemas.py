@@ -460,12 +460,6 @@ class CandidateDecisionBody(BaseModel):
     note: str | None = None
 
 
-class OnboardingStepBody(BaseModel):
-    """온보딩 단계 완료 표시. `done: false`면 완료를 취소한다."""
-
-    done: bool = True
-
-
 class AgentMessageBody(TextBody):
     draft_style: str | None = None
     draft_text: str | None = None
@@ -495,3 +489,10 @@ class QueueProcessBody(BaseModel):
 
 class ReviewStatusBody(BaseModel):
     status: Literal["visible", "hidden"]
+
+
+class OnboardingStepBody(BaseModel):
+    """폐기된 온보딩 단계 경로의 요청 본문. 응답은 항상 410이라 값은 쓰지 않는다 (경로를 지우면
+    깨지는 변경이라, 프론트가 쓰지 않게 된 뒤 따로 지운다)."""
+
+    done: bool = True
