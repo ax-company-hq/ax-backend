@@ -61,6 +61,79 @@
           "damage_amount": 30000
         }
       ]
+    },
+    "ctx_inc_0101": {
+      "failed_order_count": 2,
+      "affected_customer_count": 2,
+      "damage_amount": 41000,
+      "affected_customer_ids": [
+        "buy_0007",
+        "buy_0012"
+      ],
+      "by_category": [
+        {
+          "category": "books",
+          "failed_order_count": 2,
+          "damage_amount": 41000
+        }
+      ]
+    },
+    "ctx_inc_0102": {
+      "failed_order_count": 1,
+      "affected_customer_count": 1,
+      "damage_amount": 23000,
+      "affected_customer_ids": [
+        "buy_0007"
+      ],
+      "by_category": [
+        {
+          "category": "books",
+          "failed_order_count": 1,
+          "damage_amount": 23000
+        }
+      ]
+    },
+    "ctx_inc_0103": {
+      "failed_order_count": 2,
+      "affected_customer_count": 2,
+      "damage_amount": 35500,
+      "affected_customer_ids": [
+        "buy_0007",
+        "buy_0014"
+      ],
+      "by_category": [
+        {
+          "category": "books",
+          "failed_order_count": 1,
+          "damage_amount": 27000
+        },
+        {
+          "category": "stationery",
+          "failed_order_count": 1,
+          "damage_amount": 8500
+        }
+      ]
+    },
+    "ctx_inc_0104": {
+      "failed_order_count": 3,
+      "affected_customer_count": 2,
+      "damage_amount": 52000,
+      "affected_customer_ids": [
+        "buy_0011",
+        "buy_0016"
+      ],
+      "by_category": [
+        {
+          "category": "books",
+          "failed_order_count": 2,
+          "damage_amount": 44000
+        },
+        {
+          "category": "stationery",
+          "failed_order_count": 1,
+          "damage_amount": 8000
+        }
+      ]
     }
   },
   "payments": {

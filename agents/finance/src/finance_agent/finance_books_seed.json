@@ -6819,6 +6819,34 @@
    "day": -5,
    "from": "03:00",
    "to": "03:20"
+  },
+  {
+   "context_id": "ctx_inc_0101",
+   "component": "payment",
+   "day": -2,
+   "from": "02:00",
+   "to": "02:20"
+  },
+  {
+   "context_id": "ctx_inc_0102",
+   "component": "payment",
+   "day": -2,
+   "from": "02:30",
+   "to": "02:50"
+  },
+  {
+   "context_id": "ctx_inc_0103",
+   "component": "payment",
+   "day": -2,
+   "from": "03:00",
+   "to": "03:20"
+  },
+  {
+   "context_id": "ctx_inc_0104",
+   "component": "payment",
+   "day": -3,
+   "from": "10:00",
+   "to": "10:30"
   }
  ]
 }
