@@ -6,7 +6,7 @@
 | 입구 | 형식 | 처리 |
 | --- | --- | --- |
 | 이벤트 버스(지금은 개발용 `POST /api/events`) | `EventEnvelope` | `event_id` 중복 제거 → 사건 판단 → 사건이면 `ctx_inc_<hex>` 발급 |
-| (후속) `POST /a2a` | `AgentRequest` | 총괄 자신의 skill(`get_incident`, `list_incidents`)은 O5 이후 |
+| `POST /a2a` | `AgentRequest` | 총괄 자신의 skill. 지금은 `find_active_incident`(읽기, 요청자 `support`)만: 구성요소·시각에 맞는 사건의 `context_id`를 돌려준다. 시각이 없으면 열린 사건만, 있으면 사건 구간(시작 15분 전 ~ 종료)을 본다. 이상 보고·해결 보고 접수는 계약이 정해진 뒤 |
 
 구독 이벤트: `shop.degraded`, `shop.recovered`, `infra.anomaly_detected`, `metric.anomaly`, `support.inquiry_received`, `support.inquiry_surge`.
 
@@ -25,6 +25,12 @@
 | 이벤트 | `EventEnvelope` | `incident.opened`, `incident.resolved` |
 | 인사 기록 | `record_case` | 사건 종료 때 1회. `decision_reason`·`alternatives_considered`는 실제 단계 결과(완료·미완료·이관)에서 채움 |
 | 읽기 API (목·화면용) | JSON | `GET /api/incidents`, `/api/incidents/{id}`, `/api/registry` |
+
+## 2-1. 사건에 보관하는 값 (`shared`)
+단계 정의의 `keep`에 적은 결과 필드는 성공한 단계에서만 사건 `shared`에 보관하고, `/api/incidents`의 사건 응답(`shared`)으로 보인다. 부서가 값을 주지 않으면 만들어 내지 않고 비워 둔다.
+- `notice_id`: 점검 공지(`publish_notice`)의 공지 번호. 고객지원이 `get_notice`로 공지 사실을 읽을 때 쓴다.
+- `recovered_notice_id`: 정상화 공지의 공지 번호.
+- 고객지원에 이 값을 넘기는 방법은 아직 계약이 없다(`FindActiveIncidentOutput`에 필드가 없음). 계약 요청 뒤에 이어 붙인다.
 
 ## 3. 사건 상태
 `open` → `resolved`(모든 필수 단계 완료) / `degraded`(일부 단계 실패·보류·건너뜀으로 종료).
