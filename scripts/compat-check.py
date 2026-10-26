@@ -31,6 +31,11 @@ REQUEST_SUFFIXES = ("Request", "Query", "Input", "Command", "Params", "Meta")
 # 요청형으로만 취급할 모델 (접미사 규칙에 안 걸리는 skill 입력 모델). 추가할 때 PR에 이유를 적는다.
 # - RecordCase: hr `record_case`의 입력. 응답으로 쓰는 소비자가 없다(출력은 `RecordCaseOutput`).
 REQUEST_ONLY_MODELS = frozenset({"RecordCase"})
+# 응답 enum에 값을 더하는 것을 호환으로 보는 (모델 라벨, 필드). 추가만 허용하고 제거는 깨짐이다.
+# - EventEnvelope.type: 새 이벤트 종류 추가. 소비자는 구독한 종류만 처리하고 모르는 종류는
+#   검증 전에 무시(ack)한다(agent-template `events.py`). 모노레포라 같이 배포된다.
+#   사람 code owner 승인으로만 목록을 늘린다.
+ADDITIVE_ENUMS = frozenset({("ax_contracts.schemas.event.EventEnvelope", "type")})
 RESPONSE_SUFFIXES = (
     "Result", "Response", "Output", "Event", "Card", "Record", "Decision", "Data",
 )  # fmt: skip
@@ -227,7 +232,16 @@ def check_schema(base_root, head_root, direction, label, b=None, h=None) -> list
     """루트 문서 기준으로 b/h(기본: 루트 자신)를 비교하고 문제 문자열 목록을 돌려준다."""
     ctx = Ctx(base_root, head_root, direction)
     compare(base_root if b is None else b, head_root if h is None else h, ctx, "")
-    return [f"{label} [{direction}] {p.removeprefix(': ').removeprefix('.')}" for p in ctx.problems]
+    out = []
+    for p in ctx.problems:
+        text = p.removeprefix(": ").removeprefix(".")
+        field = text.split(":", 1)[0]
+        if (label, field) in ADDITIVE_ENUMS and text.split(": ", 1)[-1].startswith(
+            "응답 enum 값 추가/확장"
+        ):
+            continue  # 허용 목록의 enum은 값 추가만 호환이다
+        out.append(f"{label} [{direction}] {text}")
+    return out
 
 
 # ---------------------------------------------------------------- OpenAPI

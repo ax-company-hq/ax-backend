@@ -271,3 +271,14 @@ def test_request_only_model_allows_enum_add_but_keeps_request_rules(tmp_path):
     assert run(tmp_path / "req", base, required)  # 필수 필드 추가도 여전히 깨짐
     other = {"m.OtherCase": obj({"k": e1})}, {"m.OtherCase": obj({"k": e2})}
     assert run(tmp_path / "other", *other)  # 목록에 없는 모델은 응답 규칙까지 받는다
+
+
+def test_additive_enum_allowlist_allows_adding_only(tmp_path):
+    label = "ax_contracts.schemas.event.EventEnvelope"
+    e1 = {"type": "string", "enum": ["a", "b"]}
+    e2 = {"type": "string", "enum": ["a", "b", "c"]}
+    base, head = {label: obj({"type": e1})}, {label: obj({"type": e2})}
+    assert run(tmp_path / "add", base, head) == []  # 허용 목록의 enum은 값 추가가 호환
+    assert run(tmp_path / "rm", head, base)  # 값 제거는 여전히 깨짐
+    other = {"Other": obj({"type": e1})}, {"Other": obj({"type": e2})}
+    assert run(tmp_path / "other", *other)  # 목록에 없는 모델은 값 추가도 깨짐
