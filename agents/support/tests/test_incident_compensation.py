@@ -278,3 +278,92 @@ def test_a_failed_request_keeps_the_sequence_for_a_retry(sent: Sent) -> None:
 def test_the_output_carries_no_customer_text_or_names(sent: Sent) -> None:
     text = str(call(FOUR))
     assert "김하늘" not in text and "untrusted" not in text.lower().replace('"untrusted": {}', "")
+
+
+@pytest.mark.parametrize("bad", ["buy_١٢٣٤", "usr_١", "buy_000١"])
+def test_unicode_digits_are_not_accepted_as_a_buyer_id(sent: Sent, bad: str) -> None:
+    result = call(["buy_0001", bad])
+    assert result["status"] == "failed" and result["outcome"] == "invalid_input"
+    assert sent == []
+
+
+def test_marketing_still_verifying_is_pending_not_failed_and_stops_the_rest(sent: Sent) -> None:
+    sent.replies.append(reply(TaskStatus.WORKING))
+    result = call(FOUR)
+    out = result["output"]
+    assert [r["status"] for r in out["results"]] == ["pending", "skipped", "skipped", "skipped"]
+    assert out["stopped_early"] is True and result["outcome"] == "partial"
+    assert len(sent) == 1 and out["requested"] == 0
+    retry = call(FOUR)["output"]  # 번호가 소비되지 않아 같은 번호로 다시 요청한다
+    assert [r["status"] for r in retry["results"]] == ["requested"] * 4
+    assert retry["results"][0]["sequence"] == 1
+
+
+def test_one_call_cannot_pass_the_incident_buyer_limit(
+    sent: Sent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(compensation, "MAX_INCIDENT_BUYERS", 3)
+    result = call(FOUR)
+    out = result["output"]
+    assert [r["status"] for r in out["results"]] == ["requested"] * 3 + ["skipped"]
+    assert out["limit_reached"] is True and out["stopped_early"] is False
+    assert result["outcome"] == "partial" and len(sent) == 3
+    assert any("상한" in note for note in out["notes"])
+
+
+def test_one_call_cannot_pass_the_incident_total_limit(
+    sent: Sent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(compensation, "MAX_INCIDENT_TOTAL", 5000)  # 고객당 2,000원
+    out = call(FOUR)["output"]
+    assert [r["status"] for r in out["results"]] == ["requested", "requested", "skipped", "skipped"]
+    assert out["limit_reached"] is True and len(sent) == 2
+
+
+def test_the_limit_holds_across_several_calls_in_the_same_incident(
+    sent: Sent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(compensation, "MAX_INCIDENT_BUYERS", 4)
+    assert call(["buy_0001", "buy_0002", "buy_0003"])["output"]["requested"] == 3
+    out = call(["buy_0004", "buy_0005"])["output"]  # 다른 목록으로 다시 불러도 사건 합계는 이어진다
+    assert [r["status"] for r in out["results"]] == ["requested", "skipped"]
+    assert out["limit_reached"] is True and len(sent) == 4
+
+
+def test_another_incident_has_its_own_limit(sent: Sent, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(compensation, "MAX_INCIDENT_BUYERS", 2)
+    call(["buy_0001", "buy_0002"])
+    assert call(["buy_0003"])["output"]["limit_reached"] is True
+    other = call(["buy_0003"], context="ctx_inc_0002")["output"]
+    assert other["requested"] == 1 and other["limit_reached"] is False
+
+
+def test_resending_an_already_requested_buyer_is_not_blocked_by_the_limit(
+    sent: Sent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(compensation, "MAX_INCIDENT_BUYERS", 2)
+    call(["buy_0001", "buy_0002"])
+    again = call(["buy_0001", "buy_0002"])["output"]
+    assert [r["status"] for r in again["results"]] == ["duplicate", "duplicate"]
+    assert again["limit_reached"] is False and len(sent) == 2
+
+
+def test_a_held_coupon_counts_toward_the_limit_in_the_same_call(
+    sent: Sent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(compensation, "MAX_INCIDENT_TOTAL", 5000)
+    sent.replies.append(
+        reply(TaskStatus.INPUT_REQUIRED, {"review_id": "rev_1"}, "held", "human_input")
+    )
+    out = call(["buy_0001", "buy_0002", "buy_0003"])["output"]
+    assert [r["status"] for r in out["results"]] == ["held", "requested", "skipped"]
+
+
+def test_a_buyer_marketing_linked_to_an_earlier_coupon_is_not_counted_as_issued(
+    sent: Sent,
+) -> None:
+    sent.replies.append(reply(TaskStatus.COMPLETED, {"coupon_id": "cpn_0009"}, "linked_duplicate"))
+    call(["buy_0001", "buy_0002"])
+    from support_agent import incident_handlers
+
+    assert incident_handlers.issued_in_incident(CTX) == (1, 2000)  # 새로 지급한 한 명뿐
