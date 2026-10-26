@@ -10,14 +10,17 @@ import pytest
 import pytest_asyncio
 
 from ax_agent_template import events
-from ax_agent_template.config import set_agent_name
+from ax_agent_template.config import DEFAULT_PORTS, env_prefix, set_agent_name
 from ax_contracts.schemas import EventEnvelope, EventType
 
 
 @pytest_asyncio.fixture(autouse=True)
 async def real_mode(monkeypatch: pytest.MonkeyPatch):
+    # CI는 `ORCHESTRATOR_MOCK=1` 등 부서별 목 변수를 켜 둔다. 에이전트 이름을 바꾸는 테스트가 있어서
+    # 모든 부서의 `<부서>_MOCK`을 지워야 실제 모드로 돈다.
     monkeypatch.delenv("AGENT_TEMPLATE_MOCK", raising=False)
-    monkeypatch.delenv("FINANCE_MOCK", raising=False)
+    for name in DEFAULT_PORTS:
+        monkeypatch.delenv(f"{env_prefix(name)}_MOCK", raising=False)
     monkeypatch.delenv("ORCHESTRATOR_MOCK", raising=False)
     monkeypatch.setenv("AX_EVENT_STREAM", "ax:test-events")
     client = fakeredis.FakeAsyncRedis(decode_responses=True)
