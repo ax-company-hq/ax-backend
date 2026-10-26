@@ -236,3 +236,34 @@ def test_audit_timeline_lists_what_hr_did_for_a_context(svc, client) -> None:
 
 
 # ---- 권한 ----------------------------------------------------------------------------------
+
+
+def test_dashboard_can_read_and_answer_but_not_run_confirmations(svc, client) -> None:
+    for skill, inp in [
+        ("list_handovers", {}),
+        ("get_roster", {}),
+        ("list_candidate_cards", {}),
+    ]:
+        assert post(client, skill, inp)["status"] == "completed", skill
+    for skill, inp in [
+        ("confirm_handover", {"handover_id": "x"}),
+        ("start_handover", {"owner_id": "emp_01"}),
+    ]:
+        res = post(client, skill, inp)
+        assert (res["status"], res["outcome"]) == ("rejected", "FORBIDDEN_SKILL"), skill
+    stranger = post(client, "list_handovers", {}, token="mock:stranger")
+    assert stranger["outcome"] == "FORBIDDEN_SKILL"
+
+
+def test_read_views_do_not_use_the_gate_or_change_anything(svc, client) -> None:
+    start_handover(client)
+    candidate_card(client)
+    calls = list(svc.gate.calls)
+    for skill, inp in [
+        ("list_handovers", {}),
+        ("list_open_questions", {}),
+        ("list_candidate_cards", {}),
+        ("get_audit_timeline", {"context_id": "ctx_hnd_0001"}),
+    ]:
+        assert post(client, skill, inp)["status"] == "completed"
+    assert svc.gate.calls == calls
