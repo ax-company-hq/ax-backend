@@ -17,7 +17,7 @@ from ax_agent_template import events
 from ax_agent_template.llm import MockLLMClient
 from ax_contracts.data_access.shop_failed_orders import ShopFailedOrdersQuery
 from ax_contracts.schemas.data import AnomalyDetectionInput, ImpactAnalysisInput
-from data_agent import monitor, seed
+from data_agent import demo_anchor, monitor, seed
 from data_agent.clients.shop_client import MockShopClient, demo_shift
 from data_agent.impact import aggregate_impact
 from data_agent.metrics.anomaly import BASELINE_DAYS
@@ -104,7 +104,7 @@ def test_metric_incident_anchors_on_analysis_start() -> None:
     start = datetime(2026, 10, 26, 2, 55, tzinfo=UTC)
     short = demo_incident(start, start + timedelta(minutes=30))
     long = demo_incident(start - timedelta(days=BASELINE_DAYS), start + timedelta(minutes=30))
-    assert short == long == (start, start + timedelta(minutes=30))
+    assert short == long == (start, start + demo_anchor.incident_length())
 
 
 def test_metric_series_has_seven_day_baseline() -> None:
