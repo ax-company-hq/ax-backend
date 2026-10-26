@@ -12,7 +12,14 @@ from ax_agent_template import events
 from ax_contracts.schemas import ExecuteRequest
 from ax_safety.gate import Gate, VerifyOutcome, VerifyTask
 from ax_safety.main import create_app
-from ax_safety.rules import load_registry, load_thresholds
+from ax_safety.rules import (
+    ActionSpec,
+    AmountSpec,
+    Registry,
+    Rule,
+    load_registry,
+    load_thresholds,
+)
 from ax_safety.store import Review, Store
 
 START = datetime(2026, 10, 22, 5, 40, tzinfo=UTC)
@@ -23,6 +30,7 @@ def _mock_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_TEMPLATE_MOCK", "1")
     monkeypatch.delenv("SAFETY_HUMAN_TOKENS", raising=False)
     monkeypatch.delenv("SAFETY_MOCK", raising=False)  # CI는 SAFETY_MOCK=1이라 테스트마다 정한다
+    monkeypatch.delenv("SAFETY_REVIEW_TIMEOUT_SECONDS", raising=False)  # 기본은 기준표 값(10분)
     events.reset_mock_bus()
 
 
@@ -136,3 +144,64 @@ def coupon():
 def act():
     """임의 액션 요청을 만든다: `act(action, requester, key, **params)`."""
     return _request
+
+
+def _seller_review(key: str) -> ExecuteRequest:
+    """data가 교차검증하는 B 액션 (위험 점수 70 미만)."""
+    return _request("seller_review", "finance", key, seller_id="sel_1", risk_score=20)
+
+
+@pytest.fixture
+def seller_review():
+    """검증자가 있는 B 액션 요청을 만든다: `seller_review(key)`.
+
+    쿠폰·환불이 A가 되어(재무 재설계) 검증자 동작은 이 액션으로 확인한다.
+    """
+    return _seller_review
+
+
+# 쿠폰·환불이 A가 되어 실제 레지스트리에는 금액 있는 B 에이전트 검증 액션이 없다.
+# 금액과 검증이 함께 걸리는 동작은 테스트 전용 `pay_bonus`(B, finance 검증)로 확인한다.
+BONUS_SPEC = ActionSpec(
+    action="pay_bonus",
+    owner="hr",
+    base_grade="B",
+    verifier="finance",
+    verify_skill="verify_bonus",
+    amount=AmountSpec(count_field="count", unit_field="unit_value", claimed_fields=["total"]),
+)
+BONUS_DAILY = Rule(
+    key="bonus_daily", action="pay_bonus", metric="daily_total", op=">=", value=1_000_000
+)
+
+
+@pytest.fixture
+def bonus_gate(clock: Clock, verifier: FakeVerifier, sent: Events) -> Gate:
+    """테스트 전용 `pay_bonus`(B, 일일 누적 100만 원 이상 C)를 더한 관문."""
+    registry = Registry(actions=[*load_registry().actions, BONUS_SPEC])
+    table = load_thresholds()
+    table = table.model_copy(update={"rules": [*table.rules, BONUS_DAILY]})
+    return Gate(registry, table, Store(), verifier, sent, now=clock)
+
+
+def _bonus(
+    count: int = 3,
+    unit_value: int = 5000,
+    *,
+    key: str = "bonus-1",
+    claimed_grade: str | None = None,
+) -> ExecuteRequest:
+    return ExecuteRequest(
+        action="pay_bonus",
+        requester="hr",
+        context_id="ctx_inc_0001",
+        idempotency_key=key,
+        params={"count": count, "unit_value": unit_value, "total": count * unit_value},
+        claimed_grade=claimed_grade,
+    )
+
+
+@pytest.fixture
+def bonus():
+    """`pay_bonus` 요청을 만든다: `bonus(count, unit_value, key=..., claimed_grade=...)`."""
+    return _bonus

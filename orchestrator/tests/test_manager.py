@@ -102,8 +102,16 @@ def test_demo_wrong_owner_option_is_transferred_not_failed(monkeypatch) -> None:
                 break
             time.sleep(0.01)
         step = next(s for s in data["steps"] if s["step_id"] == "publish_notice")
-        assert (step["status"], step["transferred_to"]) == ("completed", "support")
-        assert data["status"] == "resolved"
+        assert (step["status"], step["transferred_to"]) == ("transfer_queued", None)
+        assert data["status"] == "degraded"
+
+
+def test_hold_decision_endpoint_is_mock_only(monkeypatch) -> None:
+    """사람 토큰 확인이 없어서(#265) 실제 모드에서는 열지 않는다."""
+    monkeypatch.setattr(state, "mock", False)
+    with TestClient(app) as client:
+        response = client.post("/api/incidents/ctx_inc_x/holds/rollback", json={"approved": True})
+    assert response.status_code == 501
 
 
 def _event_json(event_id: str, type_: str, **data) -> dict:

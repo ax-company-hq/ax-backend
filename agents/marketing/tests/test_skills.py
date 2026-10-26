@@ -88,7 +88,7 @@ def test_agent_card_matches_template_format() -> None:
     assert card.name == "marketing"
     assert {s.id for s in card.skills} == set(handlers.HANDLERS)
     issue = next(s for s in card.skills if s.id == "issue_coupon")
-    assert (issue.grade, issue.verifier) == ("B", "finance")
+    assert (issue.grade, issue.verifier) == ("A", None)
     assert client.get("/.well-known/agent-card.json").json()["name"] == "marketing"
 
 
@@ -365,3 +365,109 @@ def test_republishing_the_same_resolved_draft_keeps_one_notice() -> None:
     first = _publish(RESOLVED_INPUT)
     assert _publish(RESOLVED_INPUT) == first
     assert _status(opened) == "ended" and _status(first) == "published"
+
+
+def _active(**input) -> dict:
+    return _call("list_active_notices", input, token="mock:support")["output"]
+
+
+def _ids(listing: dict) -> list[str]:
+    return [item["notice_id"] for item in listing["items"]]
+
+
+def test_list_active_notices_returns_published_newest_first() -> None:
+    first = _publish(DRAFT_INPUT)
+    product = _publish({"kind": "product_created", "facts": {"product_id": "prd_0001"}})
+    listing = _active()
+    assert _ids(listing) == [product, first]
+    assert listing["total"] == 2 and listing["unknown_reason"] is None
+    assert listing["items"][1]["promises"][0]["amount"] == 2000  # 사실·약속도 함께 준다
+
+
+def test_list_active_notices_filters_by_component_and_channel() -> None:
+    payment = _publish(DRAFT_INPUT)
+    _publish({"kind": "product_created", "facts": {"product_id": "prd_0001"}})
+    assert _ids(_active(component="payment")) == [payment]
+    assert _active(component="db")["items"] == []
+    assert _active(channel_code="sns")["items"] == []
+
+
+def test_list_active_notices_leaves_out_ended_and_unpublished() -> None:
+    opened = _publish(DRAFT_INPUT)
+    _call("draft_notice", {"kind": "product_created", "facts": {"product_id": "prd_0002"}})
+    assert _ids(_active()) == [opened]  # 초안은 게시 전이라 보이지 않는다
+    resolved = _publish(RESOLVED_INPUT)
+    assert _ids(_active()) == [resolved]  # 장애 공지는 복구 공지로 끝났다
+
+
+def test_list_active_notices_respects_valid_period() -> None:
+    now = datetime.now(UTC)
+    upcoming = _publish({**DRAFT_INPUT, "valid_from": (now + timedelta(hours=1)).isoformat()})
+    _publish(
+        {
+            "kind": "product_created",
+            "facts": {"product_id": "prd_0003"},
+            "valid_to": (now - timedelta(hours=1)).isoformat(),
+        }
+    )
+    assert _active()["items"] == []  # 하나는 아직 시작 전, 하나는 이미 끝났다
+    later = _active(at=(now + timedelta(hours=2)).isoformat())
+    assert _ids(later) == [upcoming]
+
+
+def test_list_active_notices_empty_gives_reason_and_limit_keeps_total() -> None:
+    empty = _active()
+    assert empty["items"] == [] and empty["total"] == 0 and empty["unknown_reason"]
+    for n in range(3):
+        _publish({"kind": "product_created", "facts": {"product_id": f"prd_{n:04d}"}})
+    capped = _active(limit=2)
+    assert len(capped["items"]) == 2 and capped["total"] == 3
+
+
+def test_list_active_notices_is_read_only_and_for_listed_requesters() -> None:
+    _publish(DRAFT_INPUT)
+    before = _active()
+    assert _call("list_active_notices", {}, token="mock:hr")["outcome"] == "FORBIDDEN_SKILL"
+    assert _active() == before
+    assert load_card().skills[0].id  # 카드가 읽힌다
+    card = {skill.id: skill for skill in load_card().skills}
+    assert card["list_active_notices"].grade == "read"
+    assert card["list_active_notices"].allowed_requesters == ["support", "finance", "orchestrator"]
+
+
+def test_notice_view_carries_its_incident_and_publish_time() -> None:
+    fixed = datetime(2026, 10, 26, 3, 0, tzinfo=UTC)
+    handlers.STATE.notices.now = lambda: fixed
+    opened = _publish(DRAFT_INPUT)
+    other = _publish(DRAFT_INPUT, context_id="ctx_inc_0002")
+    view = _call("get_notice", {"notice_id": opened}, token=SUPPORT)["output"]
+    assert view["context_id"] == CTX
+    assert datetime.fromisoformat(view["published_at"]) == fixed
+    assert _call("get_notice", {"notice_id": other}, token=SUPPORT)["output"]["context_id"] == (
+        "ctx_inc_0002"
+    )
+
+
+def test_active_listing_shows_incident_and_publish_time() -> None:
+    _publish(DRAFT_INPUT, context_id="ctx_inc_0002")
+    mine = _publish({**DRAFT_INPUT, "facts": {"component": "db"}})
+    items = _active()["items"]
+    assert [item["context_id"] for item in items] == [CTX, "ctx_inc_0002"]
+    assert all(item["published_at"] for item in items)
+    assert [item["notice_id"] for item in items if item["context_id"] == CTX] == [mine]
+
+
+def test_republishing_the_same_draft_keeps_the_first_publish_time() -> None:
+    first = datetime(2026, 10, 26, 3, 0, tzinfo=UTC)
+    handlers.STATE.notices.now = lambda: first
+    notice_id = _publish(DRAFT_INPUT)
+    handlers.STATE.notices.now = lambda: first + timedelta(hours=1)
+    assert _publish(DRAFT_INPUT) == notice_id
+    view = _call("get_notice", {"notice_id": notice_id}, token=SUPPORT)["output"]
+    assert datetime.fromisoformat(view["published_at"]) == first
+
+
+def test_unknown_notice_has_no_incident_or_publish_time() -> None:
+    missing = _call("get_notice", {"notice_id": "ntc_9999"}, token=SUPPORT)["output"]
+    assert missing["found"] is False
+    assert missing["context_id"] is None and missing["published_at"] is None

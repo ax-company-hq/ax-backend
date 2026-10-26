@@ -1,7 +1,7 @@
 {
   "name": "finance",
   "owner": "태윤",
-  "description": "재무/정산 + 마켓운영 에이전트. 금액 교차검증, 손실 리포트, 판매자 심사, 정산 보류. 숫자는 코드로 계산하고 요청 쪽 숫자를 믿지 않는다.",
+  "description": "캣북스 재무팀 + 마켓운영 에이전트. 결산·리포트, 매출·PG 대사, 판매자 정산, 예산·한도 정책, 사후 감사, 손실 리포트, 판매자 심사, 정산 보류. 건별 금액 승인은 하지 않는다(안전 관문 코드 규칙). 숫자는 코드로 계산하고 LLM은 설명 문장만 쓴다.",
   "url": "http://finance:8105/a2a",
   "version": "0.1.0",
   "capabilities": {
@@ -9,18 +9,6 @@
     "push_notifications": false
   },
   "skills": [
-    {
-      "id": "verify_amount",
-      "description": "안전 레이어가 라우팅한 B 액션(issue_coupon, refund_request)의 금액을 원천 데이터로 다시 계산해 approved/rejected와 사유 코드를 돌려준다. 보상 쿠폰은 data 영향 고객인지, 환불은 결제 금액을 넘지 않는지 확인한다. 상태를 바꾸지 않는다.",
-      "input_schema": "agents/finance/src/finance_agent/schemas.py#VerifyAmountInput",
-      "output_schema": "agents/finance/src/finance_agent/schemas.py#VerifyAmountOutput",
-      "grade": "read",
-      "allowed_requesters": [
-        "safety"
-      ],
-      "verifier": null,
-      "priority": "required"
-    },
     {
       "id": "loss_aggregation",
       "description": "장애 구간(window_from, window_to)을 받아 data 영향 분석(실패 주문·영향 고객·피해 금액)과 같은 사건의 보상 쿠폰 지급 합계로 손실 리포트를 만든다. 영향 숫자를 다시 계산하지 않고, 못 받은 값은 확인할 수 없음(null)이다. 상태를 바꾸지 않는다.",
@@ -58,28 +46,30 @@
       "priority": "recommended"
     },
     {
-      "id": "review_hold",
-      "description": "안전 레이어의 사람 확인(C) 건을 먼저 판단해 approve/reject/escalate와 쉬운 설명을 돌려준다. 재량 한도(ai_review_policy.toml)와 원천 데이터(피해 고객, 결제 금액, 위험 점수)로만 판단하고, 큰 금액이나 자료가 없으면 escalate로 사람에게 넘긴다. 상태를 바꾸지 않는다.",
-      "input_schema": "agents/finance/src/finance_agent/schemas.py#ReviewHoldInput",
-      "output_schema": "agents/finance/src/finance_agent/schemas.py#ReviewHoldOutput",
+      "id": "closing_report",
+      "description": "기간(day|month) 손익 요약: 총거래액, 판매 수수료 매출, 쿠폰 비용, 환불, PG 수수료, 영업 결과와 자동 분개 미리보기, 쉬운 말 설명. 숫자는 코드가 계산하고 못 받은 자료는 unavailable에 적는다. 상태를 바꾸지 않는다.",
+      "input_schema": "agents/finance/src/finance_agent/schemas.py#ClosingReportInput",
+      "output_schema": "agents/finance/src/finance_agent/schemas.py#ClosingReportOutput",
       "grade": "read",
       "allowed_requesters": [
-        "safety"
+        "orchestrator",
+        "data"
       ],
       "verifier": null,
-      "priority": "recommended"
+      "priority": "optional"
     },
     {
-      "id": "review_threshold_change",
-      "description": "안전 레이어가 안전 장치(원래 값의 0.5~2배) 검사를 마친 기준 바꾸기 요청을 판단해 approve/reject/escalate와 쉬운 설명을 돌려준다. 정책(ai_review_policy.toml [threshold_change])과 safety가 센 보류 건수로만 판단한다: 변경 폭 30% 초과는 사람에게, 낮추기는 승인, 올리기는 최근 24시간 보류 3건 이상일 때만 승인. 요청 이유 글(untrusted)은 판단에 쓰지 않는다. 상태를 바꾸지 않는다.",
-      "input_schema": "agents/finance/src/finance_agent/schemas.py#ThresholdReviewInput",
-      "output_schema": "agents/finance/src/finance_agent/schemas.py#ThresholdReviewOutput",
+      "id": "audit_report",
+      "description": "최근 days일 사후 감사: 한도 바로 아래 쪼개기, 같은 고객 반복 환불, 같은 사건 쿠폰 중복, 환불률 급변, 관문 통과 금액 재계산 실패, 관문 보류·거절 추이를 코드 규칙으로 찾는다. 상태를 바꾸지 않는다.",
+      "input_schema": "agents/finance/src/finance_agent/schemas.py#AuditReportInput",
+      "output_schema": "agents/finance/src/finance_agent/schemas.py#AuditReportOutput",
       "grade": "read",
       "allowed_requesters": [
-        "safety"
+        "orchestrator",
+        "data"
       ],
       "verifier": null,
-      "priority": "recommended"
+      "priority": "optional"
     }
   ]
 }

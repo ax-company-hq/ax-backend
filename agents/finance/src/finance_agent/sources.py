@@ -6,7 +6,9 @@
   판매 사이트 DB에는 붙지 않는다.
 
 못 받은 값은 None이고, 호출한 쪽은 None을 승인 근거로 쓰지 않는다(fail-closed).
-TODO: data `impact_analysis` 출력에 영향 고객 ID 목록(`affected_customer_ids`)을 요청 중 (to:data).
+data `impact_analysis`의 입력·출력은 계약(`ImpactAnalysisInput`·`ImpactAnalysisOutput`)으로
+만들고 확인한다.
+장애 구간(`window_from`·`window_to`)을 모르면 data에 묻지 않는다.
 """
 
 from __future__ import annotations
@@ -18,10 +20,17 @@ from importlib import resources
 from typing import Any, Protocol
 
 import httpx
+from pydantic import ValidationError
 
 from ax_agent_template import call_agent
 from ax_agent_template.config import agent_url
-from ax_contracts.schemas import AgentRequest, RequestMeta, TaskStatus
+from ax_contracts.schemas import (
+    AgentRequest,
+    ImpactAnalysisInput,
+    ImpactAnalysisOutput,
+    RequestMeta,
+    TaskStatus,
+)
 
 DATA_CALL_SECONDS = 10.0
 SHOP_CALL_SECONDS = 5.0
@@ -65,6 +74,7 @@ class Impact:
     lost_amount: int
     affected_customer_ids: frozenset[str] = field(default_factory=frozenset)
     ref: str = ""
+    by_category: tuple[tuple[str, int, int], ...] = ()  # (category, 실패 주문 수, 피해 금액)
 
 
 class Sources(Protocol):
@@ -87,13 +97,33 @@ def _impact_from(output: dict[str, Any], ref: str) -> Impact | None:
     if any(c is None for c in counts):
         return None
     ids = output.get("affected_customer_ids") or []
+    by_category = []
+    for row in output.get("by_category") or []:
+        if not isinstance(row, dict) or not isinstance(row.get("category"), str):
+            continue
+        orders, amount = _int(row.get("failed_order_count")), _int(row.get("damage_amount"))
+        if orders is not None and amount is not None:
+            by_category.append((row["category"], orders, amount))
     return Impact(
         failed_orders=counts[0],  # type: ignore[arg-type]
         affected_customers=counts[1],  # type: ignore[arg-type]
         lost_amount=counts[2],  # type: ignore[arg-type]
         affected_customer_ids=frozenset(i for i in ids if isinstance(i, str)),
         ref=ref,
+        by_category=tuple(by_category),
     )
+
+
+def impact_input(window: dict[str, Any] | None) -> ImpactAnalysisInput | None:
+    """재무가 아는 사건 구간 → data `impact_analysis` 입력. 구간이 없거나 틀리면 None."""
+    if not window:
+        return None
+    try:
+        return ImpactAnalysisInput.model_validate(
+            {k: window.get(k) for k in ("window_from", "window_to", "category") if window.get(k)}
+        )
+    except ValidationError:
+        return None
 
 
 class MockSources:
@@ -134,9 +164,23 @@ class LiveSources:
     async def impact(
         self, meta: RequestMeta, context_id: str, window: dict[str, Any] | None
     ) -> Impact | None:
-        payload: dict[str, Any] = {"context_id": context_id, **(window or {})}
-        output = await self._ask_data(meta, "impact_analysis", payload)
-        return _impact_from(output, f"data:impact_analysis:{context_id}") if output else None
+        """사건 구간의 영향. 구간을 모르면 묻지 않고 None (data 계약은 구간이 필수다).
+
+        사건 번호는 입력이 아니라 요청 meta(`context_id`)로 전달된다.
+        """
+        payload = impact_input(window)
+        if payload is None:
+            return None
+        output = await self._ask_data(
+            meta, "impact_analysis", payload.model_dump(mode="json", exclude_none=True)
+        )
+        if output is None:
+            return None
+        try:
+            ImpactAnalysisOutput.model_validate(output)
+        except ValidationError:
+            return None
+        return _impact_from(output, f"data:impact_analysis:{context_id}")
 
     def __init__(self, http_client: httpx.AsyncClient | None = None) -> None:
         self._http = http_client  # 테스트용

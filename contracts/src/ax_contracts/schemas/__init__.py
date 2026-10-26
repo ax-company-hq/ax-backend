@@ -20,7 +20,11 @@ from ax_contracts.schemas.data import (
     KpiSummaryOutput,
     MetricVerdict,
 )
-from ax_contracts.schemas.escalation import Escalation
+from ax_contracts.schemas.escalation import (
+    Escalation,
+    FindActiveIncidentInput,
+    FindActiveIncidentOutput,
+)
 from ax_contracts.schemas.event import (
     EVENT_DATA_MODELS,
     CampaignCreatedData,
@@ -50,7 +54,14 @@ from ax_contracts.schemas.event import (
     SupportInquiryReceivedData,
 )
 from ax_contracts.schemas.execute import ExecuteDecision, ExecuteRequest, HoldReason
-from ax_contracts.schemas.finance import VerifyAmountInput, VerifyAmountOutput, VerifyReason
+from ax_contracts.schemas.finance import (
+    ReviewHoldDecision,
+    ReviewHoldInput,
+    ReviewHoldOutput,
+    VerifyAmountInput,
+    VerifyAmountOutput,
+    VerifyReason,
+)
 from ax_contracts.schemas.hr import (
     AnswerHandoverQuestionInput,
     AnswerHandoverQuestionOutput,
@@ -122,6 +133,8 @@ from ax_contracts.schemas.message import (
     TaskStatus,
 )
 from ax_contracts.schemas.planning import (
+    ChangeResultInput,
+    ChangeResultOutput,
     CreateTicketInput,
     CreateTicketOutput,
     FindRelatedPrsInput,
@@ -152,10 +165,13 @@ from ax_contracts.schemas.record import (
     RecordCase,
     RecordKind,
 )
+from ax_contracts.schemas.review import ActionReviewInput, ActionReviewOutput
 
 __all__ = [
     "EVENT_DATA_MODELS",
     "TENANT_ID_DEFAULT",
+    "ActionReviewInput",
+    "ActionReviewOutput",
     "AgentCard",
     "AgentRequest",
     "AgentResult",
@@ -188,6 +204,8 @@ __all__ = [
     "ContextPrefix",
     "CouponIssuedData",
     "Escalation",
+    "FindActiveIncidentInput",
+    "FindActiveIncidentOutput",
     "ErrorCode",
     "EventEnvelope",
     "EventType",
@@ -250,6 +268,8 @@ __all__ = [
     "VerifyHandoverOutput",
     "VerifyRecoveryInput",
     "VerifyRecoveryOutput",
+    "ChangeResultInput",
+    "ChangeResultOutput",
     "CreateTicketInput",
     "CreateTicketOutput",
     "FindRelatedPrsInput",
@@ -265,6 +285,9 @@ __all__ = [
     "VerifyAmountInput",
     "VerifyAmountOutput",
     "VerifyReason",
+    "ReviewHoldDecision",
+    "ReviewHoldInput",
+    "ReviewHoldOutput",
     "AnomalyDetectionInput",
     "AnomalyDetectionOutput",
     "BusinessMetric",

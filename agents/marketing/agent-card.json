@@ -40,13 +40,23 @@
       "priority": "required"
     },
     {
+      "id": "list_active_notices",
+      "description": "지금 게시 중인 공지를 notice_id 없이 찾는다(구성요소·채널·기간으로 거름, 최근 게시 순). 끝난 공지와 시작 전 공지는 뺀다. 없으면 빈 목록과 이유를 돌려준다. 상태를 바꾸지 않는다.",
+      "input_schema": "agents/marketing/src/marketing_agent/schemas.py#ListActiveNoticesInput",
+      "output_schema": "agents/marketing/src/marketing_agent/schemas.py#ActiveNotices",
+      "grade": "read",
+      "allowed_requesters": ["support", "finance", "orchestrator"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
       "id": "issue_coupon",
       "description": "쿠폰을 지급한다(purpose_code: campaign 또는 compensation). 총액은 건수×단가로 코드가 계산한다. 보상 쿠폰은 sequence 순서대로 한 건씩 처리한다. 기준 이상은 safety 보류 큐로 간다.",
       "input_schema": "agents/marketing/src/marketing_agent/schemas.py#IssueCouponInput",
       "output_schema": "agents/marketing/src/marketing_agent/schemas.py#IssuedCoupon",
-      "grade": "B",
+      "grade": "A",
       "allowed_requesters": ["support"],
-      "verifier": "finance",
+      "verifier": null,
       "priority": "required"
     }
   ]

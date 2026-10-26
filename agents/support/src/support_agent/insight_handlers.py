@@ -32,6 +32,7 @@ async def detect_inquiry_surge(request: AgentRequest) -> AgentResult:
         baseline_hours=parsed.baseline_hours,
         min_count=parsed.min_count,
         ratio=parsed.ratio,
+        baseline_method=parsed.baseline_method,
     )
     return h._done(request, report.model_dump(mode="json"))
 

@@ -73,6 +73,25 @@ class NoticeView(AxModel):
     promises: list[Promise] = Field(default_factory=list)
     valid_from: UtcDatetime | None = None
     valid_to: UtcDatetime | None = None
+    context_id: str | None = None  # 게시한 사건(`ctx_inc_`). 같은 사건의 공지를 가려내는 데 쓴다
+    published_at: UtcDatetime | None = None  # 게시한 시각(UTC)
+    unknown_reason: str | None = None
+
+
+class ListActiveNoticesInput(AxModel):
+    """게시 중인 공지를 `notice_id` 없이 찾는다. 조건을 안 주면 모든 게시 중 공지다."""
+
+    component: Literal["api", "db", "payment"] | None = None
+    channel_code: ChannelCode | None = None
+    at: UtcDatetime | None = None  # 이 시각에 `valid_from`~`valid_to` 안인 공지. 기본은 지금
+    limit: int = Field(default=20, ge=1, le=50)
+
+
+class ActiveNotices(AxModel):
+    """`list_active_notices` 응답. 최근 게시한 공지부터이고, 없으면 `items`는 비고 이유를 적는다."""
+
+    items: list[NoticeView] = Field(default_factory=list)
+    total: int = 0  # `limit`로 자르기 전, 조건에 맞는 공지 수
     unknown_reason: str | None = None
 
 

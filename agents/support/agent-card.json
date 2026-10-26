@@ -15,7 +15,7 @@
       "input_schema": "agents/support/src/support_agent/schemas.py#ListInquiriesInput",
       "output_schema": "agents/support/src/support_agent/schemas.py#ConversationListItem",
       "grade": "read",
-      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "allowed_requesters": ["dashboard-api", "orchestrator", "shop-api"],
       "verifier": null,
       "priority": "required"
     },
@@ -25,7 +25,7 @@
       "input_schema": "agents/support/src/support_agent/schemas.py#GetInquiryInput",
       "output_schema": "agents/support/src/support_agent/schemas.py#Conversation",
       "grade": "read",
-      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "allowed_requesters": ["dashboard-api", "orchestrator", "shop-api"],
       "verifier": null,
       "priority": "required"
     },
@@ -191,12 +191,12 @@
     },
     {
       "id": "process_claim_queue",
-      "description": "보상 큐의 준비된 건을 refund_request(execute, 재무 교차검증·기준 이상 C 보류)로 지급 처리한다. 실행되면 shop-api 환불 API로 현금을 환불하고, 실패하면 보류로 남겨 같은 키로 재시도한다.",
+      "description": "보상 큐의 준비된 건을 refund_request(execute, 안전 관문의 한도 검사·기준 이상 C 보류)로 지급 처리한다. 실행되면 shop-api 환불 API로 현금을 환불하고, 실패하면 보류로 남겨 같은 키로 재시도한다.",
       "input_schema": "agents/support/src/support_agent/claim_schemas.py#ProcessClaimQueueInput",
       "output_schema": "agents/support/src/support_agent/claim_schemas.py#QueueRun",
-      "grade": "B",
+      "grade": "A",
       "allowed_requesters": ["dashboard-api"],
-      "verifier": "finance",
+      "verifier": null,
       "priority": "recommended"
     },
     {
@@ -211,7 +211,7 @@
     },
     {
       "id": "detect_inquiry_surge",
-      "description": "최근 창의 분류별 문의 수를 평소(앞선 기간의 같은 길이 창 평균)와 견줘 급증한 분류를 돌려준다 (DEP-CS-05). 샘플은 문의 ID만 담고 원문은 담지 않는다. 총량 이상은 data 소관이다.",
+      "description": "최근 창의 분류별 문의 수를 평소(앞선 기간의 같은 길이 창 평균, baseline_method=median이면 창별 건수의 중앙값)와 견줘 급증한 분류를 돌려준다 (DEP-CS-05). 샘플은 문의 ID만 담고 원문은 담지 않는다. 총량 이상은 data 소관이다.",
       "input_schema": "agents/support/src/support_agent/insight_schemas.py#SurgeInput",
       "output_schema": "agents/support/src/support_agent/insight_schemas.py#SurgeReport",
       "grade": "read",
@@ -238,6 +238,86 @@
       "allowed_requesters": ["dashboard-api", "orchestrator"],
       "verifier": null,
       "priority": "optional"
+    },
+    {
+      "id": "receive_change_result",
+      "description": "기획개발이 변경 요청을 닫을 때(완료·거절) 보내는 결과(ChangeResultInput)를 그 ctx_req_ 사건에 연결된 모든 문의에 적용하고 적용한 문의 수를 돌려준다(저장소 기록). 같은 결과의 재전송은 한 번만 적용하고, 이미 닫힌 요청에 다른 결과가 오면 거절한다. 연결된 문의가 없으면 applied=0. 요약은 코드가 만든 한 줄이며 고객 공지는 따로 붙인다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/planning.py#ChangeResultInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/planning.py#ChangeResultOutput",
+      "grade": "A",
+      "allowed_requesters": ["planning"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "suggest_compensation",
+      "description": "문의의 주문 사실(약속 배송일·배송 완료 시각)로 코드가 지연 일수를 세고 정책표로 보상 쿠폰 후보를 제안한다(읽기, 쿠폰을 내지 않음). 고객 원문은 읽지 않는다. 담당자가 승인하면 응답의 request를 request_compensation에 그대로 보낸다. 약속일이 없으면 확인할 수 없음으로 돌려준다.",
+      "input_schema": "agents/support/src/support_agent/suggest_schemas.py#SuggestCompensationInput",
+      "output_schema": "agents/support/src/support_agent/suggest_schemas.py#CompensationSuggestion",
+      "grade": "read",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "request_incident_compensation",
+      "description": "사건(ctx_inc_)으로 피해를 본 영향 고객 목록(구매자 ID, 데이터분석 영향 분석 결과)에게 보상 쿠폰을 요청한다. 문의를 내지 않은 고객도 대상이다. 총괄만 부를 수 있다. 사유는 결제 장애(payment_failure)만 받고 단가와 건수 상한은 정책표가 정한다. 고객마다 마케팅 issue_coupon에 한 건씩 직렬로 요청하며(안전 관문의 한도 검사, 초과는 C 보류) 지급은 마케팅이 한다. 같은 사건·구매자·사유는 한 번만 요청하고, 마케팅에 닿지 않으면 남은 요청을 멈춘다.",
+      "input_schema": "agents/support/src/support_agent/incident_schemas.py#RequestIncidentCompensationInput",
+      "output_schema": "agents/support/src/support_agent/incident_schemas.py#IncidentCompensationOutput",
+      "grade": "A",
+      "allowed_requesters": ["orchestrator"],
+      "verifier": null,
+      "priority": "required"
+    },
+    {
+      "id": "diagnose_payment",
+      "description": "문의의 주문에서 결제가 어디서 막혔는지 주문 상태와 결제 시도 기록으로 코드가 정한다(읽기). 결제 완료·결제 실패(서버 문제인지 거절인지)·결제 시도 없음·중복 결제·기록 불일치·취소를 가르고 다음 할 일(재시도·대기·환불 검토·담당자 확인)을 돌려준다. 고객 원문은 읽지 않고, 재결제·취소·환불은 하지 않는다. 문의의 구매자와 주문의 구매자가 다르면 not_found다.",
+      "input_schema": "agents/support/src/support_agent/payment_schemas.py#DiagnosePaymentInput",
+      "output_schema": "agents/support/src/support_agent/payment_schemas.py#PaymentDiagnosis",
+      "grade": "read",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "customer_signals",
+      "description": "구매자(buy_…) 한 명의 이탈·재문의 위험 신호를 문의·클레임 기록에서 코드가 센다(읽기). 하루 넘게 답 못 받은 문의, 화난·답답한 메시지, 잦은 문의, 이관, 거절된 클레임, 잦은 클레임을 점수 기준표로 더해 low·medium·high와 이유(코드·건수·점수)를 돌려준다. 클레임이 3건 이상이면 이탈과 별개로 패턴 검토 표시를 단다. 고객 이름과 문의 원문은 읽지도 돌려주지도 않는다. 구매 이력이 필요한 RFM·LTV·코호트는 data 소관이다.",
+      "input_schema": "agents/support/src/support_agent/signal_schemas.py#CustomerSignalsInput",
+      "output_schema": "agents/support/src/support_agent/signal_schemas.py#CustomerSignals",
+      "grade": "read",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "optional"
+    },
+    {
+      "id": "list_at_risk_customers",
+      "description": "이탈·재문의 위험이 기준 단계(medium 또는 high) 이상인 구매자를 점수 높은 순으로 돌려준다(읽기). 리텐션 캠페인이나 담당자 후속 연락의 대상 목록으로 쓴다. 구매자 가명 ID와 건수·이유만 담는다.",
+      "input_schema": "agents/support/src/support_agent/signal_schemas.py#ListAtRiskInput",
+      "output_schema": "agents/support/src/support_agent/signal_schemas.py#AtRiskCustomers",
+      "grade": "read",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "optional"
+    },
+    {
+      "id": "analyze_receipt",
+      "description": "영수증 글(untrusted.receipt_text)과 사진(untrusted.images)에서 금액·날짜·주문번호·배송비·품목을 코드가 뽑아 문의에 붙은 주문과 대조한다(읽기). 개인정보는 가린 뒤 읽고 원문은 저장하지 않는다. 사진은 이미지 분석이 연결됐을 때만 읽고 아니면 읽지 못했다고 알린다. 같음·다름·확인할 수 없음만 말하고 환불 판정은 하지 않는다.",
+      "input_schema": "agents/support/src/support_agent/analysis_schemas.py#AnalyzeReceiptInput",
+      "output_schema": "agents/support/src/support_agent/analysis_schemas.py#AnalyzeReceiptOutput",
+      "grade": "read",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
+      "id": "analyze_claim_request",
+      "description": "문의의 마지막 고객 메시지를 환불·교환·취소·이벤트 문의로 분류하고(LLM은 분류만, 못 쓰면 단어 규칙) 고객이 말한 품목을 주문과 맞춘 뒤, 접수했다면 어떻게 판정될지 규칙(claim_rules)으로 환불 범위를 미리 계산한다(읽기, 접수하지 않음). 담당자가 확인해 create_claim에 보낼 입력(suggested_claim)을 함께 돌려준다.",
+      "input_schema": "agents/support/src/support_agent/analysis_schemas.py#AnalyzeClaimRequestInput",
+      "output_schema": "agents/support/src/support_agent/analysis_schemas.py#AnalyzeClaimRequestOutput",
+      "grade": "read",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "recommended"
     }
   ]
 }

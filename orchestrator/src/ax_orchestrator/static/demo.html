@@ -60,6 +60,8 @@
   .failed .dot, .rejected_by_human .dot { background: var(--red); }
   .failed, .rejected_by_human { color: var(--red); }
   .skipped { color: var(--muted); }
+  .transfer_queued { color: var(--yellow); }
+  .transfer_queued .dot { background: var(--yellow); }
   .pending { color: #666; }
   @keyframes pulse { 50% { opacity: .3; } }
   .grade { font-size: 11px; font-weight: 800; padding: 2px 6px; border-radius: 4px;
@@ -111,8 +113,10 @@
     <div class="opts">
       <label><input type="checkbox" id="o-hold"> 롤백을 C 등급 보류(사람 승인 대기)로</label>
       <label><input type="checkbox" id="o-fail"> 공지 게시 1회 실패(재시도)</label>
-      <label><input type="checkbox" id="o-owner"> 공지 게시를 다른 부서에 이관</label>
+      <label><input type="checkbox" id="o-owner"> 공지 게시 거절(이관 큐로 넘김)</label>
       <label><input type="checkbox" id="o-infra"> 인프라 카드 비어 있음(현재 dev 상태)</label>
+      <label><input type="checkbox" id="o-undet"> 원인 미확정(롤백 안 함, 이관 큐로)</label>
+      <label><input type="checkbox" id="o-norec"> 복구 확인 실패(정상화 공지 없이 이관 큐로)</label>
     </div>
   </section>
 
@@ -147,7 +151,8 @@
 
 <script>
 const STATUS = { pending: '대기', running: '진행 중', completed: '완료', failed: '실패',
-  held: '승인 대기', skipped: '건너뜀', rejected_by_human: '거절' };
+  held: '승인 대기', skipped: '건너뜀', rejected_by_human: '거절',
+  transfer_queued: '이관 큐' };
 let current = null, pinned = false;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -164,7 +169,8 @@ async function jget(url) { const r = await fetch(url); return r.json(); }
 async function inject() {
   $('inject').disabled = true;
   const body = { hold_rollback: $('o-hold').checked, fail_marketing: $('o-fail').checked,
-    wrong_owner: $('o-owner').checked, infra_card_empty: $('o-infra').checked };
+    wrong_owner: $('o-owner').checked, infra_card_empty: $('o-infra').checked,
+    undetermined: $('o-undet').checked, not_recovered: $('o-norec').checked };
   const r = await fetch('/api/demo/incidents', { method: 'POST',
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const j = await r.json();

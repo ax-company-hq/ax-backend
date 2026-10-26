@@ -8,6 +8,7 @@
 # - verifier, verify_skill: B 교차검증 주체와 그 skill. owner와 같으면 등록을 거부한다
 # - amount: 금액 계산 방법. count_field × unit_field 또는 amount_field 하나
 #   claimed_fields는 요청 쪽이 적어 보낸 총액 필드다. 코드 계산값과 다르면 C(amount_mismatch)
+# - on_verify_reject: 에이전트 검증자가 거절했을 때 "reject"(기본, 바로 rejected) | "hold"(사람 보류 큐 C)
 # - customer_field, purpose_field: 누적 기준(고객당·사건당 보상)에 쓰는 필드
 
 # ---- 마케팅 (재헌)
@@ -16,12 +17,13 @@ action = "publish_notice"
 owner = "marketing"
 base_grade = "A"
 
+# 쿠폰·환불은 A (재무 재설계 2026-10-23, docs/notes/finance/2026-10-23-finance-redesign.md 4장).
+# 건별 검사는 이 관문의 코드 규칙이 한다: 금액 계산, claimed_fields 불일치(C), 기준표 한도(C).
+# 재무 교차검증(verify_amount)은 없앴다. 재무는 한도를 정하고 사후 감사를 한다.
 [[actions]]
 action = "issue_coupon"
 owner = "marketing"
-base_grade = "B"
-verifier = "finance"
-verify_skill = "verify_amount"
+base_grade = "A"
 customer_field = "buyer_id"
 purpose_field = "purpose_code"
 amount = { count_field = "count", unit_field = "unit_value", claimed_fields = ["total_value", "claimed_total"] }
@@ -30,9 +32,7 @@ amount = { count_field = "count", unit_field = "unit_value", claimed_fields = ["
 [[actions]]
 action = "refund_request"
 owner = "support"
-base_grade = "B"
-verifier = "finance"
-verify_skill = "verify_amount"
+base_grade = "A"
 amount = { amount_field = "refund_amount" }
 
 [[actions]]
@@ -60,7 +60,7 @@ action = "set_inquiry_status"
 owner = "support"
 base_grade = "A"
 
-# 클레임 처리 기록 (#105). 돈이 나가지 않는 기록만. 환불 지급은 refund_request(B, 재무 검증)
+# 클레임 처리 기록 (#105). 돈이 나가지 않는 기록만. 환불 지급은 refund_request(A, 한도 넘으면 C)
 [[actions]]
 action = "create_claim"
 owner = "support"
@@ -152,6 +152,8 @@ owner = "infra"
 base_grade = "B"
 verifier = "planning"
 verify_skill = "verify_rollback_target"
+# 검증자가 롤백 대상을 거절해도 장애는 계속되므로 끝내지 않고 사람이 본다 (SCN-A, 인프라 합의)
+on_verify_reject = "hold"
 
 [[actions]]
 action = "restart_service"
@@ -192,6 +194,14 @@ base_grade = "A"
 action = "memory.card_link"
 owner = "memory"
 requesters = ["hr"]
+base_grade = "A"
+
+# ---- 변경 요청 결과 받기 (#280·#292). planning이 요청을 닫을 때 보낸 결과를 요청 부서가 자기 기록에 반영한다
+# 상태 변경은 요청 부서 쪽 기록뿐이고 돈·외부 시스템을 건드리지 않아 A. 멱등성 키 ctx_req_…:change_result:REQ-n
+[[actions]]
+action = "receive_change_result"
+owner = "support"
+requesters = ["support", "hr", "data"]
 base_grade = "A"
 
 # ---- 기획개발 (예진). 검증자 = 안전 레이어 코드 규칙(변경 크기·허용 경로, thresholds.toml)

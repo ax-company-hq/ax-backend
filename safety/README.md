@@ -5,8 +5,8 @@
 
 - 등급 판정 (SAF-01): 레지스트리 기본 등급과 금액 규칙 중 높은 쪽. `claimed_grade`는 기록만 한다
 - 레지스트리·기준표 (SAF-02): `src/ax_safety/rules/registry.toml`, `thresholds.toml`. 사람만 PR로 바꾼다
-- A 즉시 실행 (SAF-03), B 교차검증 (SAF-04): 레지스트리의 검증자 skill(재무 `verify_amount` 등)을 A2A로 부른다
-- C 보류 큐 (SAF-05): 근거 리포트와 함께 보류, 사람 토큰으로만 결정, 10분 미결정이면 자동 거절
+- A 즉시 실행 (SAF-03), B 교차검증 (SAF-04): 레지스트리의 검증자 skill(planning `verify_rollback_target`, data `fraud_score` 등)을 A2A로 부른다. 쿠폰·환불은 A이고 금액 규칙(계산·불일치·한도)에 걸리면 C
+- C 보류 큐 (SAF-05): 근거 리포트와 함께 보류, 사람 토큰으로만 결정, 기한 안에 결정이 없으면 자동 거절. 기한은 데모 기본 10분, 운영은 `SAFETY_REVIEW_TIMEOUT_SECONDS`(예: 86400=24시간)로 덮어쓴다
 - 감사 로그 (SAF-06): 접수·검증·판정·인증 거부·보류 결정을 `context_id`와 함께 남긴다
 - fail-closed (SAF-08): 미등록 액션·금액 필드 오류·총액 불일치·검증 무응답은 실행하지 않는다
 - 누적 한도 (SAF-10): 일일(UTC)·사건별·고객별 누적 금액 규칙
@@ -48,7 +48,7 @@ curl -X POST localhost:8001/api/safety/reviews/<review_id>/decision \
 - 발행 이벤트: `safety.action_executed`, `safety.action_held`, `safety.review_decided` (data 모델은 contracts 요청 중, 지금은 공통 구성안 6장 필드의 dict).
 
 ## 4. 의존
-ax-contracts, ax-agent-template (`call_agent`, `publish`, 토큰 검증), 검증자 에이전트(finance `verify_amount`, planning `verify_rollback_target`, data)
+ax-contracts, ax-agent-template (`call_agent`, `publish`, 토큰 검증), 검증자 에이전트(planning `verify_rollback_target`, data)
 
 ## 5. 하지 않는 것
 - 쓰기 도구를 직접 호출하지 않는다 (판정만 하고 실행은 요청 에이전트가 한다)

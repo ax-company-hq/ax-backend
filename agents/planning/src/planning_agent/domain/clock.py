@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta, timezone
 
@@ -37,3 +38,14 @@ class StepClock:
 
 def system_clock() -> datetime:
     return datetime.now(UTC)
+
+
+def default_clock_factory() -> Callable[[], Clock]:
+    """`PLANNING_CLOCK=real`이면 실제 시각, 아니면 결정적 `StepClock`.
+
+    총괄 혼합 모드처럼 다른 부서가 지금 시각 구간으로 묻는 시연에서는 실제 시각이어야
+    시뮬레이터로 머지한 PR이 장애 구간에 잡힌다. 테스트·기본 목 모드는 그대로 StepClock.
+    """
+    if os.getenv("PLANNING_CLOCK", "").strip().lower() == "real":
+        return lambda: system_clock
+    return StepClock

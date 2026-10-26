@@ -2,12 +2,15 @@
 
 | skill | 등급 | 요청자 | 하는 일 |
 | --- | --- | --- | --- |
-| `verify_amount` | read | safety | B 액션(쿠폰·환불) 금액 재계산·승인/거절 (DEP-FIN-02) |
 | `loss_aggregation` | read | orchestrator | data 영향 분석 + 지급 보상 = 손실 리포트 (DEP-FIN-01) |
 | `seller_review` | B | orchestrator | 마켓운영: 서류·위험 점수로 판매자 승인 요청 (DEP-FIN-03) |
 | `settlement_hold` | B | orchestrator | 마켓운영: 위험 판매자 정산 보류 요청 (DEP-FIN-04) |
-| `review_hold` | read | safety | 사람 확인(C) 건 AI 1차 판단 |
-| `review_threshold_change` | read | safety | 기준 바꾸기 판단 (`threshold_review.py`) |
+| `closing_report` | read | orchestrator, data | ① 기간 손익 요약 (`closing.py`) |
+| `audit_report` | read | orchestrator, data | ⑦ 사후 감사 결과 (`audit.py`) |
+
+`verify_amount`·`review_hold`는 재무 재설계(2026-10-23)로 없앴다. 금액 다시 계산 규칙은
+`recheck.py`에 남아 사후 감사가 쓴다. 캣북스 클레임 건별 확인과 `review_threshold_change`(AI가 기준
+변경을 판단)도 재무 일이 아니라 없앴다. 한도는 제안만 하고(`policy.py`) 사람이 기준표 PR로 바꾼다.
 
 - 숫자는 전부 코드로 계산한다. 요청 쪽이 적은 총액·등급은 믿지 않는다.
 - 상태 변경(판매자 승인, 정산 보류)은 `execute()`가 `executed`를 돌려준 뒤에만 기록한다.
@@ -17,7 +20,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
@@ -32,25 +36,30 @@ from ax_contracts.schemas import (
     Evidence,
     ExecuteDecision,
     InputReason,
+    RequestMeta,
     TaskStatus,
 )
-from finance_agent.review import ReviewPolicy, decide, load_policy
+from finance_agent import audit, closing
+from finance_agent import books as bk
+from finance_agent import finance_config as fc
+from finance_agent import ledger as lg
+from finance_agent.books import Books, load_books
+from finance_agent.recheck import recompute
 from finance_agent.schemas import (
+    AuditReportInput,
+    AuditReportOutput,
+    ClosingReportInput,
+    ClosingReportOutput,
     LossAggregationInput,
     LossReport,
-    ReviewHoldInput,
     SellerReviewInput,
     SellerReviewOutput,
     SettlementHoldInput,
     SettlementHoldOutput,
-    ThresholdReviewInput,
-    VerifyAmountInput,
-    VerifyAmountOutput,
 )
-from finance_agent.sources import LiveSources, MockSources, Sources, order_key
-from finance_agent.threshold_review import decide_threshold
+from finance_agent.sources import Impact, LiveSources, MockSources, Sources, order_key
 
-CLAIMED_TOTAL_FIELDS = ("total_value", "claimed_total")
+__all__ = ["HANDLERS", "SUBSCRIBED_EVENTS", "on_event", "recompute", "reset_state", "state"]
 
 
 class Ledger:
@@ -60,17 +69,10 @@ class Ledger:
         self.coupons: dict[str, dict[str, int]] = {}  # context_id → {"count", "total"}
         self.refunds: dict[str, int] = {}  # order_id → 환불 누적
         self.seen_events: set[str] = set()
-        self.verified: dict[str, AgentResult] = {}  # execution_id → 판정
-        self.verify_log: list[dict[str, Any]] = []  # 대시보드 조회용 판정 기록
         self.done: dict[str, AgentResult] = {}  # 멱등성 키 → 끝난 상태 변경 결과
         self.market_ops: list[dict[str, Any]] = []  # 판매자 심사·정산 보류 결과 기록
         self.loss_reports: dict[str, dict[str, Any]] = {}  # context_id → 마지막 손실 리포트
-        self.reviewed: dict[str, AgentResult] = {}  # review_id → AI 1차 판단
-        self.ai_reviews: list[dict[str, Any]] = []  # 대시보드 조회용 AI 판단 기록
-        self.catbooks_items: dict[str, dict[str, Any]] = {}  # 캣북스 클레임 확인 결과
-        self.catbooks_sync: dict[str, Any] | None = None  # 마지막 캣북스 가져오기 요약
-        self.threshold_reviewed: dict[str, AgentResult] = {}  # change_id → 기준 바꾸기 판단
-        self.threshold_reviews: list[dict[str, Any]] = []  # 대시보드 조회용 기준 바꾸기 판단
+        self.coupon_events: dict[str, list[dict[str, Any]]] = {}  # context_id → 보상 쿠폰 이벤트
 
     def compensation(self, context_id: str) -> dict[str, int]:
         return self.coupons.get(context_id, {"count": 0, "total": 0})
@@ -80,8 +82,35 @@ class State:
     def __init__(self, sources: Sources | None = None) -> None:
         self.sources: Sources = sources or (MockSources() if is_mock("finance") else LiveSources())
         self.ledger = Ledger()
-        self.policy: ReviewPolicy = load_policy()
         self.last_self_test: dict[str, Any] | None = None  # 마지막 "재무 AI 테스트" 결과
+        self.records = FinanceRecords()
+        self.books_loader: Callable[[], Awaitable[Books]] = load_books  # 테스트에서 바꾼다
+        # 사건별 쿠폰 장부(⑨)의 실행 기록과 기준표. 테스트에서 바꾼다
+        self.executions_loader: Callable[[str | None], Awaitable[lg.ExecutionFeed]] = (
+            lg.load_executions
+        )
+        self.thresholds_loader: Callable[[], Awaitable[dict[str, Any] | None]] = lg.load_thresholds
+
+    async def books(self) -> Books:
+        return await self.books_loader()
+
+    def held_sellers(self) -> set[str]:
+        """정산 보류(`settlement_hold`)가 걸린 판매자."""
+        return {
+            op["seller_id"]
+            for op in self.ledger.market_ops
+            if op.get("skill") == "settlement_hold" and op.get("status") == "held"
+        }
+
+
+class FinanceRecords:
+    """사람의 결정 기록 (메모리, 데모용). TODO: 영속 저장소로 옮긴다."""
+
+    def __init__(self) -> None:
+        self.closings: dict[tuple[str, str], dict[str, Any]] = {}  # (period, date) → {by, at}
+        self.recon_notes: dict[str, str] = {}  # payment_id → 처리 메모
+        self.recon_note_log: list[dict[str, Any]] = []
+        self.batches: dict[str, dict[str, Any]] = {}  # 정산 기간 → 묶음 요청 상태
 
 
 STATE: State | None = None
@@ -147,6 +176,9 @@ async def on_event(envelope: EventEnvelope) -> None:
         row = ledger.coupons.setdefault(envelope.context_id, {"count": 0, "total": 0})
         row["count"] += count
         row["total"] += total
+        ledger.coupon_events.setdefault(envelope.context_id, []).append(
+            lg.coupon_from_event(envelope.context_id, data, envelope.occurred_at)
+        )
     elif envelope.type == EventType.PAYMENT_REFUNDED:
         order_id, amount = order_key(data.get("order_id")), _positive_int(data.get("refund_amount"))
         if order_id is not None and amount is not None:
@@ -154,112 +186,6 @@ async def on_event(envelope: EventEnvelope) -> None:
 
 
 SUBSCRIBED_EVENTS = [EventType.COUPON_ISSUED, EventType.PAYMENT_REFUNDED]
-
-
-# ---------------------------------------------------------------- verify_amount
-async def recompute(
-    request: AgentRequest,
-    data: VerifyAmountInput,
-    sources: Sources | None = None,
-    refunds: dict[str, int] | None = None,
-) -> VerifyAmountOutput:
-    """원천 데이터로 다시 계산한다. 근거가 없으면 승인하지 않는다.
-
-    `sources`·`refunds`를 주면 그것을 쓴다(자체 점검용). 없으면 에이전트 상태를 쓴다.
-    """
-    sources = sources or state().sources
-    refunds = state().ledger.refunds if refunds is None else refunds
-
-    def reject(reason: str, **recomputed: int) -> VerifyAmountOutput:
-        return VerifyAmountOutput(
-            decision="rejected",
-            reason_code=reason,  # type: ignore[arg-type]
-            recomputed=recomputed,
-            threshold_version=data.threshold_version,
-        )
-
-    params, meta = data.params, request.meta
-    if data.action == "issue_coupon":
-        count, unit = _positive_int(params.get("count")), _positive_int(params.get("unit_value"))
-        if count is None or unit is None:
-            return reject("invalid_params")
-        total = count * unit
-        claimed = [params.get(k) for k in CLAIMED_TOTAL_FIELDS if params.get(k) is not None]
-        if data.computed_amount is not None:
-            claimed.append(data.computed_amount)
-        if any(c != total for c in claimed):
-            return reject("amount_mismatch", count=count, unit_value=unit, total_value=total)
-        if params.get("purpose_code") == "compensation":
-            impact = await sources.impact(meta, meta.context_id, None)
-            if impact is None or not impact.affected_customer_ids:
-                return reject("source_unavailable", total_value=total)
-            if params.get("buyer_id") not in impact.affected_customer_ids:
-                return reject("not_affected", total_value=total)
-        return VerifyAmountOutput(
-            decision="approved",
-            reason_code="recomputed_match",
-            recomputed={"count": count, "unit_value": unit, "total_value": total},
-            threshold_version=data.threshold_version,
-        )
-
-    if data.action == "refund_request":
-        amount, order_id = (
-            _positive_int(params.get("refund_amount")),
-            order_key(params.get("order_id")),
-        )
-        if amount is None or order_id is None:
-            return reject("invalid_params")
-        if data.computed_amount is not None and data.computed_amount != amount:
-            return reject("amount_mismatch", refund_amount=amount)
-        paid = await sources.paid_amount(meta, order_id)
-        if paid is None:
-            return reject("source_unavailable", refund_amount=amount)
-        already = refunds.get(order_id, 0)
-        if already + amount > paid:
-            return reject(
-                "exceeds_paid", refund_amount=amount, paid_amount=paid, refunded_before=already
-            )
-        return VerifyAmountOutput(
-            decision="approved",
-            reason_code="recomputed_match",
-            recomputed={"refund_amount": amount, "paid_amount": paid, "refunded_before": already},
-            threshold_version=data.threshold_version,
-        )
-
-    return reject("unsupported_action")
-
-
-async def verify_amount(request: AgentRequest) -> AgentResult:
-    data = _parse(request, VerifyAmountInput)
-    if isinstance(data, AgentResult):
-        return data
-    ledger = state().ledger
-    if data.execution_id in ledger.verified:  # 같은 검증 요청은 이전 판정
-        return ledger.verified[data.execution_id].model_copy(update={"meta": request.meta})
-    output = await recompute(request, data)
-    result = _result(
-        request,
-        TaskStatus.COMPLETED,
-        outcome=output.decision,
-        output=output.model_dump(mode="json"),
-        evidence=_evidence(
-            [f"verify:{data.action}"],
-            f"{data.action} 재계산 {output.recomputed} → {output.reason_code}",
-            [data.execution_id],
-        ),
-    )
-    ledger.verified[data.execution_id] = result
-    ledger.verify_log.append(
-        {
-            "execution_id": data.execution_id,
-            "context_id": request.meta.context_id,
-            "action": data.action,
-            "requester": data.requester,
-            **output.model_dump(mode="json"),
-            "at": _now().isoformat(),
-        }
-    )
-    return result
 
 
 # ---------------------------------------------------------------- loss_aggregation
@@ -273,50 +199,112 @@ async def loss_aggregation(request: AgentRequest) -> AgentResult:
         return data
     context_id = data.context_id or request.meta.context_id
     window = {
-        "from": data.window_from.isoformat(),
-        "to": data.window_to.isoformat(),
+        "window_from": data.window_from.isoformat(),
+        "window_to": data.window_to.isoformat(),
         **({"category": data.category} if data.category else {}),
     }
     impact = await state().sources.impact(request.meta, context_id, window)
-    comp = state().ledger.compensation(context_id)
+    rows, ledger_source = await compensation_ledger(context_id)
+    comp = lg.totals(rows) if rows is not None else None
+    count = comp["count_executed"] if comp else None
+    paid = comp["total_executed"] if comp else None
 
-    coupon_line = f"보상 쿠폰 {comp['count']}장 {_won(comp['total'])}"
-    if impact is None:
-        summary = f"영향 수치: 확인할 수 없음(data 영향 분석 응답 없음). {coupon_line}."
-        report = LossReport(
-            context_id=context_id,
-            compensation_coupon_count=comp["count"],
-            compensation_total=comp["total"],
-            summary=summary,
-        )
+    unavailable = (["impact"] if impact is None else []) + (
+        ["compensation"] if comp is None else []
+    )
+    if comp is None:
+        coupon_line = "보상 쿠폰: 확인할 수 없음(이벤트 알림·안전 장치 실행 기록 모두 없음)"
     else:
-        total = impact.lost_amount + comp["total"]  # 계산은 코드로
-        summary = (
+        coupon_line = f"보상 쿠폰 {count}장 {_won(paid or 0)}"
+    if impact is None:
+        impact_line = "영향 수치: 확인할 수 없음(데이터 AI 영향 분석 응답 없음)"
+    else:
+        impact_line = (
             f"실패 주문 {impact.failed_orders}건, 영향 고객 {impact.affected_customers}명, "
-            f"피해 금액 {_won(impact.lost_amount)}. {coupon_line}. 총 손실 {_won(total)}."
+            f"피해 금액 {_won(impact.lost_amount)}"
         )
-        report = LossReport(
-            context_id=context_id,
-            failed_orders=impact.failed_orders,
-            affected_customers=impact.affected_customers,
-            lost_amount=impact.lost_amount,
-            compensation_coupon_count=comp["count"],
-            compensation_total=comp["total"],
-            total_loss=total,
-            summary=summary,
-        )
-    refs = [impact.ref] if impact else []
+    # 계산은 코드로. 둘 중 하나라도 모르면 총 손실도 모른다
+    total = impact.lost_amount + paid if impact is not None and paid is not None else None
+    summary = f"{impact_line}. {coupon_line}."
+    if total is not None:
+        summary += f" 총 손실 {_won(total)}."
+    report = LossReport(
+        context_id=context_id,
+        failed_orders=impact.failed_orders if impact else None,
+        affected_customers=impact.affected_customers if impact else None,
+        lost_amount=impact.lost_amount if impact else None,
+        compensation_coupon_count=count,
+        compensation_total=paid,
+        total_loss=total,
+        summary=summary,
+        ledger_source=ledger_source,
+        unavailable=unavailable,
+    )
+    refs = ([impact.ref] if impact else []) + [
+        str(r["execution_id"]) for r in rows or [] if r.get("execution_id")
+    ][:20]
     state().ledger.loss_reports[context_id] = report.model_dump(mode="json") | {
-        "at": _now().isoformat()
+        "at": _now().isoformat(),
+        "window": window,
     }
+    source_query = {
+        lg.LEDGER_EVENTS: f"ledger:coupon.issued:{context_id}",
+        lg.LEDGER_SAFETY: f"safety:/api/safety/executions?context_id={context_id}",
+        lg.LEDGER_SEED: f"seed:executions:{context_id}",
+    }.get(ledger_source or "", f"ledger:unavailable:{context_id}")
     return _result(
         request,
         TaskStatus.COMPLETED,
-        outcome="partial" if impact is None else "reported",
+        outcome="partial" if unavailable else "reported",
         output=report.model_dump(mode="json"),
-        evidence=_evidence(
-            ["data:impact_analysis", f"ledger:coupon.issued:{context_id}"], summary, refs
-        ),
+        evidence=_evidence(["data:impact_analysis", source_query], summary, refs),
+    )
+
+
+# ---------------------------------------------------------------- 사건(⑨⑩⑰) 공용
+async def compensation_ledger(
+    context_id: str, feed: lg.ExecutionFeed | None = None
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """한 사건의 보상 쿠폰 장부 줄과 출처 (`ledger.merge`)."""
+    if feed is None:
+        feed = await state().executions_loader(context_id)
+    event_rows = state().ledger.coupon_events.get(context_id, [])
+    return lg.merge(context_id, feed, event_rows, lg.events_connected())
+
+
+def incident_meta(context_id: str) -> dict[str, Any]:
+    """사건의 장애 구간·부품. 손실 리포트 요청에 온 구간 → (목 모드) 시드 → 모름."""
+    report = state().ledger.loss_reports.get(context_id) or {}
+    window = report.get("window") or {}
+    if window.get("window_from") and window.get("window_to"):
+        return {
+            "component": None,
+            "window_from": fc.parse_dt(window["window_from"]),
+            "window_to": fc.parse_dt(window["window_to"]),
+            "category": window.get("category"),
+        }
+    if is_mock("finance"):
+        seeded = bk.seed_incidents().get(context_id)
+        if seeded:
+            return seeded | {"category": None}
+    return {"component": None, "window_from": None, "window_to": None, "category": None}
+
+
+async def incident_impact(context_id: str, meta: RequestMeta | None = None) -> Impact | None:
+    """data `impact_analysis` 결과 그대로(다시 계산하지 않음). 실제 모드에서 구간을 모르면 None."""
+    info = incident_meta(context_id)
+    window = None
+    if info["window_from"] and info["window_to"]:
+        window = {
+            "window_from": fc.iso(info["window_from"]),
+            "window_to": fc.iso(info["window_to"]),
+            **({"category": info["category"]} if info.get("category") else {}),
+        }
+    base = meta or RequestMeta(
+        context_id=context_id, token="finance-dashboard", deadline=_now() + timedelta(seconds=15)
+    )
+    return await state().sources.impact(
+        base.model_copy(update={"context_id": context_id}), context_id, window
     )
 
 
@@ -448,87 +436,84 @@ async def settlement_hold(request: AgentRequest) -> AgentResult:
     return result
 
 
-# ---------------------------------------------------------------- review_hold (AI 1차 판단)
-async def review_hold(request: AgentRequest) -> AgentResult:
-    data = _parse(request, ReviewHoldInput)
-    if isinstance(data, AgentResult):
-        return data
-    ledger = state().ledger
-    if data.review_id in ledger.reviewed:  # 같은 보류 건은 같은 판단
-        return ledger.reviewed[data.review_id].model_copy(update={"meta": request.meta})
-    order_id = order_key(data.params.get("order_id"))
-    refunded = ledger.refunds.get(order_id, 0) if order_id else 0
-    output = await decide(data, request.meta, state().sources, refunded, state().policy)
-    result = _result(
-        request,
-        TaskStatus.COMPLETED,
-        outcome=output.decision,
-        output=output.model_dump(mode="json"),
-        evidence=_evidence(
-            ["ai_review_policy", f"review:{data.action}"],
-            output.explanation,
-            [data.review_id, data.execution_id],
-        ),
-    )
-    ledger.reviewed[data.review_id] = result
-    ledger.ai_reviews.append(
-        {
-            "review_id": data.review_id,
-            "context_id": request.meta.context_id,
-            "action": data.action,
-            "requester": data.requester,
-            "computed_amount": data.computed_amount,
-            "hold_reason": data.hold_reason,
-            **output.model_dump(mode="json"),
-            "at": _now().isoformat(),
-        }
-    )
-    return result
+# ------------------------------------------------------- closing_report·audit_report (읽기)
+BOOK_QUERIES = [
+    "shop-api:/api/shop/orders",
+    "shop-api:/api/shop/coupons",
+    "safety:/api/safety/executions",
+]
 
 
-# ---------------------------------------------------------------- review_threshold_change
-async def review_threshold_change(request: AgentRequest) -> AgentResult:
-    """safety의 기준 바꾸기 요청 판단. 요청 이유(`request.untrusted`)는 읽지 않는다."""
-    data = _parse(request, ThresholdReviewInput)
+def closing_key(period: str, d: Any) -> tuple[str, str]:
+    """결산 확정 기록의 키. 월은 그 달 1일로 맞춘다."""
+    start, _ = closing.period_range(period, d)  # type: ignore[arg-type]
+    return period, (start if period == "month" else d).isoformat()
+
+
+async def closing_report(request: AgentRequest) -> AgentResult:
+    """① 기간 손익 요약. 대시보드 `GET /api/finance/closing`과 같은 계산이다."""
+    data = _parse(request, ClosingReportInput)
     if isinstance(data, AgentResult):
         return data
-    ledger = state().ledger
-    if data.change_id in ledger.threshold_reviewed:  # 같은 요청은 같은 판단
-        return ledger.threshold_reviewed[data.change_id].model_copy(update={"meta": request.meta})
-    output = decide_threshold(data, state().policy.threshold_change)
-    result = _result(
+    books = await state().books()
+    d = data.date or fc.today()
+    key = closing_key(data.period, d)
+    report = await closing.closing_report(books, data.period, d, state().records.closings.get(key))
+    output = ClosingReportOutput(
+        **{k: v for k, v in report.items() if k not in ("from", "to")},
+        window_from=report["from"],
+        window_to=report["to"],
+        unavailable=books.meta()["unavailable"],
+    )
+    return _result(
         request,
         TaskStatus.COMPLETED,
-        outcome=output.decision,
+        outcome="partial" if output.unavailable else "reported",
         output=output.model_dump(mode="json"),
         evidence=_evidence(
-            ["ai_review_policy:threshold_change", f"safety:stats:{data.key}"],
-            output.explanation,
-            [data.change_id],
+            [*BOOK_QUERIES[:2], f"closing:{data.period}:{key[1]}"], report["commentary"]
         ),
     )
-    ledger.threshold_reviewed[data.change_id] = result
-    ledger.threshold_reviews.append(
-        {
-            "change_id": data.change_id,
-            "context_id": request.meta.context_id,
-            "key": data.key,
-            "current_value": data.current_value,
-            "new_value": data.new_value,
-            "baseline": data.baseline,
-            "stats": data.stats,
-            **output.model_dump(mode="json"),
-            "at": _now().isoformat(),
-        }
+
+
+async def audit_report(request: AgentRequest) -> AgentResult:
+    """⑦ 사후 감사 결과. 대시보드 `GET /api/finance/audit`과 같은 계산이다."""
+    data = _parse(request, AuditReportInput)
+    if isinstance(data, AgentResult):
+        return data
+    books = await state().books()
+
+    async def lookup(ctx: str) -> Impact | None:
+        return await incident_impact(ctx, request.meta)
+
+    report, missing = await audit.audit_report(
+        books, data.days, impact_lookup=lookup, context_id=data.context_id
     )
-    return result
+    output = AuditReportOutput(
+        window_from=report["from"],
+        window_to=report["to"],
+        stats=report["stats"],
+        findings=report["findings"],
+        unavailable=books.meta(missing)["unavailable"],
+    )
+    codes = sorted({f.code for f in output.findings})
+    summary = (
+        f"최근 {data.days}일 감사 의심 {len(output.findings)}건 ({', '.join(codes) or '없음'})"
+    )
+    refs = [r for f in output.findings for r in f.refs][:20]
+    return _result(
+        request,
+        TaskStatus.COMPLETED,
+        outcome="partial" if output.unavailable else "reported",
+        output=output.model_dump(mode="json"),
+        evidence=_evidence([*BOOK_QUERIES, f"audit:{data.days}d"], summary, refs),
+    )
 
 
 HANDLERS = {
-    "verify_amount": verify_amount,
     "loss_aggregation": loss_aggregation,
     "seller_review": seller_review,
     "settlement_hold": settlement_hold,
-    "review_hold": review_hold,
-    "review_threshold_change": review_threshold_change,
+    "closing_report": closing_report,
+    "audit_report": audit_report,
 }

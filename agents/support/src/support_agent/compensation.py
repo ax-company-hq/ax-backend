@@ -10,16 +10,36 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime
 
 # 사유 코드 → 쿠폰 1건 단가(원). 표에 없는 사유는 보상 대상이 아니다.
 UNIT_VALUE_BY_REASON: dict[str, int] = {
     "late_delivery": 2000,
+    # 결제 장애로 주문이 실패한 고객 (SCN-A). 시드 값, 고객지원 정책표(팀 확정)
+    "payment_failure": 2000,
     "damaged": 3000,
     "wrong_item": 3000,
     "missing_item": 3000,
     "defect": 3000,
 }
 MAX_COUNT = 3
+# 같은 사건에서 여러 번 불러도 넘지 못하는 보상 상한 (시드 값, 고객지원 정책표·팀 확정).
+# 1회 호출은 50명까지다.
+# 금액 한도(C 보류 기준)는 사람이 바꾸는 기준표(`thresholds.toml`)가 따로 정한다.
+MAX_INCIDENT_BUYERS = 100
+MAX_INCIDENT_TOTAL = 600_000
+# 약속한 배송일을 이만큼(일) 이상 넘기면 지연 보상 후보다. 정책표와 같은 시드다.
+LATE_MIN_DAYS = 1
+
+
+def days_late(
+    promised_at: datetime | None, delivered_at: datetime | None, now: datetime
+) -> int | None:
+    """약속 배송일을 넘긴 일수 (배송 완료 전이면 지금까지). 약속일을 모르면 None이다."""
+    if promised_at is None:
+        return None
+    end = delivered_at or now
+    return max((end - promised_at).days, 0)
 
 
 @dataclass(frozen=True)

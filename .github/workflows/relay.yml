@@ -1,0 +1,52 @@
+name: relay
+
+# dev에 머지될 때마다(push) + 3시간마다: 라벨 `waiting`이 붙고 `blocked-by #N`이 전부 닫힌 이슈를 ready로 바꾼다
+# (봇이 남긴 `<!-- relay-to: to:<부서> -->` 댓글의 라벨을 다시 붙임. AX_GO=on이면 작성도 시작).
+# `blocked`(사람이 멈춤)는 건드리지 않는다. request 이슈는 `/answer` 댓글(code owner 또는 대상 부서 담당자)이
+# 있을 때만 answered로, 같은 출처·부서·req digest의 요청 이슈는 합친다. AX_RELAY=on일 때만.
+# PR 코드는 가져오지 않는다: push는 dev에 이미 머지된 코드만 돌리고 checkout도 ref: dev다.
+on:
+  push:
+    branches: [dev]
+  schedule:
+    - cron: "17 */3 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: relay
+  cancel-in-progress: false
+
+jobs:
+  relay:
+    if: vars.AX_RELAY == 'on'
+    runs-on: ubuntu-latest
+    environment: bot
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: dev, persist-credentials: false, sparse-checkout: .github }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: team.py 의존성
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet --require-hashes -r .github/scripts/requirements.txt
+      - name: ax-bot token
+        id: bot
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ secrets.AX_BOT_APP_ID }}
+          private-key: ${{ secrets.AX_BOT_PRIVATE_KEY }}
+          permission-issues: write
+          permission-pull-requests: read
+          permission-actions: write
+      - name: relay
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          AX_RELAY: ${{ vars.AX_RELAY }}
+          AX_GO: ${{ vars.AX_GO }}
+        run: |
+          "$RUNNER_TEMP/venv/bin/python" -I .github/scripts/autopilot.py relay | tee -a "$GITHUB_STEP_SUMMARY"

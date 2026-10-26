@@ -1,0 +1,4 @@
+# actionlint 설정: 서버 PC runner의 사용자 정의 라벨 (real-run.yml, devroom-update.yml만 쓴다 - real_guard.py가 강제)
+self-hosted-runner:
+  labels:
+    - ax-server

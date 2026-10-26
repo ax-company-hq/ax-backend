@@ -48,6 +48,10 @@ e커머스 가상회사의 부서별 AI 에이전트를 A2A로 연결한 AX 플�
 9. **테스트를 지우거나 약하게 만들지 않는다.** test-guard가 부서별로 테스트 삭제(바뀐 파일에 있던 테스트 이름이 사라짐)와 의미 있는 assert 수 감소(`assert True` 같은 상수 assert는 세지 않음)를 막는다. 파일을 나누거나 옮기는 것은 테스트 이름이 남아 있으면 통과한다.
 10. **자동화 파일은 사람만 바꾼다.** `.github/`, `.claude/`, `scripts/`, `CLAUDE.md`, `docs/`(notes 제외)는 code owner 승인이 필요하다. 부서 폴더 안에 `CLAUDE.md`, `.claude/`, `.mcp.json`을 만들지 않는다.
 11. **기준 문서와 다른 동작은 docs PR이 먼저다.** `docs/requirements.md`, `docs/agent-common.md`(기준 문서)와 다르게 동작해야 하면, 먼저 기준 문서를 고치는 docs PR을 팀이 합의해 머지한 뒤 코드 PR을 올린다. 코드 PR 본문에 그 docs PR 번호를 적는다. docs PR 없이 기준 문서와 다른 코드 PR은 리뷰에서 막는다.
+12. **계약은 추가만 한다.** `contracts/`의 필드·타입·이름은 삭제·이름 변경·타입 변경하지 않고, 선택 필드를 필수로 바꾸지도 않는다. 바꿔야 하면 새 필드를 추가하고 쓰는 쪽을 옮긴 뒤 옛 필드를 지우는 단계로 나눈다.
+13. **기다리는 일은 `blocked-by #N`으로 적는다.** 다른 이슈·PR이 끝나야 하는 이슈는 본문에 `blocked-by #N`을 한 줄에 하나씩 쓰고 `waiting` 라벨을 붙인다 (N이 전부 닫히면 relay가 `waiting`을 풀고 `ready`로 바꾼다). `waiting` = 선행 이슈 대기(relay가 자동으로 풂), `blocked` = 사람이 멈춤(relay가 건드리지 않음).
+14. **요청 이슈를 만들기 전에 열린 이슈를 검색한다.** 같은 부서에 같은 내용의 `to:<부서>` 요청이 있으면 새로 만들지 않고 그 이슈에 댓글을 단다. 요청에 답할 때는 댓글을 `/answer`로 시작한다: 그래야 `answered`가 붙고 봇 자동 작성이 멈춘다 (일반 댓글은 확인·보충일 뿐 요청을 끝내지 않는다).
+15. **대상 부서의 이슈가 `in-progress`면 대신 구현하지 않는다.** 그 부서가 만들고 있는 일이므로 기다리거나 댓글로 조율한다.
 
 ## 표기·형식
 
@@ -144,6 +148,7 @@ e커머스 가상회사의 부서별 AI 에이전트를 A2A로 연결한 AX 플�
 | agents/data | 8106 |
 | agents/infra-dejafix | 8107 |
 | redis (이벤트 버스) | 6379 |
+| gateway (nginx, 서버 PC 전용 `infra/compose.server.yml`. 그때 외부에 열리는 유일한 포트) | 8080 (`AX_GATEWAY_PORT`) |
 | ax-frontend shop-web / dashboard-web | 3000 / 3001 |
 
 새 서비스를 추가하면 이 표부터 갱신한다.
@@ -151,6 +156,7 @@ e커머스 가상회사의 부서별 AI 에이전트를 A2A로 연결한 AX 플�
 ## 실행
 
 - 전체: `docker compose -f infra/compose.yml up`
+- 서버 PC 운영: `docker compose -f infra/compose.yml -f infra/compose.server.yml up -d --build` (서버 전용 override, #296 머지 후. 외부에는 gateway 8080 하나만 열린다). 켜기·방화벽·접속은 `docs/automation/dashboard-access.md`
 - 개발할 때는 자기 PC에서 자기 서비스와 필요한 것만 띄운다. 서버 PC는 통합 테스트·데모에만 쓴다.
 - 각 서비스 폴더의 `compose.yml`을 `infra/compose.yml`이 `include:`로 불러온다.
 - 프론트까지 함께 띄울 때는 두 레포를 같은 폴더에 나란히 clone한다.

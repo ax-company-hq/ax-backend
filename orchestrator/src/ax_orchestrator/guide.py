@@ -61,10 +61,11 @@ curl -X POST localhost:<포트>/api/events -H 'Content-Type: application/json' -
 
 ## 총괄의 공통 규칙
 - 모든 요청 `meta.path`는 `["orchestrator"]`로 시작, `idempotency_key = <context_id>:<skill>:<단계 id>`, `deadline`은 호출 시각 + 30초.
-- 실패(`failed`)는 2번, 마감 초과(`canceled`)는 1번 재시도한다. `rejected`(`FORBIDDEN_SKILL`·`HOP_LIMIT`·소관 아님)는 같은 skill을 가진 다른 부서로 이관한다.
+- 실패(`failed`)는 2번, 마감 초과(`canceled`)는 1번 재시도한다. `rejected`(`FORBIDDEN_SKILL`·`HOP_LIMIT`·소관 아님)는 같은 skill을 가진 다른 부서로 이관한다. 그런 부서가 없으면 지어내지 않고 단계를 "이관 큐로 넘김"(`transfer_queued`)으로 표시한다.
 - `input-required`: `dept_input`이면 `output.question = {skill, input}`을 총괄이 해당 부서에 물어 답을 `input.answers`로 넣어 다시 부른다. `human_input`이면 사람 승인을 기다리고(총괄은 승인하지 않음), 마감이 지나면 자동 거절로 처리한다.
 - 카드에 없는 skill, 총괄이 요청할 수 없는 skill(`allowed_requesters`)은 "확인할 수 없음"으로 건너뛴다.
-- 보상·쿠폰은 총괄이 부르지 않는다(#228 결정 A). 고객지원이 문의 접수 때 처리하고 마케팅에 직접 요청한다.
+- 문의 경로의 보상·쿠폰은 총괄이 부르지 않는다(#228 결정 A). 고객지원이 문의 접수 때 처리하고 마케팅에 직접 요청한다. 총괄은 영향 고객 일괄 보상만 고객지원 `request_incident_compensation`으로 요청한다.
+- 계획대로 안 될 때: 원인 미확정(`diagnose_incident`가 `undetermined`)이면 롤백하지 않고 이관 큐로, `verify_recovery`가 `recovered=false`이면 정상화 공지 없이 이관 큐로 돌린다. 복구 확인은 인프라가 30초 간격으로 다시 확인하는 시간을 기다리도록 마감을 180초로 준다.
 
 """
 
@@ -76,12 +77,15 @@ NOTES = {
         "없어 출처가 정해지지 않았다. 지금 목은 `previous_version`을 가정한다. infra가 어디서 정할지 알려 주세요."
     ),
     "support": (
-        "총괄이 부르는 skill이 없다. 문의 접수 때 자동응답·보상 판정·마케팅 쿠폰 요청은 고객지원이 직접 "
-        "한다(#228 결정 A). 총괄은 `support.inquiry_received`·`support.inquiry_surge` 이벤트를 구독만 한다."
+        "> 총괄이 부르는 skill은 영향 고객 일괄 보상 하나다. 문의 접수 때 자동응답·보상 판정·마케팅 쿠폰 요청은 "
+        "고객지원이 직접 한다(#228 결정 A). 고객 목록은 데이터 영향 분석 결과(`affected_customer_ids`)를 "
+        "그대로 넘기며, 50명을 넘으면 고객지원이 전체를 거부한다. 총괄은 `support.inquiry_received`·"
+        "`support.inquiry_surge` 이벤트도 구독한다."
     ),
     "finance": (
         "> 재무는 영향 숫자를 data에서 직접 조회하고 보상액은 자기 장부에서 센다. 총괄은 구간과 "
-        "`context_id`만 준다. `verify_amount`는 총괄이 부르지 않는다(요청 가능 부서가 safety뿐)."
+        "`context_id`만 준다. `audit_report`는 이 사건의 쿠폰·실행 기록 점검을 사건 끝 무렵에 요청한다. "
+        "`verify_amount`는 총괄이 부르지 않는다(요청 가능 부서가 safety뿐)."
     ),
 }
 

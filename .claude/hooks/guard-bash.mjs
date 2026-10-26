@@ -26,7 +26,7 @@ function allowedPrefixes() {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const team = JSON.parse(fs.readFileSync(path.join(here, '..', '..', '.github', 'team.json'), 'utf8'));
   const depts = team.depts || {};
-  const set = new Set(['docs', 'ci']);
+  const set = new Set(['docs', 'ci', 'revert']);
   for (const raw of list) {
     const id = depts[raw] ? raw : Object.keys(depts).find((k) => (depts[k].aliases || []).includes(raw));
     if (!id) continue;
@@ -37,6 +37,9 @@ function allowedPrefixes() {
   }
   return set;
 }
+
+// 자동 머지 예약 한 줄만 허용 (필수 체크·승인은 브랜치 보호가 판단). --admin·--delete-branch·--auto 없는 형태는 차단
+const AUTO_MERGE = /^gh pr merge \d+ (--auto (--squash|--merge|--rebase)|(--squash|--merge|--rebase) --auto)( (-R|--repo) ax-company-hq\/ax-(backend|frontend))?$/;
 
 // 실행 파일 토큰인지: 경로 접두어 제거, 소문자, 확장자(.exe 등) 제거
 const exeName = (tok) => tok.split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd|bat|com)$/, '');
@@ -91,7 +94,9 @@ function main() {
   }
 
   if (has('gh')) {
-    if (lower.includes('pr') && lower.includes('merge')) return block('에이전트는 PR 을 머지할 수 없습니다 (gh pr merge 금지).');
+    if (lower.includes('pr') && lower.includes('merge') && !AUTO_MERGE.test(cmd.trim())) {
+      return block('gh pr merge 는 `gh pr merge <번호> --auto --squash|--merge|--rebase` 한 줄(자동 머지 예약)만 허용합니다.');
+    }
     if (lower.includes('api')) {
       const put = lower.some((x) => x === 'put' || /^--method=put$/.test(x) || x === '-xput');
       if (lower.some((x) => x.includes('/merge')) || (put && lower.some((x) => x.includes('pulls')))) {
