@@ -21,8 +21,6 @@ from support_agent.schemas import Conversation
 
 SOURCE = "support"
 logger = logging.getLogger("ax.support.events")
-MAX_LOGGED_IDS = 10_000
-_logged: set[str] = set()  # 공통 로그에 이미 남긴 event_id (프로세스 안에서만)
 
 
 def inquiry_received_key(context_id: str, inquiry_id: int, message_count: int) -> str:
@@ -61,31 +59,11 @@ def build_inquiry_received(request: AgentRequest, conversation: Conversation) ->
     )
 
 
-def log_published(envelope: EventEnvelope) -> None:
-    """발행한 이벤트를 공통 로그에 `event_published`로 남긴다 (대시보드 소통 탭의 이벤트 줄).
-
-    종류와 ID만 담는다. 이벤트 `data`와 `untrusted`는 로그에 옮기지 않는다.
-    """
-    if envelope.context_id is None or envelope.event_id in _logged:
-        return  # 같은 이벤트를 다시 보내도(버스는 한 번만 전달) 줄은 한 번만 남긴다
-    if len(_logged) >= MAX_LOGGED_IDS:
-        _logged.clear()
-    _logged.add(envelope.event_id)
-    log_event(
-        envelope.context_id,
-        envelope.tenant_id,
-        "event_published",
-        {"event_type": envelope.type.value, "event_id": envelope.event_id},
-        source=SOURCE,
-    )
-
-
 async def emit_inquiry_received(request: AgentRequest, conversation: Conversation) -> None:
     """이벤트를 발행한다. 발행 실패는 문의 접수를 막지 않는다 (사실은 이미 저장됐다)."""
     envelope = build_inquiry_received(request, conversation)
     try:
         await publish(envelope)
-        log_published(envelope)
     except NotImplementedError:  # Redis 연동 전(TODO)
         log_event(
             request.meta.context_id,

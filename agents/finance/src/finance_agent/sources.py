@@ -74,6 +74,7 @@ class Impact:
     lost_amount: int
     affected_customer_ids: frozenset[str] = field(default_factory=frozenset)
     ref: str = ""
+    by_category: tuple[tuple[str, int, int], ...] = ()  # (category, 실패 주문 수, 피해 금액)
 
 
 class Sources(Protocol):
@@ -96,12 +97,20 @@ def _impact_from(output: dict[str, Any], ref: str) -> Impact | None:
     if any(c is None for c in counts):
         return None
     ids = output.get("affected_customer_ids") or []
+    by_category = []
+    for row in output.get("by_category") or []:
+        if not isinstance(row, dict) or not isinstance(row.get("category"), str):
+            continue
+        orders, amount = _int(row.get("failed_order_count")), _int(row.get("damage_amount"))
+        if orders is not None and amount is not None:
+            by_category.append((row["category"], orders, amount))
     return Impact(
         failed_orders=counts[0],  # type: ignore[arg-type]
         affected_customers=counts[1],  # type: ignore[arg-type]
         lost_amount=counts[2],  # type: ignore[arg-type]
         affected_customer_ids=frozenset(i for i in ids if isinstance(i, str)),
         ref=ref,
+        by_category=tuple(by_category),
     )
 
 

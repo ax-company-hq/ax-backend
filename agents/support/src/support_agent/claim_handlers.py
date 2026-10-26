@@ -3,8 +3,9 @@
 - 판정은 `claim_rules.decide`가 주문 사실에서 코드로 한다. 입력에는 금액이 없고 LLM도 쓰지 않는다.
 - 읽기 skill은 상태를 바꾸지 않는다. 쓰기 skill은 `handlers._write`(멱등 확인 → `execute()` →
   저장소 반영)를 거친다. 실행되지 않으면(보류·검증 중·거부) 저장소를 바꾸지 않는다.
-- 환불 지급(`process_claim_queue`)은 safety 레지스트리의 `refund_request`(B, 재무 검증, 기준 이상
-  C)로 실행한다. 실행되면 shop-api 환불 API(SHOP-12)로 현금을 환불한다 (`shop_client.py`).
+- 환불 지급(`process_claim_queue`)은 safety 레지스트리의 `refund_request`(A, 안전 관문의 한도
+  검사, 기준 이상 C 보류)로 실행한다. 실행되면 shop-api 환불 API(SHOP-12)로 현금을 환불한다
+  (`shop_client.py`).
 - 보상 쿠폰은 클레임이 아니라 `request_compensation`(DEP-CS-02)으로 요청한다.
 """
 
