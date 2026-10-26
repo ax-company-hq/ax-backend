@@ -23,17 +23,21 @@ from ax_agent_template.execute import execute
 from ax_agent_template.server import error_result
 from ax_contracts.schemas import AgentRequest, AgentResult, Evidence, TaskStatus
 from support_agent import (
+    buyer_ids,
     compensation,
     drafting,
     events,
     guard,
     notices,
+    payment_handlers,
     persistence,
     secure_transfer,
+    shop_client,
 )
 from support_agent.schemas import (
     AddCustomerMessageInput,
     CheckReplyInput,
+    Conversation,
     CreateInquiryInput,
     GetInquiryInput,
     ListInquiriesInput,
@@ -366,7 +370,8 @@ async def request_compensation(request: AgentRequest) -> AgentResult:
     parsed = _parse(request, RequestCompensationInput)
     if isinstance(parsed, AgentResult):
         return parsed
-    if STORE.get(parsed.inquiry_id) is None:
+    inquiry = STORE.get(parsed.inquiry_id)
+    if inquiry is None:
         return _not_found(request, parsed.inquiry_id)
 
     context_id = request.meta.context_id
@@ -392,8 +397,53 @@ async def request_compensation(request: AgentRequest) -> AgentResult:
         LEDGER.results[key] = output
         return _done(request, output, outcome="not_eligible", evidence=evidence)
 
+    if parsed.reason_code == payment_handlers.PAYMENT_FAILURE_REASON:
+        blocked = await _unverified_payment_failure(request, inquiry, parsed.buyer_id, evidence)
+        if blocked is not None:
+            if blocked.outcome == "not_eligible":  # 일시 장애는 저장 안 함
+                LEDGER.results[key] = blocked.output
+            return blocked
+
     async with LEDGER.lock(context_id):  # 같은 사건의 요청은 한 건씩 (같은 번호를 읽는 경쟁 방지)
         return await _request_coupon(request, parsed.buyer_id, decision, key, evidence)
+
+
+async def _unverified_payment_failure(
+    request: AgentRequest, inquiry: Conversation, buyer_id: str, evidence: Evidence
+) -> AgentResult | None:
+    """결제 장애 보상은 그 고객의 주문에 결제 서버 문제로 실패한 기록이 있을 때만 요청한다.
+
+    재무 감사(`compensation_outside_impact`)가 영향 고객 밖의 보상을 잡으므로, 사유 코드만 믿지
+    않고 본인 주문의 결제 기록으로 확인한다. 확인이 되면 None, 안 되면 돌려줄 결과다.
+    기록을 읽지 못한 일시 장애는 `shop_unavailable`로 알리고 저장하지 않아 다시 요청할 수 있다.
+    """
+
+    def refuse(reason: str) -> AgentResult:
+        return _done(
+            request,
+            {"eligible": False, "reason": reason},
+            outcome="not_eligible",
+            evidence=evidence,
+        )
+
+    if not inquiry.order_id or not isinstance(inquiry.order_id, str):
+        return refuse("문의에 주문이 없어 결제 실패를 확인할 수 없다")
+    if shop_client.order_source() == "seed":
+        return refuse("주문 출처가 시드라 결제 실패를 확인할 수 없다")
+    try:
+        data = await shop_client.fetch_order_facts(inquiry.order_id)
+    except shop_client.ShopError as exc:
+        return error_result(request.meta, TaskStatus.FAILED, "shop_unavailable", str(exc))
+    owner = buyer_ids.from_number(inquiry.user_id) if inquiry.user_id is not None else None
+    if data is None or owner is None or data.get("buyer_id") != owner or buyer_id != owner:
+        return refuse("주문을 확인할 수 없다")  # 남의 주문·다른 구매자 여부를 알리지 않는다
+    faults = payment_handlers.server_fault_attempts(data)
+    if not faults:
+        return refuse("결제 서버 문제로 실패한 기록이 없다 (카드 거절 등은 보상 대상이 아니다)")
+    evidence.ref_ids.extend(
+        [f"order:{data['order_id']}"] + [f"payment:{p['payment_id']}" for p in faults]
+    )
+    return None
 
 
 async def _request_coupon(
