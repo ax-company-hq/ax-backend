@@ -207,7 +207,14 @@ async def _dispatch(envelope: EventEnvelope) -> None:
 
 
 async def _handle_entry(client: Any, entry_id: str, fields: dict[str, str]) -> None:
-    """한 건을 처리하고 끝나면 ack한다. 실패하면 ack하지 않아 다시 받게 둔다."""
+    """한 건을 처리하고 끝나면 ack한다. 실패하면 ack하지 않아 다시 받게 둔다.
+
+    구독하지 않은 종류는 봉투를 검증하기 전에 종류 문자열만 보고 ack한다. 그래서 새 이벤트 종류가
+    계약에 더해져도 아직 모르는 소비자가 검증 실패로 죽은 편지함에 쌓지 않는다.
+    """
+    if fields.get("type") not in {t.value for types, _ in _subscribers for t in types}:
+        await client.xack(stream_name(), _group(), entry_id)
+        return
     try:
         envelope = EventEnvelope.model_validate_json(fields["envelope"])
     except Exception:  # 읽을 수 없는 건은 다시 받아도 같으니 죽은 편지함으로

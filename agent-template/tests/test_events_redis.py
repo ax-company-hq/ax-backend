@@ -175,3 +175,21 @@ def test_real_mode_without_redis_url_raises_a_not_implemented_subclass(monkeypat
     monkeypatch.delenv("REDIS_URL", raising=False)
     with pytest.raises(NotImplementedError):  # 기존 호출부(finance)의 except가 그대로 받는다
         events.subscribe([EventType.METRIC_ANOMALY], lambda env: None)  # type: ignore[arg-type,return-value]
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_event_type_is_acked_before_validation(real_mode) -> None:
+    got: list[str] = []
+
+    async def handler(env: EventEnvelope) -> None:
+        got.append(env.event_id)
+
+    events.subscribe([EventType.METRIC_ANOMALY], handler)
+    # 이 소비자가 아직 모르는 새 이벤트 종류(검증하면 실패한다)가 버스에 올라왔다
+    await real_mode.xadd("ax:test-events", {"type": "future.event_kind", "envelope": '{"x": 1}'})
+    await events.publish(make("evt_known"))
+    await events.poll_once()
+    assert got == ["evt_known"]
+    pending = await real_mode.xpending("ax:test-events", "orchestrator")
+    assert pending["pending"] == 0  # 모르는 종류도 ack됐고
+    assert await stream_len(real_mode, "ax:test-events:dead") == 0  # 죽은 편지함에도 안 쌓였다
