@@ -9,7 +9,7 @@ from pydantic import Field
 from ax_contracts.schemas.common import AxModel
 
 MAX_BUYERS = 50
-BUYER_PATTERN = r"^buy_\d{4}$"
+BUYER_PATTERN = r"^buy_[0-9]{4}$"  # \d는 유니코드 숫자(예: buy_١٢٣٤)도 받아서 쓰지 않는다
 
 
 class RequestIncidentCompensationInput(AxModel):
@@ -26,7 +26,7 @@ class RequestIncidentCompensationInput(AxModel):
 
 class IncidentCouponResult(AxModel):
     buyer_id: str
-    status: Literal["requested", "held", "duplicate", "failed", "skipped"]
+    status: Literal["requested", "held", "pending", "duplicate", "failed", "skipped"]
     sequence: int | None = None
     marketing_status: str | None = None
     marketing_outcome: str | None = None
@@ -40,5 +40,6 @@ class IncidentCompensationOutput(AxModel):
     count: int
     requested: int
     results: list[IncidentCouponResult]
-    stopped_early: bool = False  # 마케팅에 닿지 않아 남은 고객은 보내지 않았다
+    stopped_early: bool = False  # 마케팅에 닿지 않거나 거부·검증 중이라 남은 고객은 보내지 않았다
+    limit_reached: bool = False  # 사건당 인원·합계 상한에 닿아 남은 고객은 보내지 않았다
     notes: list[str] = Field(default_factory=list)

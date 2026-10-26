@@ -22,6 +22,9 @@ UNIT_VALUE_BY_REASON: dict[str, int] = {
     "defect": 3000,
 }
 MAX_COUNT = 3
+# 같은 사건에서 여러 번 불러도 넘지 못하는 보상 상한 (시드 값, 재무가 확정). 1회 호출은 50명까지다.
+MAX_INCIDENT_BUYERS = 100
+MAX_INCIDENT_TOTAL = 600_000
 # 약속한 배송일을 이만큼(일) 이상 넘기면 지연 보상 후보다. 정책표와 같은 시드다.
 LATE_MIN_DAYS = 1
 

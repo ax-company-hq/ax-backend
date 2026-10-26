@@ -44,6 +44,26 @@ def _key(context_id: str, buyer_id: str, reason_code: str) -> str:
     return f"{context_id}:request_compensation:{buyer_id}:{reason_code}"
 
 
+def issued_in_incident(context_id: str) -> tuple[int, int]:
+    """이 사건에서 쿠폰 지급이 끝난 (구매자 수, 합계 원). 멱등 기록(`LEDGER.results`)에서 센다.
+
+    문의 경로(`request_compensation`)로 보상한 고객도 사건 번호로 시작하는 키면 포함한다.
+    마케팅이 이전 결과에 이은 건(`linked_duplicate`)과 지급 전인 보류는 넣지 않는다.
+    """
+    prefix = f"{context_id}:"
+    buyers = total = 0
+    for key, output in h.LEDGER.results.items():
+        if not key.startswith(prefix) or not isinstance(output, dict):
+            continue
+        if output.get("marketing_status") != "completed":
+            continue
+        if output.get("marketing_outcome") == "linked_duplicate":
+            continue
+        buyers += 1
+        total += int(output.get("total_value") or 0)
+    return buyers, total
+
+
 async def request_incident_compensation(request: AgentRequest) -> AgentResult:
     parsed = h._parse(request, RequestIncidentCompensationInput)
     if isinstance(parsed, AgentResult):
@@ -76,14 +96,24 @@ async def request_incident_compensation(request: AgentRequest) -> AgentResult:
     )
 
     results: list[IncidentCouponResult] = []
-    stopped = False
+    stopped = limit_reached = False
     async with h.LEDGER.lock(context_id):  # 같은 사건의 요청은 한 건씩 (sequence가 이어지게)
+        issued_buyers, issued_total = issued_in_incident(context_id)
+        added_buyers = added_total = 0  # 이번 호출에서 새로 요청한 몫 (보류 포함)
         for buyer in buyers:
             if stopped:
                 results.append(IncidentCouponResult(buyer_id=buyer, status="skipped"))
                 continue
             key = _key(context_id, buyer, parsed.reason_code)
             known = key in h.LEDGER.results
+            if not known and (
+                issued_buyers + added_buyers + 1 > compensation.MAX_INCIDENT_BUYERS
+                or issued_total + added_total + decision.total_value
+                > compensation.MAX_INCIDENT_TOTAL
+            ):
+                limit_reached = True  # 이미 한 요청의 재전송은 막지 않고, 새 요청만 막는다
+                results.append(IncidentCouponResult(buyer_id=buyer, status="skipped"))
+                continue
             sent = await h._request_coupon(request, buyer, decision, key, evidence)
             output = sent.output
             marketing = output.get("marketing_output") or {}
@@ -97,6 +127,8 @@ async def request_incident_compensation(request: AgentRequest) -> AgentResult:
                 status = "requested"
             elif marketing_status == "input-required":  # 한도 초과로 사람 승인을 기다린다 (C 보류)
                 status = "held"
+            elif marketing_status == "working":  # 재무 검증 중이라 번호가 소비되지 않았다
+                status = "pending"
             else:
                 status = "failed"
             results.append(
@@ -110,10 +142,21 @@ async def request_incident_compensation(request: AgentRequest) -> AgentResult:
                     total_value=decision.total_value if status == "requested" else 0,
                 )
             )
-            if not reached or marketing_status == "rejected":
-                stopped = True  # 닿지 않았거나 요청을 거부했다 (번호 건너뜀·권한). 계속 안 보낸다
+            if status in ("requested", "held"):
+                added_buyers += 1
+                added_total += decision.total_value
+            if not reached or marketing_status in ("rejected", "working"):
+                # 닿지 않았거나, 거부했거나(번호 건너뜀·권한), 검증 중이라 번호를 못 썼다.
+                # 같은 번호로 다음 고객을 보내면 어긋나므로 멈추고 나중에 다시 요청한다
+                stopped = True
 
-    bad = [r for r in results if r.status in ("failed", "skipped")]
+    bad = [r for r in results if r.status in ("failed", "skipped", "pending")]
+    notes = ["지급은 마케팅 issue_coupon이 재무 검증과 한도 검사를 거쳐 한다"]
+    if limit_reached:
+        notes.append(
+            f"사건당 상한(최대 {compensation.MAX_INCIDENT_BUYERS}명, "
+            f"{compensation.MAX_INCIDENT_TOTAL}원)에 닿아 남은 고객은 보내지 않았다"
+        )
     body = IncidentCompensationOutput(
         reason_code=parsed.reason_code,
         unit_value=decision.unit_value,
@@ -121,7 +164,8 @@ async def request_incident_compensation(request: AgentRequest) -> AgentResult:
         requested=sum(1 for r in results if r.status == "requested"),
         results=results,
         stopped_early=stopped,
-        notes=["지급은 마케팅 issue_coupon이 재무 검증과 한도 검사를 거쳐 한다"],
+        limit_reached=limit_reached,
+        notes=notes,
     )
     return h._done(
         request,
