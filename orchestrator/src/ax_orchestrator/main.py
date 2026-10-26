@@ -38,6 +38,8 @@ class DemoRequest(BaseModel):
     fail_marketing: bool = False  # 공지 게시가 한 번 실패(재시도로 복구)
     wrong_owner: bool = False  # 공지 게시가 소관 아님으로 거절 → 이관 부서 없음 → 이관 큐로 넘김
     infra_card_empty: bool = False  # 인프라 카드 수집 실패(= 현재 dev 상태)
+    undetermined: bool = False  # 원인 미확정 → 롤백하지 않고 이관 큐로 넘김
+    not_recovered: bool = False  # 복구 확인 실패 → 정상화 공지 없이 이관 큐로 넘김
 
 
 class Decision(BaseModel):
@@ -66,6 +68,10 @@ class AppState:
             fakes.script("marketing", "publish_notice", "fail")
         if demo.wrong_owner:
             fakes.script("marketing", "publish_notice", "forbidden")
+        if demo.undetermined:
+            fakes.script("infra", "diagnose_incident", "undetermined")
+        if demo.not_recovered:
+            fakes.script("infra", "verify_recovery", "not_recovered")
         real = real_depts_from_env(DEPTS)
         if real:
             set_agent_name("orchestrator")
