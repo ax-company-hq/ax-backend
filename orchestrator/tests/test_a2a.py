@@ -122,3 +122,50 @@ async def test_missing_notice_id_is_not_invented(harness) -> None:
     await manager.wait(inc.context_id)
     assert inc.steps["publish_notice"].status == "transfer_queued"
     assert "notice_id" not in inc.shared  # 게시되지 않은 공지의 번호는 만들어 내지 않는다
+
+
+@pytest.mark.asyncio
+async def test_active_incident_carries_the_notice_id_once_published(harness) -> None:
+    manager = IncidentManager(await harness.start(), scenario_a)
+    inc = await manager.handle(_event("evt_1"))
+    await manager.wait(inc.context_id)
+    found = manager.find_active("payment", inc.opened_at)
+    assert found is inc
+    from ax_orchestrator.a2a import find_active_incident
+
+    request = AgentRequest(
+        meta=RequestMeta(
+            context_id="ctx_req_test",
+            token="mock:support",
+            path=["support"],
+            deadline=datetime.now(UTC) + timedelta(seconds=30),
+        ),
+        skill="find_active_incident",
+        input={"component": "payment", "occurred_at": inc.opened_at.isoformat()},
+    )
+    result = await find_active_incident(lambda: manager)(request)
+    assert result.output["found"] is True
+    assert result.output["notice_id"] == inc.shared["notice_id"]
+
+
+@pytest.mark.asyncio
+async def test_active_incident_has_no_notice_id_before_the_notice(harness) -> None:
+    harness.fakes.script("marketing", "publish_notice", "forbidden")  # 공지가 게시되지 않음
+    manager = IncidentManager(await harness.start(), scenario_a)
+    inc = await manager.handle(_event("evt_1"))
+    await manager.wait(inc.context_id)
+    from ax_orchestrator.a2a import find_active_incident
+
+    request = AgentRequest(
+        meta=RequestMeta(
+            context_id="ctx_req_test",
+            token="mock:support",
+            path=["support"],
+            deadline=datetime.now(UTC) + timedelta(seconds=30),
+        ),
+        skill="find_active_incident",
+        input={"component": "payment", "occurred_at": inc.opened_at.isoformat()},
+    )
+    result = await find_active_incident(lambda: manager)(request)
+    assert result.output["found"] is True
+    assert result.output["notice_id"] is None
