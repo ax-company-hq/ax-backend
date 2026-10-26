@@ -497,9 +497,16 @@ async def plan_checks(body: CheckPlanInput) -> dict:
 
 
 @router.get("/communications")
-def communications(dept: str | None = None, context_id: str | None = None) -> dict:
-    """부서별 소통 탭. 공통 로그의 A2A 요청·응답을 한 줄씩 보여 준다 (코드가 만든 필드만)."""
-    lines, truncated = communication_log.list_communications(dept, context_id)
+def communications(
+    dept: str | None = None, context_id: str | None = None, include_events: bool = False
+) -> dict:
+    """부서별 소통 탭. 공통 로그의 A2A 요청·응답을 한 줄씩 보여 준다 (코드가 만든 필드만).
+
+    `include_events=true`면 발행된 이벤트 줄(`kind="event"`, 종류만)도 함께 보여 준다.
+    """
+    lines, truncated = communication_log.list_communications(
+        dept, context_id, include_events=include_events
+    )
     body = ok(lines, total=len(lines))
     body["meta"]["truncated"] = truncated
     return body

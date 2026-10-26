@@ -1,8 +1,10 @@
 """부서별 소통 탭: 공통 로그(`CommonLogQuery`/`CommonLogResult`)의 A2A 요청·응답을 한 줄로 만든다.
 
 목록에는 코드가 만든 필드(누가·누구에게·skill·결과·시각·context_id·execution_id)만 담는다.
-`payload`와 고객 원문은 한 줄에 넣지 않는다. 읽기는 `set_reader`로 꽂은 함수, 아니면 공통 로그
-저장소(`AX_COMMON_LOG_DB`)를 쓰고, 둘 다 없으면(목 모드 제외) 503을 돌려준다.
+`payload`와 고객 원문은 한 줄에 넣지 않는다. 발행된 이벤트(`event_published`)는 기본으로 빼고,
+`include_events`일 때만 이벤트 종류만 담은 한 줄(`kind="event"`)로 보여 준다.
+읽기는 `set_reader`로 꽂은 함수, 아니면 공통 로그 저장소(`AX_COMMON_LOG_DB`)를 쓰고,
+둘 다 없으면(목 모드 제외) 503을 돌려준다.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ CommunicationOutcome = Literal[
     "completed", "rejected", "failed", "held", "needs_human", "in_progress"
 ]
 
-# 소통으로 보는 로그 종류. 이벤트 발행·기억 참조는 부서 간 대화가 아니다
+# 소통으로 보는 로그 종류. 기억 참조는 부서 간 대화가 아니고, 이벤트 발행은 옵션이다(EVENT_KIND)
 COMM_KINDS = [
     "request_received",
     "result_sent",
@@ -30,6 +32,7 @@ COMM_KINDS = [
     "escalated",  # 이관 큐로 넘긴 건은 `needs_human`으로 보인다
     "rejected",
 ]
+EVENT_KIND = "event_published"  # `include_events=true`일 때만 소통 탭에 보이는 이벤트 줄
 MAX_LIMIT = 1000
 
 # 팀 기준 부서 이름(.github/team.yml)과 에이전트 이름(Agent Card, 공통 로그의 `source`)이 다른 곳.
@@ -57,6 +60,9 @@ class CommunicationLine(BaseModel):
     outcome: CommunicationOutcome
     context_id: str | None = None
     execution_id: str | None = None
+    # `message`는 A2A 요청·응답 한 줄, `event`는 발행된 이벤트 한 줄(종류만 담고 내용은 없다)
+    kind: Literal["message", "event"] = "message"
+    event_type: str | None = None
 
 
 _reader: LogReader | None = None
@@ -119,6 +125,13 @@ def _mock_records() -> CommonLogResult:
                 task_status="rejected",
                 requester="support",
             ),
+            rec(
+                5,
+                4,
+                source="support",
+                kind="event_published",
+                payload={"event_type": "support.inquiry_received", "event_id": "evt_mock1"},
+            ),
         ]
     )
 
@@ -140,6 +153,8 @@ def _read(query: CommonLogQuery) -> CommonLogResult:
 
 def _outcome(r: LogRecord) -> CommunicationOutcome:
     decision = r.payload.get("decision")
+    if r.kind == EVENT_KIND:  # 발행은 사실이다. 진행 중·실패 같은 상태가 없다
+        return "completed"
     if r.kind == "rejected" or r.task_status == "rejected":
         return "rejected"
     if r.task_status in ("failed", "canceled"):  # 거절(정책)과 달리 실행 오류·시간 초과
@@ -153,7 +168,22 @@ def _outcome(r: LogRecord) -> CommunicationOutcome:
     return "in_progress"
 
 
+def _event_line(r: LogRecord) -> CommunicationLine:
+    event_type = r.payload.get("event_type")
+    return CommunicationLine(
+        log_id=r.log_id,
+        occurred_at=r.occurred_at,
+        from_agent=r.source,
+        outcome="completed",
+        context_id=r.context_id,
+        kind="event",
+        event_type=event_type if isinstance(event_type, str) else None,
+    )
+
+
 def _line(r: LogRecord) -> CommunicationLine:
+    if r.kind == EVENT_KIND:
+        return _event_line(r)
     execution_id = r.payload.get("execution_id")
     # 요청은 requester → source, 그 밖의 결과·결정은 source → requester 방향이다
     sent_by_requester = r.kind == "request_received"
@@ -170,16 +200,23 @@ def _line(r: LogRecord) -> CommunicationLine:
 
 
 def list_communications(
-    dept: str | None, context_id: str | None, limit: int = MAX_LIMIT
+    dept: str | None,
+    context_id: str | None,
+    limit: int = MAX_LIMIT,
+    include_events: bool = False,
 ) -> tuple[list[CommunicationLine], bool]:
-    """(줄 목록 오름차순, 잘림 여부). `dept`가 보냈거나 받은 줄만 남긴다."""
+    """(줄 목록 오름차순, 잘림 여부). `dept`가 보냈거나 받은 줄만 남긴다.
+
+    `include_events`면 발행된 이벤트 줄(`kind="event"`)도 시간순으로 함께 보여 준다.
+    """
+    kinds = [*COMM_KINDS, EVENT_KIND] if include_events else COMM_KINDS
     query = CommonLogQuery(
         context_ids=[context_id] if context_id else [],
-        kinds=COMM_KINDS,  # type: ignore[arg-type]
+        kinds=kinds,  # type: ignore[arg-type]
         limit=min(max(limit, 1), MAX_LIMIT),
     )
     result = _read(query)
-    lines = [_line(r) for r in result.records]
+    lines = [_line(r) for r in result.records if r.kind in kinds]
     if dept:
         wanted = agent_name(dept)
         lines = [x for x in lines if wanted in (x.from_agent, x.to_agent)]
