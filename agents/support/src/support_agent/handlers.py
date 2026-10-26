@@ -379,6 +379,12 @@ async def set_inquiry_status(request: AgentRequest) -> AgentResult:
 
     async def apply() -> tuple[dict[str, Any], bool]:
         conversation = STORE.set_status(parsed.inquiry_id, parsed.status)
+        # 클레임 저장소는 claim_handlers가 만든다 (그쪽이 이 모듈을 import하므로 늦게 가져온다)
+        from support_agent import claim_handlers
+
+        linked = [c for c in claim_handlers.CLAIMS.list() if c.conversation_id == conversation.id]
+        claim = max(linked, key=lambda c: c.id, default=None)
+        await events.emit_inquiry_resolved(request, conversation, claim)
         return conversation.model_dump(mode="json"), False
 
     return await _write(
