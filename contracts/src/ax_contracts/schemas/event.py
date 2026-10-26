@@ -39,6 +39,7 @@ class EventType(StrEnum):
     # 고객지원
     SUPPORT_INQUIRY_RECEIVED = "support.inquiry_received"
     SUPPORT_INQUIRY_SURGE = "support.inquiry_surge"
+    SUPPORT_INQUIRY_RESOLVED = "support.inquiry_resolved"
     # 데이터분석
     METRIC_ANOMALY = "metric.anomaly"
     # 인프라(DejaFix 어댑터)
@@ -309,6 +310,24 @@ class SupportInquiryReceivedData(AxModel):
     message_count: int = Field(ge=1)
 
 
+class SupportInquiryResolvedData(AxModel):
+    """`support.inquiry_resolved`. 고객지원이 문의를 닫을 때(해결·이관) 한 번 발행한다.
+
+    사실만 담는다. 고객 원문과 판단 문장은 담지 않고, 사유는 열거형 코드값이다.
+    `order_id`는 다른 주문 이벤트와 같은 `ord_` 문자열 ID, `coupon_id`는 `cpn_` ID
+    (마케팅 `coupon.issued`와 이어 보기), `refund_amount`는 정수 원이다.
+    """
+
+    inquiry_id: int
+    order_id: str | None = None
+    status: Literal["resolved", "escalated"]
+    resolution: Literal["answered", "claim_decided", "compensated", "escalated"]
+    claim_id: int | None = None
+    claim_decision: Literal["approve", "reject"] | None = None
+    coupon_id: str | None = None
+    refund_amount: int | None = Field(default=None, ge=0)
+
+
 # 이벤트 종류 → data 모델. 발행 담당이 새 data 모델을 추가할 때 여기에 한 줄 더한다.
 EVENT_DATA_MODELS: dict[EventType, type[BaseModel]] = {
     EventType.SHOP_DEGRADED: ShopDegradedData,
@@ -334,4 +353,5 @@ EVENT_DATA_MODELS: dict[EventType, type[BaseModel]] = {
     EventType.SAFETY_ACTION_HELD: SafetyActionHeldData,
     EventType.SAFETY_REVIEW_DECIDED: SafetyReviewDecidedData,
     EventType.SUPPORT_INQUIRY_RECEIVED: SupportInquiryReceivedData,
+    EventType.SUPPORT_INQUIRY_RESOLVED: SupportInquiryResolvedData,
 }

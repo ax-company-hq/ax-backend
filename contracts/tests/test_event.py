@@ -63,12 +63,13 @@ def test_unknown_event_type_is_rejected() -> None:
 
 def test_event_type_catalog() -> None:
     values = {t.value for t in EventType}
-    assert len(values) == 24
+    assert len(values) == 25
     for expected in (
         "order.created",
         "payment.failed",
         "shop.recovered",
         "support.inquiry_received",
+        "support.inquiry_resolved",
         "metric.anomaly",
         "infra.anomaly_detected",
         "incident.resolved",
