@@ -176,3 +176,52 @@
                 "severity": "high"|"medium"|"low", "title": "같은 고객에게 한도 바로 아래 쿠폰 3번",
                 "detail": "buyer_0007에게 1시간 안에 9,900원 쿠폰 3장 (한도 10,000원)", "refs": ["cpn_...", "exe_..."]} ]}
 ```
+
+## 12. 시나리오 A(결제 장애)에서 재무가 하는 일 (2026-10-26 추가)
+
+근거: `scn-a-server-incident-full.md`(재현, 2026-10-26 11:58) 5장 9·10·17단계.
+
+| 단계 | 재무가 하는 일 | 시작 | 메모 |
+|---|---|---|---|
+| ⑨ 쿠폰 장부 | 보상 쿠폰 지급(`coupon.issued`)을 사건(`ctx_inc_`)별 장부에 올린다 | 스스로 | 이벤트 버스가 없으면(실제 모드, agent-template 구독 미구현) **안전 관문 실행 기록(`GET /api/safety/executions`)의 `issue_coupon`**으로 장부를 채운다(읽기 API, 규칙 4). 장부 출처를 `ledger_source`로 표시 |
+| ⑩ 손실 리포트 | 피해(데이터 `impact_analysis` 그대로) + 보상 합계 = 총 손실 | 총괄(`loss_aggregation`) | 피해 숫자를 다시 계산하지 않는다 |
+| ⑰ 사건 후 감사 | 보상 받은 고객 ⊂ 영향 고객, 같은 사건·고객 쿠폰 1건, 고객당·사건당 한도, 금액 재계산 | 총괄·데이터(`audit_report`), 화면 | 실시간 건별 승인이 아니다. 한도 초과는 안전 관문이 이미 C로 보류한다 |
+
+재무가 하지 않는 일(이 시나리오): 쿠폰 건별 승인(안전 관문 A/C), 보상 대상·단가 판정(고객지원 정책표), 쿠폰 지급(마케팅).
+
+### 12-1. API
+
+```jsonc
+// GET /api/finance/incidents  → 재무가 아는 사건 목록 (장부·손실 리포트·안전 관문 기록에 나온 ctx_inc_)
+{"data": [ {"context_id": "ctx_inc_…", "component": "payment"|null, "opened_at": "…"|null,
+            "damage_amount": 95000|null, "compensation_total": 8000, "coupon_count": 4, "held_count": 0,
+            "loss_total": 103000|null, "checks_ok": true|false|null} ],
+ "meta": {"mock": bool, "ledger_source": "events"|"safety_executions"|"seed"}}
+
+// GET /api/finance/incidents/{context_id}
+{"data": {
+  "context_id": "ctx_inc_…", "component": "payment"|null, "window": {"from": "…", "to": "…"}|null,
+  "impact": {"failed_orders": 6, "affected_customers": 4, "damage_amount": 95000,
+             "by_category": [{"category": "books", "orders": 4, "amount": 82500}, {"category": "stationery", "orders": 2, "amount": 12500}],
+             "affected_customer_ids": ["buy_0001", "buy_0002", "buy_0003", "buy_0004"],
+             "source": "data.impact_analysis", "collected_at": "…"} | null,
+  "compensation": {
+    "coupons": [ {"buyer_id": "buy_0001", "execution_id": "exe_…", "coupon_id": "cpn_…"|null, "count": 1, "unit_value": 2000, "amount": 2000,
+                  "purpose_code": "compensation", "reason_code": "payment_failure"|null, "grade": "A"|"C",
+                  "status": "executed"|"held"|"rejected"|"failed", "review_id": null, "at": "…", "in_impact": true|false|null} ],
+    "total_executed": 8000, "total_held": 0, "count_executed": 4, "count_held": 0},
+  "limits": {"per_customer": {"limit": 50000, "max_used": 2000, "buyer_id": "buy_0001"},
+             "per_incident": {"limit": 1000000, "used": 8000, "remaining": 992000}},
+  "loss": {"damage_amount": 95000, "compensation_total": 8000, "total": 103000, "status": "complete"|"partial", "missing": []},
+  "checks": [ {"code": "recipients_in_impact"|"one_coupon_per_buyer"|"per_customer_limit"|"per_incident_limit"|"amount_recheck",
+               "ok": true|false|null, "title": "…", "detail": "…", "refs": ["exe_…"]} ],
+  "steps": [ {"no": "9", "title": "쿠폰 장부 기록", "status": "done"|"waiting"|"unavailable", "detail": "…"},
+             {"no": "10", "title": "손실 리포트", "status": "…", "detail": "…"},
+             {"no": "17", "title": "사건 후 감사", "status": "…", "detail": "…"} ],
+  "ledger_source": "events"|"safety_executions"|"seed"},
+ "meta": {"mock": bool, "unavailable": []}}
+// 없는 사건: 404 {"error": {"code": "not_found", …}}
+```
+
+`audit_report`에 finding `compensation_outside_impact`(high)를 더한다: 사건 보상 쿠폰을 받은 구매자가 그 사건의 데이터 영향 고객 목록에 없으면.
+목 시드: 사건 1건이 데이터 목과 같은 숫자(6건·4명 `buy_0001~0004`·95,000원, 도서 4건 82,500원·문구 2건 12,500원)이고 보상 쿠폰 4장 × 2,000원(`payment_failure`, A, executed). 감사 시연용으로 지난 사건 1건에 영향 고객이 아닌 구매자 쿠폰 1장을 둔다.
