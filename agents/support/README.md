@@ -24,6 +24,8 @@
 | `set_inquiry_status` | A | dashboard-api, orchestrator | 상태 변경 |
 | `request_compensation` | A | dashboard-api, orchestrator | 보상 단가 판정 + 마케팅 `issue_coupon(compensation)` 직렬 요청 (DEP-CS-02) |
 | `suggest_compensation` | read | dashboard-api, orchestrator | 문의의 주문 사실로 지연 보상 후보를 제안 (쿠폰은 안 냄, 승인은 사람이) |
+| `customer_signals` | read | dashboard-api, orchestrator | 구매자 한 명의 이탈·재문의 위험 신호(미답 문의·감정·잦은 문의·거절/잦은 클레임)를 점수 기준표로 low·medium·high와 이유로 알려 줌 |
+| `list_at_risk_customers` | read | dashboard-api, orchestrator | 위험이 medium/high 이상인 구매자를 점수 높은 순으로 (리텐션·후속 연락 대상 목록) |
 | `request_change` | A | dashboard-api, orchestrator | 변경 요청을 기획개발 `create_ticket`으로 보내고 `ctx_req_`를 문의와 연결 |
 | `list_change_requests` | read | dashboard-api, orchestrator | 문의·변경 요청 연결 목록 |
 | `list_claims`, `get_claim`, `claim_stats`, `claim_queue` | read | dashboard-api, orchestrator | 클레임 목록·상세(판정 근거·감사 기록)·건수·보상 큐 |
@@ -40,6 +42,7 @@
 - `create_inquiry`·`add_customer_message`는 선택 입력 `notice_id`가 있으면 마케팅 `get_notice`로 공지 사실(본문·약속·기간)을 읽어 답변 근거(`notice:<id>`)의 맨 앞에 넣는다. 공지를 찾지 못하거나 마케팅이 응답하지 않으면 근거 없이 진행한다 ("확인할 수 없음").
 - `request_compensation`은 단가를 코드 정책표(`compensation.py`)로 판정하고, 사건(`context_id`)별로 `sequence` 1부터 한 건씩 마케팅에 보낸다. 지급·`execute()`·재무 교차검증은 마케팅 쪽이라 support는 자기 상태를 바꾸지 않고 safety 등록도 필요 없다. 표에 없는 사유는 `not_eligible`. 번호는 마케팅이 소비한 경우(지급·재무 거절·보류·실행 실패)에만 올리고, 재무 검증 중(`working`)·번호/입력 오류·타임아웃·연결 실패는 같은 번호로 다시 보낸다. 같은 사건의 요청은 락으로 한 건씩 처리한다.
 - `suggest_compensation`(읽기)은 보상 후보만 제안한다 (`suggest_handlers.py`). 고객 문장은 읽지 않고, 문의의 주문(shop-api, 목 모드는 시드)의 약속 배송일·배송 완료 시각으로 코드가 지연 일수(채운 일수, 배송 전이면 지금까지)를 세어 `LATE_MIN_DAYS`(1일) 이상이면 `late_delivery` 후보를 돌려준다. 약속일이 없으면 `확인할 수 없음`으로 돌려주고 지어내지 않는다. 문의의 구매자(`buy_<번호>`)와 주문의 구매자가 다르면 not_found다. 응답의 `request`를 담당자가 승인하면 그대로 `request_compensation`에 보낸다 (자동 발급 없음: 마케팅 `issue_coupon`은 B 등급이라 재무 검증을 거치고 기준 금액 이상은 안전 레이어가 보류한다).
+- `customer_signals`·`list_at_risk_customers`(읽기)는 데이터분석팀 정리표의 이탈 예측·고객 행동 분석을 고객지원 데이터로 좁혀 적용한 것이다 (`customer_signals.py`). 문의·클레임 기록에서 코드가 점수를 센다: 하루 넘게 답 못 받은 문의 3점, 화난 메시지 건당 2점·답답한 메시지 건당 1점(각 2건까지), 30일 3건 이상 문의 2점, 이관 1점, 90일 안 거절된 클레임 2점, 클레임 2건 이상 2점. 합이 3점 이상 medium, 6점 이상 high이고 `recommended_action`은 none·proactive_check·personal_followup이다. 클레임이 90일에 3건 이상이면 이탈과 별개로 `claim_pattern_review`를 켠다. 구매자 가명 ID와 건수·이유 코드만 돌려주고 이름과 문의 원문은 읽지도 담지도 않는다. 구매 이력이 필요한 RFM·LTV·코호트는 data 소관이라 여기서 하지 않는다. 위험 단계는 사실에서 코드가 낸 값이라 쓰는 사람이 확인한다.
 
 ## 다국어와 키워드 (`languages.py`, `drafting.py`, `guard.py`)
 - 고객 메시지의 언어는 LLM이 아니라 **코드가 문자 종류로 판별**한다 (`languages.detect`): 한글 `ko`, 가나(한자 포함) `ja`, 한자만 `zh`, 라틴 문자 `en`, 그 밖(키릴·아랍·태국어 등) `other`. 분류 결과 `classification.language`에 담긴다.
