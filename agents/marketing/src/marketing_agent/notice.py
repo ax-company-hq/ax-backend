@@ -79,11 +79,39 @@ class NoticeStore:
         self._by_draft[draft.draft_id] = notice_id
         return notice_id
 
-    def _status(self, notice_id: str, draft: NoticeDraft) -> str:
-        expired = draft.valid_to is not None and self.now() > draft.valid_to
+    def _status(self, notice_id: str, draft: NoticeDraft, at: datetime | None = None) -> str:
+        expired = draft.valid_to is not None and (at or self.now()) > draft.valid_to
         return "ended" if notice_id in self._ended or expired else "published"
 
-    def view(self, notice_id: str) -> NoticeView:
+    def active(
+        self,
+        *,
+        component: str | None = None,
+        channel_code: str | None = None,
+        at: datetime | None = None,
+        limit: int = 20,
+    ) -> tuple[list[NoticeView], int]:
+        """지금(또는 `at`) 게시 중인 공지를 최근 게시 순으로 돌려준다. (목록, 조건에 맞는 전체 수).
+
+        끝난 공지(복구 공지로 끝났거나 `valid_to`가 지난 것)와 아직 시작하지 않은 공지
+        (`valid_from` 전)는 뺀다. 복구 공지로 끝났는지는 `at`과 상관없이 지금 상태를 따른다.
+        """
+        moment = at or self.now()
+        matched: list[str] = []
+        for notice_id in reversed(list(self._published)):
+            _, draft = self._published[notice_id]
+            if self._status(notice_id, draft, moment) == "ended":
+                continue
+            if draft.valid_from is not None and moment < draft.valid_from:
+                continue
+            if component is not None and draft.facts.component != component:
+                continue
+            if channel_code is not None and draft.channel_code != channel_code:
+                continue
+            matched.append(notice_id)
+        return [self.view(notice_id, moment) for notice_id in matched[:limit]], len(matched)
+
+    def view(self, notice_id: str, at: datetime | None = None) -> NoticeView:
         """게시된 공지만 보여 준다(끝난 공지는 `status: ended`로). 없으면 '확인할 수 없음'이다."""
         found = self._published.get(notice_id)
         if found is None:
@@ -92,7 +120,7 @@ class NoticeStore:
         return NoticeView(
             found=True,
             notice_id=notice_id,
-            status=self._status(notice_id, draft),
+            status=self._status(notice_id, draft, at),
             channel_code=draft.channel_code,
             public_text=draft.public_text,
             facts=draft.facts,
