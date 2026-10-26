@@ -325,6 +325,11 @@ def create_app(db: Db | None = None, seed_data: bool = True) -> FastAPI:
         data, meta = await orchestrator_relay.incident(context_id)
         return _ok(data, **meta)
 
+    @app.get("/api/shop/admin/orchestrator/departments")
+    async def orchestrator_departments(_: str = Depends(_caller(ORCHESTRATOR_VIEWERS))) -> dict:
+        data, meta = await orchestrator_relay.departments()
+        return _ok(data, **meta)
+
     # --- 공지 배너(SHOP-08): 고객 화면이 읽고, 마케팅 관문 토큰만 게시·해제한다 ---------
     @app.get("/api/shop/banners")
     async def list_banners() -> dict:
