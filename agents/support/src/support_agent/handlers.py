@@ -395,7 +395,7 @@ def _sequence_consumed(reply: AgentResult) -> bool:
 
     소비한 경우: 지급·재무 거절(`completed`), 보류(`input_required`), 실행 실패·거부(`failed`,
     `execute_*`), 검증 시간 초과(`canceled`, 실행 정보가 output에 있음).
-    소비하지 않은 경우: 재무 검증 중(`working`), 번호 오류·입력 오류(`rejected`·그 밖의 `failed`),
+    소비하지 않은 경우: 검증·처리 중(`working`), 번호 오류·입력 오류(`rejected`·그 밖의 `failed`),
     우리 쪽 타임아웃·연결 실패(output 없음). 이때는 같은 번호로 다시 보낸다.
     """
     outcome = str(reply.outcome or "")
