@@ -48,11 +48,15 @@ class FindActiveIncidentOutput(AxModel):
     status: Literal["open", "resolved", "degraded"] | None = None
     opened_at: UtcDatetime | None = None
     closed_at: UtcDatetime | None = None
+    # 점검 공지가 게시됐으면 마케팅 공지 번호(`ntc_…`), 아직 없으면 None.
+    # 총괄이 사건에 보관한 값이다. 고객지원이 `get_notice`로 공지 사실을 읽을 때 쓰며,
+    # 지어내지 않는다.
+    notice_id: str | None = None
 
     @model_validator(mode="after")
     def _found_has_context(self) -> FindActiveIncidentOutput:
         if self.found and not self.context_id:
             raise ValueError("found=True면 context_id가 필요하다")
-        if not self.found and (self.context_id or self.status or self.opened_at):
+        if not self.found and (self.context_id or self.status or self.opened_at or self.notice_id):
             raise ValueError("found=False면 사건 필드를 비운다")
         return self
