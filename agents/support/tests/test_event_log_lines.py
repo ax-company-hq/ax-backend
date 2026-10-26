@@ -27,11 +27,9 @@ def _fresh(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
     monkeypatch.setenv("AGENT_TEMPLATE_MOCK", "1")
     monkeypatch.setattr(handlers, "STORE", InquiryStore())
     bus.reset_mock_bus()
-    events._logged.clear()
     common_log.set_store(common_log.SqliteLogStore(str(tmp_path / "common.db")))
     yield
     common_log.reset_store()
-    events._logged.clear()
 
 
 def create(key: str = "k-1") -> dict[str, Any]:

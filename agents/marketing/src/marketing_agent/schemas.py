@@ -73,6 +73,8 @@ class NoticeView(AxModel):
     promises: list[Promise] = Field(default_factory=list)
     valid_from: UtcDatetime | None = None
     valid_to: UtcDatetime | None = None
+    context_id: str | None = None  # 게시한 사건(`ctx_inc_`). 같은 사건의 공지를 가려내는 데 쓴다
+    published_at: UtcDatetime | None = None  # 게시한 시각(UTC)
     unknown_reason: str | None = None
 
 
