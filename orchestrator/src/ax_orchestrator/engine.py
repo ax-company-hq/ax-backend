@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from datetime import timedelta
 from typing import Any
 
@@ -150,9 +151,53 @@ class Engine:
             return
         inc.log(f"{step.label}: {entry.dept}에 요청")
         payload = step.build(inc)
-        await self._call_and_handle(inc, step, run, entry.dept, payload)
+        if step.split and len(payload.get(step.split[0]) or []) > step.split[1]:
+            await self._call_in_batches(inc, step, run, entry.dept, payload)
+        else:
+            await self._call_and_handle(inc, step, run, entry.dept, payload)
         self._judge(inc, step, run)
         self._keep(inc, step, run)
+
+    async def _call_in_batches(
+        self, inc: Incident, step: Step, run: StepRun, dept: str, payload: dict[str, Any]
+    ) -> None:
+        """부서가 한 번에 받는 개수에 상한이 있으면(`step.split`) 순서대로 나눠 부른다.
+
+        묶음마다 멱등 키가 달라 다시 보내도 한 번만 처리된다. 한 묶음이라도 끝내지 못하면
+        거기서 멈추고 단계를 실패로 남긴다(남은 묶음은 보내지 않고, 보낸 만큼만 결과에 남긴다).
+        """
+        field_name, size = step.split  # type: ignore[misc]
+        items = list(payload[field_name])
+        chunks = [items[i : i + size] for i in range(0, len(items), size)]
+        outputs: list[dict[str, Any]] = []
+        extra_attempts = 0  # 묶음 수가 아니라 다시 시도한 횟수만 센다
+        for n, chunk in enumerate(chunks, start=1):
+            part = replace(step, id=f"{step.id}.{n}")
+            run.output = {}
+            before = run.attempts
+            await self._call_and_handle(inc, part, run, dept, {**payload, field_name: chunk})
+            extra_attempts += max(run.attempts - before - 1, 0)
+            run.attempts = 1 + extra_attempts
+            if run.status != "completed":
+                note = f"{n}/{len(chunks)}번째 묶음에서 멈춤 — {run.note}"
+                self._finish_batches(inc, step, run, outputs)
+                run.note = note
+                inc.log(f"{run.label}: {note}")
+                return
+            outputs.append(run.output)
+        self._finish_batches(inc, step, run, outputs)
+        inc.log(f"{run.label}: {len(items)}건을 {len(chunks)}묶음으로 나눠 요청")
+
+    @staticmethod
+    def _finish_batches(
+        inc: Incident, step: Step, run: StepRun, outputs: list[dict[str, Any]]
+    ) -> None:
+        if not outputs:
+            return
+        merged = step.merge(outputs) if step.merge else {**outputs[0]}
+        merged["batches"] = len(outputs)
+        run.output = merged
+        inc.outputs[step.id] = merged
 
     @staticmethod
     def _judge(inc: Incident, step: Step, run: StepRun) -> None:

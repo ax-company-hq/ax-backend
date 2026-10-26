@@ -85,7 +85,7 @@ curl -X POST localhost:<포트>/api/events -H 'Content-Type: application/json' -
 |---|---|---|---|---|---|
 | `request_incident_compensation` | A | 영향 고객 일괄 보상 (support) | impact | 아니오 | `{"buyer_ids": ["buy_0001", "buy_0002", "buy_0003", "buy_0004", "buy_0005", "buy_0006", "buy_0007", "buy_0008", "buy_0009", "buy_0010", "buy_0011", "buy_0012", "buy_0013", "buy_0014", "buy_0015", "buy_0016", "buy_0017", "buy_0018", "buy_0019", "buy_0020", "buy_` |
 
-> 총괄이 부르는 skill은 영향 고객 일괄 보상 하나다. 문의 접수 때 자동응답·보상 판정·마케팅 쿠폰 요청은 고객지원이 직접 한다(#228 결정 A). 고객 목록은 데이터 영향 분석 결과(`affected_customer_ids`)를 그대로 넘기며, 50명을 넘으면 고객지원이 전체를 거부한다. 총괄은 `support.inquiry_received`·`support.inquiry_surge` 이벤트도 구독한다.
+> 총괄이 부르는 skill은 영향 고객 일괄 보상 하나다. 문의 접수 때 자동응답·보상 판정·마케팅 쿠폰 요청은 고객지원이 직접 한다(#228 결정 A). 고객 목록은 데이터 영향 분석 결과(`affected_customer_ids`)를 50명씩 나눠 순서대로 넘긴다(고객지원은 한 호출에 50명까지만 받고 넘으면 전체를 거부한다). 총괄은 `support.inquiry_received`·`support.inquiry_surge` 이벤트도 구독한다.
 
 ## finance
 

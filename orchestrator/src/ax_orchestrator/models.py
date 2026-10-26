@@ -36,6 +36,10 @@ class Step:
     # 성공한 결과를 보고 사람이 봐야 하면 이관 큐로 돌린다: (사유 코드, 메모) 또는 None
     verdict: Callable[[dict[str, Any]], tuple[str, str] | None] = lambda output: None
     timeout: float | None = None  # 이 단계만 마감을 길게 줄 때(예: 복구 확인 재시도) 초
+    # 한 번에 받는 상한이 있는 부서용: (나눌 입력 필드, 한 번에 보낼 개수). 넘으면 나눠 부른다.
+    split: tuple[str, int] | None = None
+    # 나눠 부른 결과들을 하나로 합친다. 없으면 첫 결과에 `batches`만 붙인다.
+    merge: Callable[[list[dict[str, Any]]], dict[str, Any]] | None = None
 
 
 @dataclass

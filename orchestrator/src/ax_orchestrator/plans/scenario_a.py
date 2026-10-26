@@ -15,6 +15,9 @@ from typing import Any
 
 from ax_orchestrator.models import Incident, Plan, Step, iso, now
 
+# 고객지원 `request_incident_compensation`이 한 호출에 받는 구매자 수 상한
+COMPENSATION_BATCH = 50
+
 
 def _window(inc: Incident) -> dict[str, Any]:
     return {
@@ -124,6 +127,16 @@ def _compensation(inc: Incident) -> dict[str, Any]:
     }
 
 
+def _merge_compensation(outputs: list[dict[str, Any]]) -> dict[str, Any]:
+    """50명씩 나눠 부른 결과를 하나로 합친다. 숫자는 고객지원이 준 값을 더하기만 한다."""
+    merged = {**outputs[0]}
+    merged["requested"] = sum(o.get("requested", 0) for o in outputs)
+    merged["results"] = [r for o in outputs for r in o.get("results", [])]
+    merged["stopped_early"] = any(o.get("stopped_early") for o in outputs)
+    merged["notes"] = [n for o in outputs for n in o.get("notes", [])]
+    return merged
+
+
 def _compensation_gate(inc: Incident) -> tuple[str, str, str] | None:
     if _out(inc, "impact").get("affected_customer_ids"):
         return None
@@ -190,6 +203,8 @@ def scenario_a() -> Plan:
                 after=("impact",),
                 build=_compensation,
                 gate=_compensation_gate,
+                split=("buyer_ids", COMPENSATION_BATCH),  # 고객지원이 한 번에 50명까지 받는다
+                merge=_merge_compensation,
                 required=False,
             ),
             Step(
