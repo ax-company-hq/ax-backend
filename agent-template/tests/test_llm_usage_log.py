@@ -4,9 +4,10 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+from pydantic import BaseModel
 
 from ax_agent_template import llm_usage
-from ax_agent_template.llm import LLMClient, LLMSettings, MockLLMClient
+from ax_agent_template.llm import LLMClient, LLMResponseError, LLMSettings, MockLLMClient
 from ax_agent_template.llm_usage import SqliteUsageStore
 from ax_contracts.data_access.llm_usage import LlmUsageQuery
 
@@ -136,3 +137,58 @@ def test_file_store_is_shared_between_connections(
     assert (record.input_tokens, record.output_tokens) == (3, 4)
     reader.close()
     llm_usage.reset_store()
+
+
+class _Answer(BaseModel):
+    value: int
+
+
+def _structured_client(handler) -> LLMClient:
+    settings = LLMSettings(base_url="http://llm/v1", model="m")
+    return LLMClient("memory", settings, transport=httpx.MockTransport(handler))
+
+
+@pytest.mark.asyncio
+async def test_structured_success_records_token_counts(store: SqliteUsageStore) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": '{"value": 1}'}}],
+                "usage": {"prompt_tokens": 11, "completion_tokens": 4},
+            },
+        )
+
+    await _structured_client(handler).structured("질문", _Answer, context_id="ctx-s")
+    [record] = _all(store, context_ids=["ctx-s"])
+    assert (record.input_tokens, record.output_tokens, record.success) == (11, 4, True)
+    assert record.model == "m"
+
+
+@pytest.mark.asyncio
+async def test_structured_failures_record_each_request(
+    monkeypatch: pytest.MonkeyPatch, store: SqliteUsageStore
+) -> None:
+    monkeypatch.setenv("MEMORY_LLM_MAX_RETRIES", "1")
+
+    def bad_schema(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "not json"}}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 2},
+            },
+        )
+
+    with pytest.raises(LLMResponseError):
+        await _structured_client(bad_schema).structured("질문", _Answer, context_id="ctx-f")
+    records = _all(store, context_ids=["ctx-f"])
+    assert [r.success for r in records] == [False, False]
+    assert sum(r.input_tokens for r in records) == 10
+
+    with pytest.raises(LLMResponseError):
+        await _structured_client(lambda r: httpx.Response(500)).structured(
+            "질문", _Answer, context_id="ctx-h"
+        )
+    [http_record] = _all(store, context_ids=["ctx-h"])
+    assert (http_record.input_tokens, http_record.success) == (0, False)

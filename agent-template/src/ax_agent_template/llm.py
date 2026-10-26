@@ -32,6 +32,7 @@ from pydantic import BaseModel, ValidationError
 
 from ax_agent_template import llm_usage
 from ax_agent_template.config import env_prefix
+from ax_contracts.schemas import TENANT_ID_DEFAULT
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -182,6 +183,15 @@ def _strip_code_fence(text: str) -> str:
     return body.strip()
 
 
+def _usage_tokens(response: httpx.Response) -> tuple[int, int]:
+    """응답의 `usage`에서 (입력, 출력) 토큰 수를 읽는다. 없거나 이상하면 0으로 둔다."""
+    try:
+        usage = response.json().get("usage") or {}
+        return int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
+    except (ValueError, TypeError, AttributeError):
+        return 0, 0
+
+
 class LLMClient:
     """OpenAI 호환 LLM 클라이언트 래퍼. 기본 모델은 Gemini다(이미지도 같은 엔드포인트로 읽는다)."""
 
@@ -209,6 +219,9 @@ class LLMClient:
         이미지로 붙인다(영수증·상품 사진 등). 이미지를 안 주면 글만 보낸다. 검증에 실패하면
         `<부서>_LLM_MAX_RETRIES`(기본 1)번 다시 요청하고, 그래도 안 되면 `LLMResponseError`다.
         이미지 형식·크기 위반은 요청을 보내기 전에 `LLMInputError`로 거부한다.
+
+        사용량(NFR-06)은 HTTP 요청마다 1건씩 남긴다. 스키마 재시도도 각각 1건이고, 성공한
+        요청만 `success=True`다(HTTP 오류는 토큰 0, 스키마 불일치는 응답의 토큰 수로 남긴다).
         """
         if not self.settings.model:
             raise LLMNotConfiguredError(f"{env_prefix(self.dept)}_LLM_MODEL 또는 LLM_MODEL이 없다")
@@ -233,6 +246,7 @@ class LLMClient:
         )
         url = self.settings.base_url.rstrip("/") + "/chat/completions"
         attempts = 1 + _max_retries(self.dept)
+        model = self.settings.model
         last_problem = "응답이 비어 있다"
         async with httpx.AsyncClient(
             timeout=DEFAULT_TIMEOUT_SEC, transport=self._transport
@@ -242,17 +256,24 @@ class LLMClient:
                     response = await http.post(url, json=payload, headers=headers)
                     response.raise_for_status()
                 except httpx.HTTPStatusError as exc:
+                    self.record_usage(context_id, model, 0, 0, False)
                     # 응답 본문에 요청 내용이 섞일 수 있어 상태 코드만 남긴다
                     raise LLMResponseError(
                         f"LLM API가 {exc.response.status_code}를 돌려줬다"
                     ) from None
                 except httpx.HTTPError as exc:
+                    self.record_usage(context_id, model, 0, 0, False)
                     raise LLMResponseError(f"LLM API 호출 실패: {type(exc).__name__}") from None
+                input_tokens, output_tokens = _usage_tokens(response)
                 try:
                     content = response.json()["choices"][0]["message"]["content"]
-                    return schema.model_validate_json(_strip_code_fence(content))
+                    result = schema.model_validate_json(_strip_code_fence(content))
                 except (KeyError, IndexError, TypeError, ValueError, ValidationError) as exc:
+                    self.record_usage(context_id, model, input_tokens, output_tokens, False)
                     last_problem = f"응답이 스키마와 맞지 않는다({type(exc).__name__})"
+                    continue
+                self.record_usage(context_id, model, input_tokens, output_tokens, True)
+                return result
         raise LLMResponseError(f"{last_problem} — {attempts}번 요청했다")
 
     def record_usage(
@@ -262,7 +283,7 @@ class LLMClient:
         input_tokens: int,
         output_tokens: int,
         success: bool,
-        tenant_id: str = "shop-demo",
+        tenant_id: str = TENANT_ID_DEFAULT,
     ) -> None:
         """호출 1회의 사용량(NFR-06)을 LLM 사용량 저장소(계약 `LlmCallRecord`)에 남긴다.
 
@@ -283,7 +304,7 @@ class LLMClient:
         """OpenAI 호환 `/embeddings`로 텍스트별 벡터를 돌려준다. 입력 순서를 유지한다.
 
         모델은 `<부서>_EMBED_MODEL`(없으면 `EMBED_MODEL`), 엔드포인트·키는 LLM 설정을 쓴다.
-        `context_id`가 있으면 호출 사용량을 LLM 사용량 저장소에 남긴다.
+        호출 사용량은 `context_id`가 없어도 LLM 사용량 저장소에 남긴다.
         """
         if not self.settings.embed_model:
             raise LLMNotConfiguredError(
