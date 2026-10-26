@@ -174,12 +174,19 @@ async def summarize_inquiry(request: AgentRequest) -> AgentResult:
 
 
 # ---------------------------------------------------------------- 쓰기 (execute 경유)
-async def _notice_sources(request: AgentRequest, notice_id: str | None) -> list[Source]:
-    """문의가 공지를 가리키면 마케팅 `get_notice`로 읽는다. 못 읽으면 근거 없이 진행한다."""
-    if notice_id is None:
-        return []
-    source = await notices.fetch_source(request, notice_id, SEND)
-    return [source] if source else []
+async def _notice_sources(
+    request: AgentRequest, notice_id: str | None, component: str | None = None
+) -> list[Source]:
+    """문의가 공지를 가리키면 마케팅 `get_notice`로 읽고, 가리키지 않아도 사건 요청이나
+    구성요소를 받았으면 `list_active_notices`로 지금 게시 중인 공지를 찾는다.
+    못 읽으면 근거 없이 진행한다 (평소 문의마다 마케팅을 부르거나 오래된 공지를 인용하지 않는다).
+    """
+    if notice_id is not None:
+        source = await notices.fetch_source(request, notice_id, SEND)
+        return [source] if source else []
+    if component is not None or request.meta.context_id.startswith(notices.INCIDENT_CONTEXT_PREFIX):
+        return await notices.fetch_active_sources(request, SEND, component)
+    return []
 
 
 def _caller_meta(
@@ -219,7 +226,7 @@ async def create_inquiry(request: AgentRequest) -> AgentResult:
         if incident is not None:
             request = incident_context.rebind(request, incident)
 
-    extra = await _notice_sources(request, parsed.notice_id)
+    extra = await _notice_sources(request, parsed.notice_id, parsed.notice_component)
 
     async def apply() -> tuple[dict[str, Any], bool]:
         analysis, fallback = await drafting.analyze(message, subject, extra)
@@ -255,7 +262,7 @@ async def add_customer_message(request: AgentRequest) -> AgentResult:
         return _not_found(request, parsed.inquiry_id)
     request = incident_context.follow_inquiry(request, conversation.context_id)
 
-    extra = await _notice_sources(request, parsed.notice_id)
+    extra = await _notice_sources(request, parsed.notice_id, parsed.notice_component)
 
     async def apply() -> tuple[dict[str, Any], bool]:
         analysis, fallback = await drafting.analyze(message, conversation.subject, extra)
@@ -428,12 +435,12 @@ async def request_compensation(request: AgentRequest) -> AgentResult:
         return _done(request, output, outcome="not_eligible", evidence=evidence)
 
     async with LEDGER.lock(context_id):  # 같은 사건의 요청은 한 건씩 (같은 번호를 읽는 경쟁 방지)
-        return await _request_coupon(request, parsed, decision, key, evidence)
+        return await _request_coupon(request, parsed.buyer_id, decision, key, evidence)
 
 
 async def _request_coupon(
     request: AgentRequest,
-    parsed: RequestCompensationInput,
+    buyer_id: str,
     decision: compensation.CompensationDecision,
     key: str,
     evidence: Evidence,
@@ -448,7 +455,7 @@ async def _request_coupon(
         skill="issue_coupon",
         input={
             "purpose_code": "compensation",
-            "buyer_id": parsed.buyer_id,
+            "buyer_id": buyer_id,
             "count": decision.count,
             "unit_value": decision.unit_value,
             "claimed_total": decision.total_value,

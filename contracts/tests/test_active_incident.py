@@ -35,3 +35,17 @@ def test_not_found_has_no_incident_fields() -> None:
         FindActiveIncidentOutput.model_validate({"found": False, "context_id": "ctx_inc_x"})
     with pytest.raises(ValidationError):
         FindActiveIncidentOutput.model_validate({"found": True, "context_id": "c", "status": "x"})
+
+
+def test_notice_id_is_optional_and_only_with_a_found_incident() -> None:
+    base = {"found": True, "context_id": "ctx_inc_x"}
+    assert FindActiveIncidentOutput.model_validate(base).notice_id is None  # 공지 전
+    hit = FindActiveIncidentOutput.model_validate({**base, "notice_id": "ntc_0001"})
+    assert hit.notice_id == "ntc_0001"
+    with pytest.raises(ValueError):  # 사건이 없는데 공지 번호만 있을 수는 없다
+        FindActiveIncidentOutput.model_validate({"found": False, "notice_id": "ntc_0001"})
+
+
+def test_old_responses_without_notice_id_still_validate() -> None:
+    old = {"found": True, "context_id": "ctx_inc_x", "component": "payment", "status": "open"}
+    assert FindActiveIncidentOutput.model_validate(old).notice_id is None

@@ -56,6 +56,7 @@ class World:
         self.orchestrator_hangs = False
         self.asked: list[AgentRequest] = []
         self.coupons: list[AgentRequest] = []
+        self.notice_lookups: list[AgentRequest] = []
         self.executed_contexts: list[str] = []
 
 
@@ -88,7 +89,15 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
             if state.orchestrator_reply is not None:
                 return state.orchestrator_reply
             return AgentResult(meta=req.meta, status=TaskStatus.COMPLETED, output=state.found)
-        assert target == "marketing" and req.skill == "issue_coupon"
+        assert target == "marketing"
+        if (
+            req.skill == "list_active_notices"
+        ):  # 사건 번호로 들어온 문의는 게시 중인 공지도 찾는다 (#341)
+            state.notice_lookups.append(req)
+            return AgentResult(
+                meta=req.meta, status=TaskStatus.COMPLETED, output={"items": [], "total": 0}
+            )
+        assert req.skill == "issue_coupon"
         state.coupons.append(req)
         return AgentResult(
             meta=req.meta, status=TaskStatus.COMPLETED, output={"coupon_id": "cpn_0001"}
@@ -159,6 +168,18 @@ def test_a_payment_server_failure_pins_the_open_incident(world: World) -> None:
     assert asked.meta.idempotency_key is None
     assert published_contexts() == [INCIDENT]  # 접수 이벤트도 사건 번호로
     assert world.executed_contexts == [INCIDENT]
+
+
+def test_a_pinned_incident_inquiry_also_looks_up_the_published_notices(world: World) -> None:
+    create()
+    (lookup,) = world.notice_lookups
+    assert lookup.meta.context_id == INCIDENT and lookup.input == {"limit": 3}
+
+
+def test_an_ordinary_inquiry_does_not_look_up_notices(world: World) -> None:
+    world.found = {"found": False}
+    create()
+    assert world.notice_lookups == []
 
 
 def test_no_open_incident_keeps_the_ordinary_context(world: World) -> None:
