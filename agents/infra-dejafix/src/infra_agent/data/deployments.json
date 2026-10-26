@@ -1,0 +1,32 @@
+{
+  "_comment": "데모용 배포 이력. 실제 배포 시스템이 없어 이 파일이 배포 기록의 원본이다(INFRA_DEPLOYMENTS_FILE로 바꿀 수 있다). 버전·시각은 planning 초기 데이터(PR #28, shop-api v2.4.1, 10-21 14:02 KST)와 맞춘다. irreversible에는 DB 마이그레이션처럼 되돌릴 수 없는 변경을 적는다.",
+  "deployments": [
+    {
+      "deploy_id": "dep_0001",
+      "service": "shop-api",
+      "version": "v2.3.9",
+      "deployed_at": "2026-10-14T01:30:00Z",
+      "components": ["payment", "api"],
+      "change_summary": "결제 실패 코드 정리",
+      "irreversible": []
+    },
+    {
+      "deploy_id": "dep_0002",
+      "service": "shop-api",
+      "version": "v2.4.0",
+      "deployed_at": "2026-10-18T02:00:00Z",
+      "components": ["api"],
+      "change_summary": "도서 상세 페이지 개선",
+      "irreversible": []
+    },
+    {
+      "deploy_id": "dep_0003",
+      "service": "shop-api",
+      "version": "v2.4.1",
+      "deployed_at": "2026-10-21T05:02:00Z",
+      "components": ["payment"],
+      "change_summary": "결제 타임아웃 설정 변경",
+      "irreversible": []
+    }
+  ]
+}
