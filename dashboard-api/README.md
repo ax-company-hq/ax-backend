@@ -60,6 +60,14 @@ CORS 허용 출처는 `DASHBOARD_CORS_ORIGINS`(쉼표 구분, 기본 `http://loc
 | POST `/claims/{id}/approve`, `/reject` | `decide_claim` (메모는 `untrusted.note`) |
 | POST `/claims/{id}/receive`, `/inspection` | `receive_return`, `inspect_return` |
 | POST `/queue-entries/process` | `process_claim_queue` (`refund_request`로 지급, 재무 교차검증) |
+| GET `/customers/at-risk?min_level&limit` | `list_at_risk_customers` (고객관리 탭. `data`는 `items`, `meta.total`은 자르기 전 전체 수) |
+| GET `/customers/{buyer_id}/signals` | `customer_signals` (위험 신호·이유별 점수·권장 조치) |
+| GET `/conversations/{id}/compensation-suggestion` | `suggest_compensation` (읽기. 승인은 사람이 하고 요청은 따로 보낸다) |
+| GET `/conversations/{id}/payment-diagnosis` | `diagnose_payment` (읽기) |
+| GET `/inquiry-surge` | `detect_inquiry_surge` |
+| GET `/change-requests?inquiry_id&status` | `list_change_requests` (`items`) |
+
+고객관리 탭의 위 경로는 모두 읽기라 사람 토큰이 필요 없고, 응답은 support 출력을 그대로 둔다 (위험 단계·보상 후보는 코드가 사실에서 낸 값이다). 목 모드 값은 `mock_customers.py`에 있다.
 
 support 출력은 `claim_mapping.py`에서 화면 모델로 바꾼다 (값을 지어내지 않고, support에 없는 값은 비우거나 0).
 - 상태: support의 `approved`(승인됐고 지급 대기)는 화면에 없어서 `return_received`("입고 완료·처리 대기")로 보낸다. 상태 필터는 변환 뒤에 건다.
