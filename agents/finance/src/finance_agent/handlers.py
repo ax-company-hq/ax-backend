@@ -21,7 +21,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
@@ -36,10 +36,13 @@ from ax_contracts.schemas import (
     Evidence,
     ExecuteDecision,
     InputReason,
+    RequestMeta,
     TaskStatus,
 )
 from finance_agent import audit, closing
+from finance_agent import books as bk
 from finance_agent import finance_config as fc
+from finance_agent import ledger as lg
 from finance_agent.books import Books, load_books
 from finance_agent.recheck import recompute
 from finance_agent.schemas import (
@@ -54,7 +57,7 @@ from finance_agent.schemas import (
     SettlementHoldInput,
     SettlementHoldOutput,
 )
-from finance_agent.sources import LiveSources, MockSources, Sources, order_key
+from finance_agent.sources import Impact, LiveSources, MockSources, Sources, order_key
 
 __all__ = ["HANDLERS", "SUBSCRIBED_EVENTS", "on_event", "recompute", "reset_state", "state"]
 
@@ -69,6 +72,7 @@ class Ledger:
         self.done: dict[str, AgentResult] = {}  # 멱등성 키 → 끝난 상태 변경 결과
         self.market_ops: list[dict[str, Any]] = []  # 판매자 심사·정산 보류 결과 기록
         self.loss_reports: dict[str, dict[str, Any]] = {}  # context_id → 마지막 손실 리포트
+        self.coupon_events: dict[str, list[dict[str, Any]]] = {}  # context_id → 보상 쿠폰 이벤트
 
     def compensation(self, context_id: str) -> dict[str, int]:
         return self.coupons.get(context_id, {"count": 0, "total": 0})
@@ -81,6 +85,11 @@ class State:
         self.last_self_test: dict[str, Any] | None = None  # 마지막 "재무 AI 테스트" 결과
         self.records = FinanceRecords()
         self.books_loader: Callable[[], Awaitable[Books]] = load_books  # 테스트에서 바꾼다
+        # 사건별 쿠폰 장부(⑨)의 실행 기록과 기준표. 테스트에서 바꾼다
+        self.executions_loader: Callable[[str | None], Awaitable[lg.ExecutionFeed]] = (
+            lg.load_executions
+        )
+        self.thresholds_loader: Callable[[], Awaitable[dict[str, Any] | None]] = lg.load_thresholds
 
     async def books(self) -> Books:
         return await self.books_loader()
@@ -167,6 +176,9 @@ async def on_event(envelope: EventEnvelope) -> None:
         row = ledger.coupons.setdefault(envelope.context_id, {"count": 0, "total": 0})
         row["count"] += count
         row["total"] += total
+        ledger.coupon_events.setdefault(envelope.context_id, []).append(
+            lg.coupon_from_event(envelope.context_id, data, envelope.occurred_at)
+        )
     elif envelope.type == EventType.PAYMENT_REFUNDED:
         order_id, amount = order_key(data.get("order_id")), _positive_int(data.get("refund_amount"))
         if order_id is not None and amount is not None:
@@ -192,45 +204,107 @@ async def loss_aggregation(request: AgentRequest) -> AgentResult:
         **({"category": data.category} if data.category else {}),
     }
     impact = await state().sources.impact(request.meta, context_id, window)
-    comp = state().ledger.compensation(context_id)
+    rows, ledger_source = await compensation_ledger(context_id)
+    comp = lg.totals(rows) if rows is not None else None
+    count = comp["count_executed"] if comp else None
+    paid = comp["total_executed"] if comp else None
 
-    coupon_line = f"보상 쿠폰 {comp['count']}장 {_won(comp['total'])}"
-    if impact is None:
-        summary = f"영향 수치: 확인할 수 없음(data 영향 분석 응답 없음). {coupon_line}."
-        report = LossReport(
-            context_id=context_id,
-            compensation_coupon_count=comp["count"],
-            compensation_total=comp["total"],
-            summary=summary,
-        )
+    unavailable = (["impact"] if impact is None else []) + (
+        ["compensation"] if comp is None else []
+    )
+    if comp is None:
+        coupon_line = "보상 쿠폰: 확인할 수 없음(이벤트 버스·안전 관문 실행 기록 모두 없음)"
     else:
-        total = impact.lost_amount + comp["total"]  # 계산은 코드로
-        summary = (
+        coupon_line = f"보상 쿠폰 {count}장 {_won(paid or 0)}"
+    if impact is None:
+        impact_line = "영향 수치: 확인할 수 없음(data 영향 분석 응답 없음)"
+    else:
+        impact_line = (
             f"실패 주문 {impact.failed_orders}건, 영향 고객 {impact.affected_customers}명, "
-            f"피해 금액 {_won(impact.lost_amount)}. {coupon_line}. 총 손실 {_won(total)}."
+            f"피해 금액 {_won(impact.lost_amount)}"
         )
-        report = LossReport(
-            context_id=context_id,
-            failed_orders=impact.failed_orders,
-            affected_customers=impact.affected_customers,
-            lost_amount=impact.lost_amount,
-            compensation_coupon_count=comp["count"],
-            compensation_total=comp["total"],
-            total_loss=total,
-            summary=summary,
-        )
-    refs = [impact.ref] if impact else []
+    # 계산은 코드로. 둘 중 하나라도 모르면 총 손실도 모른다
+    total = impact.lost_amount + paid if impact is not None and paid is not None else None
+    summary = f"{impact_line}. {coupon_line}."
+    if total is not None:
+        summary += f" 총 손실 {_won(total)}."
+    report = LossReport(
+        context_id=context_id,
+        failed_orders=impact.failed_orders if impact else None,
+        affected_customers=impact.affected_customers if impact else None,
+        lost_amount=impact.lost_amount if impact else None,
+        compensation_coupon_count=count,
+        compensation_total=paid,
+        total_loss=total,
+        summary=summary,
+        ledger_source=ledger_source,
+        unavailable=unavailable,
+    )
+    refs = ([impact.ref] if impact else []) + [
+        str(r["execution_id"]) for r in rows or [] if r.get("execution_id")
+    ][:20]
     state().ledger.loss_reports[context_id] = report.model_dump(mode="json") | {
-        "at": _now().isoformat()
+        "at": _now().isoformat(),
+        "window": window,
     }
+    source_query = {
+        lg.LEDGER_EVENTS: f"ledger:coupon.issued:{context_id}",
+        lg.LEDGER_SAFETY: f"safety:/api/safety/executions?context_id={context_id}",
+        lg.LEDGER_SEED: f"seed:executions:{context_id}",
+    }.get(ledger_source or "", f"ledger:unavailable:{context_id}")
     return _result(
         request,
         TaskStatus.COMPLETED,
-        outcome="partial" if impact is None else "reported",
+        outcome="partial" if unavailable else "reported",
         output=report.model_dump(mode="json"),
-        evidence=_evidence(
-            ["data:impact_analysis", f"ledger:coupon.issued:{context_id}"], summary, refs
-        ),
+        evidence=_evidence(["data:impact_analysis", source_query], summary, refs),
+    )
+
+
+# ---------------------------------------------------------------- 사건(⑨⑩⑰) 공용
+async def compensation_ledger(
+    context_id: str, feed: lg.ExecutionFeed | None = None
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """한 사건의 보상 쿠폰 장부 줄과 출처 (`ledger.merge`)."""
+    if feed is None:
+        feed = await state().executions_loader(context_id)
+    event_rows = state().ledger.coupon_events.get(context_id, [])
+    return lg.merge(context_id, feed, event_rows, lg.events_connected())
+
+
+def incident_meta(context_id: str) -> dict[str, Any]:
+    """사건의 장애 구간·부품. 손실 리포트 요청에 온 구간 → (목 모드) 시드 → 모름."""
+    report = state().ledger.loss_reports.get(context_id) or {}
+    window = report.get("window") or {}
+    if window.get("window_from") and window.get("window_to"):
+        return {
+            "component": None,
+            "window_from": fc.parse_dt(window["window_from"]),
+            "window_to": fc.parse_dt(window["window_to"]),
+            "category": window.get("category"),
+        }
+    if is_mock("finance"):
+        seeded = bk.seed_incidents().get(context_id)
+        if seeded:
+            return seeded | {"category": None}
+    return {"component": None, "window_from": None, "window_to": None, "category": None}
+
+
+async def incident_impact(context_id: str, meta: RequestMeta | None = None) -> Impact | None:
+    """data `impact_analysis` 결과 그대로(다시 계산하지 않음). 실제 모드에서 구간을 모르면 None."""
+    info = incident_meta(context_id)
+    window = None
+    if info["window_from"] and info["window_to"]:
+        window = {
+            "window_from": fc.iso(info["window_from"]),
+            "window_to": fc.iso(info["window_to"]),
+            **({"category": info["category"]} if info.get("category") else {}),
+        }
+    base = meta or RequestMeta(
+        context_id=context_id, token="finance-dashboard", deadline=_now() + timedelta(seconds=15)
+    )
+    return await state().sources.impact(
+        base.model_copy(update={"context_id": context_id}), context_id, window
     )
 
 
@@ -408,7 +482,13 @@ async def audit_report(request: AgentRequest) -> AgentResult:
     if isinstance(data, AgentResult):
         return data
     books = await state().books()
-    report, missing = await audit.audit_report(books, data.days)
+
+    async def lookup(ctx: str) -> Impact | None:
+        return await incident_impact(ctx, request.meta)
+
+    report, missing = await audit.audit_report(
+        books, data.days, impact_lookup=lookup, context_id=data.context_id
+    )
     output = AuditReportOutput(
         window_from=report["from"],
         window_to=report["to"],

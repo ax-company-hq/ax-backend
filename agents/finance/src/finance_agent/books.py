@@ -186,6 +186,8 @@ def seed_books(today: date | None = None, seed: dict[str, Any] | None = None) ->
                 "hold_reason": e.get("hold_reason"),
                 "computed_amount": e.get("computed_amount"),
                 "review_id": e.get("review_id"),
+                "result_ref": e.get("result_ref"),
+                "idempotency_key": e.get("idempotency_key"),
             }
         )
 
@@ -203,6 +205,19 @@ def seed_books(today: date | None = None, seed: dict[str, Any] | None = None) ->
         mock=True,
         collected_at=fc.now(),
     )
+
+
+def seed_incidents(today: date | None = None) -> dict[str, dict[str, Any]]:
+    """목 모드 사건 정보(시나리오 A 시연용): context_id → {component, window_from, window_to}."""
+    today = today or fc.today()
+    out: dict[str, dict[str, Any]] = {}
+    for row in read_seed().get("incidents", []):
+        out[row["context_id"]] = {
+            "component": row.get("component"),
+            "window_from": _at(today, row["day"], row["from"]),
+            "window_to": _at(today, row["day"], row["to"]),
+        }
+    return out
 
 
 # ---------------------------------------------------------------- 실제 (shop-api, safety)
@@ -318,6 +333,8 @@ def normalize_execution(raw: dict[str, Any]) -> dict[str, Any] | None:
         "hold_reason": decision.get("hold_reason"),
         "computed_amount": decision.get("computed_amount"),
         "review_id": decision.get("review_id"),
+        "result_ref": decision.get("result_ref"),
+        "idempotency_key": request.get("idempotency_key"),
     }
 
 

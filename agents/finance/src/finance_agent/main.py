@@ -16,6 +16,8 @@ from ax_agent_template.server import create_agent_app
 from ax_contracts.schemas import AgentCard
 from finance_agent.finance_api import add_finance_api
 from finance_agent.handlers import HANDLERS, SUBSCRIBED_EVENTS, on_event, recompute, state
+from finance_agent.incidents import add_incident_api
+from finance_agent.ledger import EVENTS
 from finance_agent.selftest import SELF_TEST_TTL_HOURS, is_fresh, run_self_test
 
 # 대시보드(dashboard-web)는 브라우저에서 이 서버를 바로 부른다. 대부분 조회(GET)이고, 사람 결정
@@ -51,8 +53,13 @@ def subscribe_events() -> bool:
     try:
         subscribe(SUBSCRIBED_EVENTS, on_event)
     except NotImplementedError:
-        logger.warning("이벤트 버스 미연결: coupon.issued·payment.refunded를 받지 못한다")
+        logger.warning(
+            "이벤트 버스 미연결: coupon.issued·payment.refunded를 받지 못한다 "
+            "(사건 보상 쿠폰 장부는 안전 관문 실행 기록으로 채운다)"
+        )
+        EVENTS["connected"] = False
         return False
+    EVENTS["connected"] = True
     return True
 
 
@@ -123,6 +130,7 @@ def create_app() -> FastAPI:
     app.add_middleware(DashboardCORS, origins=cors_origins())
     add_read_api(app)
     add_finance_api(app)
+    add_incident_api(app)
     return app
 
 

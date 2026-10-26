@@ -35,10 +35,12 @@ class LossReport(AxModel):
     failed_orders: int | None = None
     affected_customers: int | None = None
     lost_amount: int | None = None
-    compensation_coupon_count: int
-    compensation_total: int
+    compensation_coupon_count: int | None = None  # 장부를 못 읽으면 None (0으로 바꾸지 않음)
+    compensation_total: int | None = None
     total_loss: int | None = None
     summary: str
+    ledger_source: Literal["events", "safety_executions", "seed"] | None = None
+    unavailable: list[str] = Field(default_factory=list)  # impact, compensation
 
 
 # ---------------------------------------------------- 마켓운영: seller_review, settlement_hold
@@ -114,6 +116,7 @@ class ClosingReportOutput(AxModel):
 # ------------------------------------------------ audit_report (orchestrator·data → finance, 읽기)
 class AuditReportInput(AxModel):
     days: int = Field(default=7, ge=1, le=90)
+    context_id: str | None = None  # 주면 그 사건의 쿠폰·실행 기록만 본다
 
 
 class AuditFinding(AxModel):
@@ -124,6 +127,7 @@ class AuditFinding(AxModel):
         "refund_rate_jump",
         "amount_recheck_failed",
         "gate_hold_trend",
+        "compensation_outside_impact",
     ]
     severity: Literal["high", "medium", "low"]
     title: str

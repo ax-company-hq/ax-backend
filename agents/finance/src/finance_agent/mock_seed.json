@@ -22,6 +22,45 @@
         "buy_0908",
         "buy_0909"
       ]
+    },
+    "ctx_inc_scn_a_0001": {
+      "failed_order_count": 6,
+      "affected_customer_count": 4,
+      "damage_amount": 95000,
+      "affected_customer_ids": [
+        "buy_0001",
+        "buy_0002",
+        "buy_0003",
+        "buy_0004"
+      ],
+      "by_category": [
+        {
+          "category": "books",
+          "failed_order_count": 4,
+          "damage_amount": 82500
+        },
+        {
+          "category": "stationery",
+          "failed_order_count": 2,
+          "damage_amount": 12500
+        }
+      ]
+    },
+    "ctx_inc_0100": {
+      "failed_order_count": 2,
+      "affected_customer_count": 2,
+      "damage_amount": 30000,
+      "affected_customer_ids": [
+        "buy_0005",
+        "buy_0006"
+      ],
+      "by_category": [
+        {
+          "category": "books",
+          "failed_order_count": 2,
+          "damage_amount": 30000
+        }
+      ]
     }
   },
   "payments": {
@@ -41,5 +80,5 @@
     "sel_4": 30,
     "sel_5": 72
   },
-  "_note": "payments 101·102는 고객지원 시드 주문(agents/support orders.py)의 현금 결제 합계(상품 + 배송비 3,000원, 포인트 제외)"
+  "_note": "payments 101·102는 고객지원 시드 주문(agents/support orders.py)의 현금 결제 합계(상품 + 배송비 3,000원, 포인트 제외) impacts.ctx_inc_scn_a_0001은 data 목(agents/data seed.py, 장애 구간 6건·4명·95,000원)과 같은 숫자다. ctx_inc_0100은 감사 시연용 지난 사건(buy_0999는 영향 고객이 아닌데 보상 쿠폰을 받음)."
 }

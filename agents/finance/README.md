@@ -15,6 +15,8 @@
 | ⑤ 예산·한도 | `policy.py` | 정책표·소진율·경보, 한도 *제안*(적용은 기준표 PR) |
 | ⑦ 사후 감사 | `audit.py` | 쪼개기·반복 환불·쿠폰 중복·환불률 급변·재계산 실패·관문 보류 추이 |
 | 금액 다시 계산 | `recheck.py` | 예전 `verify_amount` 계산. 사후 감사가 쓴다 |
+| 사건 쿠폰 장부 ⑨ | `ledger.py` | 보상 쿠폰을 사건별로: 이벤트(`events`) 또는 safety 실행 기록(`safety_executions`, 실제 모드 구독 미구현 대비)·시드(`seed`). 실행 기록이 있으면 그것이 원본이라 이벤트를 더하지 않는다. 둘 다 없으면 null |
+| 사건별 화면 ⑨⑩⑰ | `incidents.py` | 사건 목록·상세: data 영향 그대로 + 보상 + 기준표 한도 + 점검 5개 + 단계 9·10·17 (재설계 문서 12-1) |
 | 설정 | `finance_policy.toml` | 수수료율(기본 10%, 문구 8%), 주 정산, PG 3.1%, 예산, 한도 제안(한 번에 30% 안), 감사 기준 |
 
 | skill | 등급 | 요청자 | 우선순위 | 하는 일 |
@@ -56,11 +58,12 @@ safety·finance를 목 모드로 띄운 뒤 `uv run python agents/finance/demo/s
   `GET /api/finance/overview`, `GET /api/finance/closing?period=day|month&date=`, `POST /api/finance/closing/confirm`(사람 토큰),
   `GET /api/finance/reconciliation?date=`, `POST /api/finance/reconciliation/{payment_id}/note`(사람 토큰),
   `GET /api/finance/settlements?period=YYYY-Www`, `POST /api/finance/settlements/batch`(토큰 선택, safety 없으면 503 `safety_unavailable`),
-  `GET /api/finance/policy`, `GET /api/finance/audit?days=7`
+  `GET /api/finance/policy`, `GET /api/finance/audit?days=7&context_id=`(사건 선택)
+- 사건별 API (시나리오 A, 재설계 문서 12-1, `incidents.py`): `GET /api/finance/incidents`(`meta.ledger_source`), `GET /api/finance/incidents/{context_id}`(없으면 404 `not_found`). 목 시드: `ctx_inc_scn_a_0001`(data 목과 같은 6건·4명·95,000원 + 보상 2,000원 × 4장), `ctx_inc_0100`(영향 밖 `buy_0999` 보상 → 감사 `compensation_outside_impact`)
 - 기존 조회 API: `/api/finance/ledger`(사건별 보상 지급·주문별 환불 누적), `/api/finance/market-ops`(판매자 심사·정산 보류 결과), `/api/finance/loss-reports`, `/api/finance/self-test`(재무 AI 테스트 버튼: 가짜 자료로 계산 규칙 점검 + 안전 장치·쇼핑몰·데이터 AI 연결 확인, 상태를 바꾸지 않음), `/api/finance/self-test/last`
 - 사람 토큰: 안전 관문과 같은 형식 `Authorization: Bearer human:<이름>`(목 모드) 또는 `FINANCE_HUMAN_TOKENS`/`SAFETY_HUMAN_TOKENS`의 토큰 (`human.py`)
 - CORS: `FINANCE_CORS_ORIGINS`(기본 `http://localhost:3001,http://127.0.0.1:3001`). 사람 결정 경로 3개만 POST·Authorization 허용, 나머지는 GET만
-- 구독 이벤트: `coupon.issued`(보상 쿠폰 지급 누적), `payment.refunded`(환불 누적)
+- 구독 이벤트: `coupon.issued`(보상 쿠폰 지급 누적), `payment.refunded`(환불 누적). 실제 모드는 템플릿 구독이 아직 없어 보상 쿠폰 장부를 safety `GET /api/safety/executions`(읽기)로 채운다
 - 부르는 것: data `impact_analysis`(`failed_order_count`·`affected_customer_count`·`damage_amount` + 영향 고객 ID `affected_customer_ids`), data `fraud_score`(`risk_score` 0~100), safety `execute()`(판매자 승인·정산 보류·정산 묶음 `confirm_settlement`), shop-api·safety 조회 API(장부)
 
 ## 4. 의존

@@ -15,11 +15,19 @@
   (`recheck.recompute`. 장애 피해 고객 확인은 사후에 자료가 없어 빼고 금액만 본다)
 - `gate_hold_trend`: 관문 보류·거절이 기간 안에 `gate_hold_min`건 이상이고 지난 기간의
   `gate_hold_jump_ratio`배 이상
+- `compensation_outside_impact`(high, 시나리오 A ⑰): 사건(`ctx_inc_`) 보상 쿠폰을 받은(executed)
+  구매자가 그 사건의 data 영향 고객 목록(`affected_customer_ids`)에 없음. 영향 분석을 못 받은 사건은
+  판정하지 않는다(확인할 수 없음은 의심으로 만들지 않는다)
+
+`context_id`를 주면 그 사건의 쿠폰·실행 기록(과 그 실행 기록에 묶인 환불)만 본다. 그때 환불률
+급변은 사건 단위로 의미가 없어 빼고 통계도 좁힌 자료 기준이다.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import math
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -297,8 +305,82 @@ def gate_trend(
     return out, len(held), len(rejected)
 
 
+def compensation_executions(books: Books, start, end) -> list[dict]:
+    """기간 안 실행된(executed) 사건 보상 쿠폰 실행 기록."""
+    return [
+        e
+        for e in books.executions or []
+        if e.get("action") == "issue_coupon"
+        and e.get("status") == "executed"
+        and (e.get("params") or {}).get("purpose_code") == "compensation"
+        and str(e.get("context_id") or "").startswith("ctx_inc_")
+        and in_range(e.get("created_at"), start, end)
+    ]
+
+
+async def outside_impact(
+    books: Books, start, end, impact_lookup: Callable[[str], Awaitable[Impact | None]] | None
+) -> list[dict]:
+    if impact_lookup is None:
+        return []
+    rows = compensation_executions(books, start, end)
+    out = []
+    for ctx in sorted({e["context_id"] for e in rows}):
+        impact = await impact_lookup(ctx)
+        if impact is None or not impact.affected_customer_ids:
+            continue  # 영향 고객을 모르면 판정하지 않는다
+        bad = [
+            e
+            for e in rows
+            if e["context_id"] == ctx
+            and (e.get("params") or {}).get("buyer_id") not in impact.affected_customer_ids
+        ]
+        if not bad:
+            continue
+        buyers = sorted({str((e.get("params") or {}).get("buyer_id")) for e in bad})
+        total = sum(e.get("computed_amount") or 0 for e in bad)
+        out.append(
+            _finding(
+                "compensation_outside_impact",
+                "high",
+                f"영향 고객이 아닌 구매자에게 보상 쿠폰 {len(bad)}건",
+                f"사건 {ctx}: {', '.join(buyers)}에게 보상 쿠폰 {len(bad)}건 {fc.won(total)} "
+                f"(data 영향 고객 {len(impact.affected_customer_ids)}명 목록에 없음)",
+                [str(e.get("execution_id")) for e in bad]
+                + [str(e.get("result_ref") or "") for e in bad],
+            )
+        )
+    return out
+
+
+def narrow(books: Books, context_id: str) -> Books:
+    """한 사건의 쿠폰·실행 기록·(그 실행 기록에 묶인) 환불만 남긴 장부."""
+    executions = (
+        None
+        if books.executions is None
+        else [e for e in books.executions if e.get("context_id") == context_id]
+    )
+    exe_ids = {e.get("execution_id") for e in executions or []}
+    return dataclasses.replace(
+        books,
+        coupons=[c for c in books.coupons if c.get("context_id") == context_id],
+        executions=executions,
+        refunds=[r for r in books.refunds if r.get("execution_id") in exe_ids],
+    )
+
+
 # ---------------------------------------------------------------- 리포트
-async def audit_report(books: Books, days: int = 7) -> tuple[dict[str, Any], list[str]]:
+async def audit_report(
+    books: Books,
+    days: int = 7,
+    *,
+    impact_lookup: Callable[[str], Awaitable[Impact | None]] | None = None,
+    context_id: str | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """`impact_lookup`(사건 → data 영향 분석)이 있으면 `compensation_outside_impact`도 본다."""
+    full = books
+    if context_id:
+        books = narrow(books, context_id)
     today = fc.today()
     start = fc.day_start(today - timedelta(days=days - 1))
     end = fc.day_start(today + timedelta(days=1))
@@ -310,8 +392,8 @@ async def audit_report(books: Books, days: int = 7) -> tuple[dict[str, Any], lis
     prev_refund = sum(
         r["amount"] for r in books.refunds if in_range(r.get("created_at"), prev_start, start)
     )
-    gmv = compute_totals(books, start, end).gmv
-    prev_gmv = compute_totals(books, prev_start, start).gmv
+    gmv = compute_totals(full, start, end).gmv
+    prev_gmv = compute_totals(full, prev_start, start).gmv
     rate, prev_rate = fc.ratio(refund_amount, gmv), fc.ratio(prev_refund, prev_gmv)
     coupons = [c for c in books.coupons if in_range(c.get("created_at"), start, end)]
 
@@ -320,8 +402,9 @@ async def audit_report(books: Books, days: int = 7) -> tuple[dict[str, Any], lis
         + split_refunds(books, start, end, limits.get("refund_single"))
         + repeat_refunds(books, start, end, days)
         + duplicate_coupons(books, start, end)
-        + refund_rate_jump(rate, prev_rate, days)
+        + ([] if context_id else refund_rate_jump(rate, prev_rate, days))
         + await recheck_failures(books, start, end)
+        + await outside_impact(books, start, end, impact_lookup)
     )
     trend, held, rejected = gate_trend(books, start, end, prev_start, days)
     findings += trend

@@ -10,7 +10,7 @@
 | `GET /api/finance/settlements?period=YYYY-Www` | ③ 판매자 정산 내역서 (생략 = 지난주) | 없음 |
 | `POST /api/finance/settlements/batch` | ③ 묶음 → `execute(confirm_settlement)` | 선택 |
 | `GET /api/finance/policy` | ⑤ 정책표·소진율·한도 제안 | 없음 |
-| `GET /api/finance/audit?days=7` | ⑦ 사후 감사 | 없음 |
+| `GET /api/finance/audit?days=7&context_id=` | ⑦ 사후 감사 (사건 하나로 좁히기 선택) | 없음 |
 
 `meta`: `mock`, `collected_at`, `source`(`seed`|`shop-api`), `unavailable`(못 받은 자료 이름).
 정산 묶음 지급은 안전 관문이 항상 C로 보류하고 사람이 승인한다. 안전 관문에 닿지 않으면 503
@@ -32,7 +32,7 @@ from ax_agent_template.execute import execute
 from ax_contracts.schemas import Evidence, RequestMeta
 from finance_agent import audit, closing, policy, reconciliation, settlement
 from finance_agent import finance_config as fc
-from finance_agent.handlers import closing_key, state
+from finance_agent.handlers import closing_key, incident_impact, state
 from finance_agent.human import human_from_authorization
 
 UNAVAILABLE_EXECUTION = "exe_unavailable"  # agent-template execute()가 safety에 못 닿았을 때
@@ -149,7 +149,7 @@ async def overview_data() -> tuple[dict[str, Any], dict[str, Any]]:
             }
         )
 
-    report, _ = await audit.audit_report(books, 7)
+    report, _ = await audit.audit_report(books, 7, impact_lookup=incident_impact)
     serious = [f for f in report["findings"] if f["severity"] in ("high", "medium")]
     if serious:
         todo.append(
@@ -360,7 +360,7 @@ def add_finance_api(app: FastAPI) -> None:
         return ok(data, books.meta(missing))
 
     @app.get("/api/finance/audit", response_model=None)
-    async def get_audit(days: str = "7") -> dict | JSONResponse:
+    async def get_audit(days: str = "7", context_id: str | None = None) -> dict | JSONResponse:
         try:
             n = int(days)
         except ValueError:
@@ -368,5 +368,7 @@ def add_finance_api(app: FastAPI) -> None:
         if not 1 <= n <= 90:
             return error(400, "invalid_request", "days는 1~90")
         books = await state().books()
-        data, missing = await audit.audit_report(books, n)
+        data, missing = await audit.audit_report(
+            books, n, impact_lookup=incident_impact, context_id=context_id or None
+        )
         return ok(data, books.meta(missing))

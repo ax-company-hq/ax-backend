@@ -70,9 +70,10 @@ def test_audit_report_lists_findings_with_evidence() -> None:
         "refund_rate_jump",
         "amount_recheck_failed",
         "gate_hold_trend",
+        "compensation_outside_impact",  # 시나리오 A 지난 사건(ctx_inc_0100)의 buy_0999
     }
     assert out.stats.gate_held == 3 and out.unavailable == []
-    assert result["evidence"]["ref_ids"] and "감사 의심 6건" in result["evidence"]["data_summary"]
+    assert result["evidence"]["ref_ids"] and "감사 의심 7건" in result["evidence"]["data_summary"]
     for bad in ({"days": 0}, {"days": 91}, {"days": "x"}):
         failed = _ask("audit_report", bad)
         assert (failed["status"], failed["outcome"]) == ("failed", "invalid_input")

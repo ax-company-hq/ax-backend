@@ -1,5 +1,5 @@
 {
- "_note": "재무 목 장부 (finance_books.py). day는 오늘(UTC) 기준 날짜 오프셋, time은 UTC 시각. day 0 기록은 00시대에만 둔다. pg_overrides는 데모용으로 일부러 넣은 PG 정산 불일치. thresholds는 safety thresholds.toml v1 값을 옮긴 것(목 모드 기본값).",
+ "_note": "재무 목 장부 (finance_books.py). day는 오늘(UTC) 기준 날짜 오프셋, time은 UTC 시각. day 0 기록은 00시대에만 둔다. pg_overrides는 데모용으로 일부러 넣은 PG 정산 불일치. thresholds는 safety thresholds.toml v1 값을 옮긴 것(목 모드 기본값). incidents는 시나리오 A 시연용 사건(장애 구간). 영향 숫자는 mock_seed.json impacts(data 목과 같은 값).",
  "sellers": [
   {
    "seller_id": "sel_0001",
@@ -5481,6 +5481,96 @@
    "funded_by": "company",
    "seller_id": null,
    "execution_id": "exe_s0046"
+  },
+  {
+   "coupon_id": "cpn_3058",
+   "buyer_id": "buy_0001",
+   "purpose_code": "compensation",
+   "campaign_id": null,
+   "count": 1,
+   "unit_value": 2000,
+   "total_value": 2000,
+   "context_id": "ctx_inc_scn_a_0001",
+   "day": -1,
+   "time": "06:10",
+   "funded_by": "company",
+   "seller_id": null,
+   "execution_id": "exe_s0060"
+  },
+  {
+   "coupon_id": "cpn_3059",
+   "buyer_id": "buy_0002",
+   "purpose_code": "compensation",
+   "campaign_id": null,
+   "count": 1,
+   "unit_value": 2000,
+   "total_value": 2000,
+   "context_id": "ctx_inc_scn_a_0001",
+   "day": -1,
+   "time": "06:11",
+   "funded_by": "company",
+   "seller_id": null,
+   "execution_id": "exe_s0061"
+  },
+  {
+   "coupon_id": "cpn_3060",
+   "buyer_id": "buy_0003",
+   "purpose_code": "compensation",
+   "campaign_id": null,
+   "count": 1,
+   "unit_value": 2000,
+   "total_value": 2000,
+   "context_id": "ctx_inc_scn_a_0001",
+   "day": -1,
+   "time": "06:12",
+   "funded_by": "company",
+   "seller_id": null,
+   "execution_id": "exe_s0062"
+  },
+  {
+   "coupon_id": "cpn_3061",
+   "buyer_id": "buy_0004",
+   "purpose_code": "compensation",
+   "campaign_id": null,
+   "count": 1,
+   "unit_value": 2000,
+   "total_value": 2000,
+   "context_id": "ctx_inc_scn_a_0001",
+   "day": -1,
+   "time": "06:13",
+   "funded_by": "company",
+   "seller_id": null,
+   "execution_id": "exe_s0063"
+  },
+  {
+   "coupon_id": "cpn_3062",
+   "buyer_id": "buy_0005",
+   "purpose_code": "compensation",
+   "campaign_id": null,
+   "count": 1,
+   "unit_value": 2000,
+   "total_value": 2000,
+   "context_id": "ctx_inc_0100",
+   "day": -5,
+   "time": "04:00",
+   "funded_by": "company",
+   "seller_id": null,
+   "execution_id": "exe_s0064"
+  },
+  {
+   "coupon_id": "cpn_3063",
+   "buyer_id": "buy_0999",
+   "purpose_code": "compensation",
+   "campaign_id": null,
+   "count": 1,
+   "unit_value": 2000,
+   "total_value": 2000,
+   "context_id": "ctx_inc_0100",
+   "day": -5,
+   "time": "04:05",
+   "funded_by": "company",
+   "seller_id": null,
+   "execution_id": "exe_s0065"
   }
  ],
  "claims": [
@@ -6497,6 +6587,144 @@
    "hold_reason": "over_threshold",
    "computed_amount": 400000,
    "review_id": "rev_s0051"
+  },
+  {
+   "execution_id": "exe_s0060",
+   "day": -1,
+   "time": "06:10",
+   "action": "issue_coupon",
+   "requester": "marketing",
+   "context_id": "ctx_inc_scn_a_0001",
+   "params": {
+    "buyer_id": "buy_0001",
+    "purpose_code": "compensation",
+    "reason_code": "payment_failure",
+    "count": 1,
+    "unit_value": 2000,
+    "total_value": 2000
+   },
+   "status": "executed",
+   "grade": "A",
+   "hold_reason": null,
+   "computed_amount": 2000,
+   "review_id": null,
+   "result_ref": "cpn_3058",
+   "idempotency_key": "ctx_inc_scn_a_0001:issue_coupon:buy_0001"
+  },
+  {
+   "execution_id": "exe_s0061",
+   "day": -1,
+   "time": "06:11",
+   "action": "issue_coupon",
+   "requester": "marketing",
+   "context_id": "ctx_inc_scn_a_0001",
+   "params": {
+    "buyer_id": "buy_0002",
+    "purpose_code": "compensation",
+    "reason_code": "payment_failure",
+    "count": 1,
+    "unit_value": 2000,
+    "total_value": 2000
+   },
+   "status": "executed",
+   "grade": "A",
+   "hold_reason": null,
+   "computed_amount": 2000,
+   "review_id": null,
+   "result_ref": "cpn_3059",
+   "idempotency_key": "ctx_inc_scn_a_0001:issue_coupon:buy_0002"
+  },
+  {
+   "execution_id": "exe_s0062",
+   "day": -1,
+   "time": "06:12",
+   "action": "issue_coupon",
+   "requester": "marketing",
+   "context_id": "ctx_inc_scn_a_0001",
+   "params": {
+    "buyer_id": "buy_0003",
+    "purpose_code": "compensation",
+    "reason_code": "payment_failure",
+    "count": 1,
+    "unit_value": 2000,
+    "total_value": 2000
+   },
+   "status": "executed",
+   "grade": "A",
+   "hold_reason": null,
+   "computed_amount": 2000,
+   "review_id": null,
+   "result_ref": "cpn_3060",
+   "idempotency_key": "ctx_inc_scn_a_0001:issue_coupon:buy_0003"
+  },
+  {
+   "execution_id": "exe_s0063",
+   "day": -1,
+   "time": "06:13",
+   "action": "issue_coupon",
+   "requester": "marketing",
+   "context_id": "ctx_inc_scn_a_0001",
+   "params": {
+    "buyer_id": "buy_0004",
+    "purpose_code": "compensation",
+    "reason_code": "payment_failure",
+    "count": 1,
+    "unit_value": 2000,
+    "total_value": 2000
+   },
+   "status": "executed",
+   "grade": "A",
+   "hold_reason": null,
+   "computed_amount": 2000,
+   "review_id": null,
+   "result_ref": "cpn_3061",
+   "idempotency_key": "ctx_inc_scn_a_0001:issue_coupon:buy_0004"
+  },
+  {
+   "execution_id": "exe_s0064",
+   "day": -5,
+   "time": "04:00",
+   "action": "issue_coupon",
+   "requester": "marketing",
+   "context_id": "ctx_inc_0100",
+   "params": {
+    "buyer_id": "buy_0005",
+    "purpose_code": "compensation",
+    "reason_code": "payment_failure",
+    "count": 1,
+    "unit_value": 2000,
+    "total_value": 2000
+   },
+   "status": "executed",
+   "grade": "A",
+   "hold_reason": null,
+   "computed_amount": 2000,
+   "review_id": null,
+   "result_ref": "cpn_3062",
+   "idempotency_key": "ctx_inc_0100:issue_coupon:buy_0005"
+  },
+  {
+   "execution_id": "exe_s0065",
+   "day": -5,
+   "time": "04:05",
+   "action": "issue_coupon",
+   "requester": "marketing",
+   "context_id": "ctx_inc_0100",
+   "params": {
+    "buyer_id": "buy_0999",
+    "purpose_code": "compensation",
+    "reason_code": "payment_failure",
+    "count": 1,
+    "unit_value": 2000,
+    "total_value": 2000
+   },
+   "status": "executed",
+   "grade": "A",
+   "hold_reason": null,
+   "computed_amount": 2000,
+   "review_id": null,
+   "result_ref": "cpn_3063",
+   "idempotency_key": "ctx_inc_0100:issue_coupon:buy_0999"
   }
  ],
  "pg_overrides": {
@@ -6576,5 +6804,21 @@
     "value": 70
    }
   ]
- }
+ },
+ "incidents": [
+  {
+   "context_id": "ctx_inc_scn_a_0001",
+   "component": "payment",
+   "day": -1,
+   "from": "05:00",
+   "to": "05:30"
+  },
+  {
+   "context_id": "ctx_inc_0100",
+   "component": "payment",
+   "day": -5,
+   "from": "03:00",
+   "to": "03:20"
+  }
+ ]
 }
