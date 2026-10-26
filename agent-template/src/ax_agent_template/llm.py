@@ -113,7 +113,10 @@ class LLMClient:
         success: bool,
         tenant_id: str = "shop-demo",
     ) -> None:
-        """호출 1회의 사용량(NFR-06)을 공통 로그에 남긴다. 숫자만 남기고 프롬프트·응답은 넣지 않는다."""
+        """호출 1회의 사용량(NFR-06)을 공통 로그에 남긴다.
+
+        숫자만 남기고 프롬프트·응답은 넣지 않는다.
+        """
         log_event(
             context_id or "none",
             tenant_id,
