@@ -25,6 +25,7 @@ from support_agent.incident_schemas import (
 
 INCIDENT_CONTEXT_PREFIX = "ctx_inc_"
 NOT_REACHED = ("failed", "canceled")  # 마케팅이 응답하지 않으면(output 없음) 남은 요청을 멈춘다
+# 마케팅이 요청 자체를 거부(`rejected`, 예: SEQUENCE_GAP)해도 멈춘다
 
 
 def clean_buyers(values: list[str]) -> list[str] | None:
@@ -89,9 +90,10 @@ async def request_incident_compensation(request: AgentRequest) -> AgentResult:
             marketing_status = output.get("marketing_status")
             coupon_id = marketing.get("coupon_id") if isinstance(marketing, dict) else None
             reached = not (marketing_status in NOT_REACHED and not marketing)
-            if known:
+            if known or sent.outcome == "linked_duplicate":
+                # 마케팅은 같은 사건·구매자에게 번호만 달라도 새 쿠폰을 내지 않고 이전 결과에 잇는다
                 status = "duplicate"
-            elif marketing_status == "completed" and sent.outcome in (None, "linked_duplicate"):
+            elif marketing_status == "completed" and sent.outcome is None:
                 status = "requested"
             elif marketing_status == "input-required":  # 한도 초과로 사람 승인을 기다린다 (C 보류)
                 status = "held"
@@ -108,8 +110,8 @@ async def request_incident_compensation(request: AgentRequest) -> AgentResult:
                     total_value=decision.total_value if status == "requested" else 0,
                 )
             )
-            if not reached:
-                stopped = True
+            if not reached or marketing_status == "rejected":
+                stopped = True  # 닿지 않았거나 요청을 거부했다 (번호 건너뜀·권한). 계속 안 보낸다
 
     bad = [r for r in results if r.status in ("failed", "skipped")]
     body = IncidentCompensationOutput(

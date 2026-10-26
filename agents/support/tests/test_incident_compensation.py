@@ -219,6 +219,29 @@ def test_a_held_coupon_does_not_stop_the_others_and_is_not_a_failure(sent: Sent)
     assert out["results"][0]["total_value"] == 0  # 지급 전이라 합계에 넣지 않는다
 
 
+def test_a_buyer_marketing_already_linked_is_not_counted_as_a_new_coupon(sent: Sent) -> None:
+    # 마케팅은 같은 사건·구매자에게 번호만 달라도 새로 지급하지 않고 `linked_duplicate`로 잇는다
+    sent.replies.append(reply(TaskStatus.COMPLETED, {"coupon_id": "cpn_0009"}, "linked_duplicate"))
+    out = call(["buy_0001", "buy_0002"])["output"]
+    first, second = out["results"]
+    assert (first["status"], first["total_value"]) == ("duplicate", 0)
+    assert first["marketing_outcome"] == "linked_duplicate" and first["coupon_id"] == "cpn_0009"
+    assert second["status"] == "requested" and second["sequence"] == 2  # 번호는 소비됐다
+    assert out["requested"] == 1
+
+
+def test_a_rejected_request_stops_the_rest_instead_of_repeating_the_same_error(
+    sent: Sent,
+) -> None:
+    sent.replies.append(reply(TaskStatus.REJECTED, outcome="SEQUENCE_GAP"))
+    result = call(FOUR)
+    out = result["output"]
+    assert result["outcome"] == "partial" and out["stopped_early"] is True
+    assert [r["status"] for r in out["results"]] == ["failed", "skipped", "skipped", "skipped"]
+    assert out["results"][0]["marketing_outcome"] == "SEQUENCE_GAP"
+    assert len(sent) == 1
+
+
 def test_a_failed_request_keeps_the_sequence_for_a_retry(sent: Sent) -> None:
     sent.replies.append(reply(TaskStatus.FAILED, outcome="unreachable"))
     call(["buy_0001"])
