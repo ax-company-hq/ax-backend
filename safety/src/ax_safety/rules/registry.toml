@@ -87,7 +87,8 @@ action = "record_case"
 owner = "hr"
 base_grade = "A"
 
-# 인수인계·온보딩·담당 변경 (#180). 기록·진행은 A, 확정은 B, 퇴직 확정은 항상 사람 승인(C)
+# 인수인계·담당 변경 (#180). 기록·진행은 A, 확정은 B. 온보딩·발령 요청·퇴직 확정은 hr에서 빠져서
+# (#374, #375) 등록하지 않는다. 미등록은 항상 C(사람 승인)라 다시 쓰려면 그때 새로 등록한다
 [[actions]]
 action = "start_handover"
 owner = "hr"
@@ -95,21 +96,6 @@ base_grade = "A"
 
 [[actions]]
 action = "answer_handover_question"
-owner = "hr"
-base_grade = "A"
-
-[[actions]]
-action = "request_assignment_change"
-owner = "hr"
-base_grade = "A"
-
-[[actions]]
-action = "start_onboarding"
-owner = "hr"
-base_grade = "A"
-
-[[actions]]
-action = "update_onboarding_step"
 owner = "hr"
 base_grade = "A"
 
@@ -134,16 +120,13 @@ owner = "hr"
 base_grade = "C"
 
 # 담당 변경 확정: 검증자 = 안전 레이어 코드 규칙(변경 뒤 담당 공백·중복 건수, thresholds.toml)
+# hr에서 빠진 기능이다 (#375). thresholds.toml의 reassignment_* 규칙이 이 항목을 가리켜서(게이트가
+# 시작 때 확인한다) 규칙을 지우는 사람 PR과 함께 이 항목을 지운다
 [[actions]]
 action = "confirm_reassignment"
 owner = "hr"
 base_grade = "B"
 verifier = "safety"
-
-[[actions]]
-action = "confirm_offboarding"
-owner = "hr"
-base_grade = "C"
 
 # ---- 인프라 DejaFix (예진). 서버 재부팅·파일 삭제는 등록하지 않는다(미등록 = C)
 [[actions]]
