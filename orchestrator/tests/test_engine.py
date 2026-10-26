@@ -116,7 +116,7 @@ async def test_rejected_transfers_by_rule(harness) -> None:
 
 
 @pytest.mark.asyncio
-async def test_transfer_without_target_is_queued_not_invented(harness) -> None:
+async def test_transfer_without_target_fails(harness) -> None:
     harness.fakes.script("marketing", "publish_notice", "forbidden")
     inc = await run(harness)
     step = inc.steps["publish_notice"]
