@@ -18,6 +18,7 @@ from ax_contracts.schemas import EventEnvelope, EventType
 async def real_mode(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("AGENT_TEMPLATE_MOCK", raising=False)
     monkeypatch.delenv("FINANCE_MOCK", raising=False)
+    monkeypatch.delenv("ORCHESTRATOR_MOCK", raising=False)
     monkeypatch.setenv("AX_EVENT_STREAM", "ax:test-events")
     client = fakeredis.FakeAsyncRedis(decode_responses=True)
     events.set_redis_client(client)
