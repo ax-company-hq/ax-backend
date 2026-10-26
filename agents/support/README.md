@@ -30,7 +30,7 @@
 | `list_change_requests` | read | dashboard-api, orchestrator | 문의·변경 요청 연결 목록 |
 | `list_claims`, `get_claim`, `claim_stats`, `claim_queue` | read | dashboard-api, orchestrator | 클레임 목록·상세(판정 근거·감사 기록)·건수·보상 큐 |
 | `inquiry_overview` | read | dashboard-api, orchestrator, data | KPI(초안 채택률·수정 정도·가드 적중·분류별 건수)와 답변 대기 문의 (긴급도·대기 시간 순) |
-| `detect_inquiry_surge` | read | dashboard-api, orchestrator, data | 분류별 문의 급증 감지 (DEP-CS-05): 최근 창 건수를 평소 창 평균과 견줌 |
+| `detect_inquiry_surge` | read | dashboard-api, orchestrator, data | 분류별 문의 급증 감지 (DEP-CS-05): 최근 창 건수를 평소 창 평균(`baseline_method=median`이면 창별 건수의 중앙값)과 견줌 |
 | `create_claim` | A | dashboard-api, shop-api, orchestrator | 취소·반품·교환 접수 + 규칙 판정 |
 | `decide_claim` | A | dashboard-api | 사람 확인이 필요한 클레임 승인·거절 |
 | `receive_return`, `inspect_return` | A | dashboard-api (입고는 shop-api도) | 반품 입고, 검수 결과 기록 |
@@ -107,6 +107,7 @@ ax-contracts, ax-agent-template
 ## 5. 하지 않는 것
 - 클레임 판정(`claim_rules.py`)은 취소·반품·교환만 한다. 주문 사실로 코드가 판정하고(`orders.py` 시드 주문, 7일 환불 기간·불량 증빙·잦은 요청·고액 확인), 금액은 입력으로 받지 않는다. 규칙 값은 시드이며 memory 정책 문서 API가 생기면 교체한다. 보상 쿠폰은 클레임이 아니라 `request_compensation`으로 요청하고 지급은 마케팅이 한다. 클레임은 판정에 쓴 주문 사실의 스냅샷(`receipt`), 상담원·검수 메모(`untrusted.note`), 감사 기록(판정 시 `abuse_score`, 승인·거절 시 `system_outcome`·`agent_action`, 지급 시 `refund_cash`)을 담고, 보상 큐 항목은 입고 시각·품목·화면용 차단 코드(`NOT_INSPECTED`, `ON_HOLD`)를 담는다.
 - 집계(`insights.py`)는 문의 기록에서 코드가 센다. 비율은 분모가 0이면 `null`이다(0으로 채우지 않음). 초안 수정 정도는 `send_reply`가 초안과 보낸 답변의 차이로 기록한다. 급증 감지는 평소가 0이면 건수 기준만 쓰고 `ratio`는 `null`이며, 샘플은 문의 ID만 담는다. `support.inquiry_surge` 이벤트 발행은 contracts에 data 모델이 생긴 뒤에 한다.
+- 급증 감지의 평소 기준은 `baseline_method`로 고른다. 기본 `mean`은 기준 기간의 창당 평균(기존 동작)이고, `median`은 기준 기간을 창으로 나눠 창별 건수(0건인 창 포함)의 중앙값을 쓴다. 지난 어느 한 시간에 문의가 몰렸어도 평소가 부풀지 않아 급증을 놓치지 않는다. 응답의 `baseline_method`에 쓴 방식이 나온다.
 - 클레임의 주문·구매자·품목 ID는 모두 **문자열**이다 (shop-api 형식에 맞춤): 주문 `Order.id`(시드 `"101"`, shop-api 연결 뒤 `ord_…`), 구매자 `buyer_id`(shop-api 형식 `buy_<4자리>`, 사용자 번호 N ↔ `buy_`+0 채운 4자리, `buyer_ids.py`), 품목 `itm_…`. 예전 기록은 읽을 때 지금 형식으로 바꾸고(`user_id: 1`·`usr_1`은 `buyer_id: buy_0001`), PostgreSQL `claims` 테이블은 시작할 때 자동으로 옮긴다(`user_id`→`buyer_id`, 값은 `buy_…`, `order_id` bigint→text). 문의 ID(`inq_<번호>`)는 그대로다. 재무 목(`mock_seed.json`)은 주문 키를 `"101"`·`"102"`로 찾으므로 시드 주문과 맞는다.
 - 환불 지급 요청(`refund_request`)의 `params.summary`는 코드가 만든 사실(금액·클레임·주문 ID·유형/사유 코드)만 담는다. 10만 원 이상 C 보류가 되면 safety가 앞 200자를 보류 기록에 담아 담당자가 대시보드에서 읽는다. 고객 이름·메모 같은 외부 입력은 넣지 않는다 (테스트로 확인).
 - 이벤트 `support.inquiry_received`(SHOP-09)는 `create_inquiry`·`add_customer_message`가 `execute()`로 실행되고 저장이 끝난 뒤 한 번씩 발행한다(agent-template `events.publish`). `data`는 계약 `SupportInquiryReceivedData`의 사실 필드(문의 ID, 분류, 긴급도, 고객 메시지 수)만 담고, 제목·본문은 전화번호·이메일을 가린 채 봉투 `untrusted`에만 담는다. 멱등 키 `<context_id>:support.inquiry_received:<inquiry_id>:<메시지 수>`가 `event_id`가 되어 재전송해도 한 번만 전달된다. 실행되지 않은 요청과 재시도(같은 `idempotency_key`)는 발행하지 않고, 발행이 실패해도 접수는 막지 않는다. 문의의 `order_id`도 클레임처럼 문자열이다(shop-api `ord_…`, 옛 숫자 기록·입력은 읽을 때 문자열로 바꾼다). 이벤트 `order_id`는 `ord_`로 시작할 때만 싣고, 시드 주문(`"101"`)처럼 그 형식이 아니면 지어내지 않고 `null`로 보낸다.

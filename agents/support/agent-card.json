@@ -211,7 +211,7 @@
     },
     {
       "id": "detect_inquiry_surge",
-      "description": "최근 창의 분류별 문의 수를 평소(앞선 기간의 같은 길이 창 평균)와 견줘 급증한 분류를 돌려준다 (DEP-CS-05). 샘플은 문의 ID만 담고 원문은 담지 않는다. 총량 이상은 data 소관이다.",
+      "description": "최근 창의 분류별 문의 수를 평소(앞선 기간의 같은 길이 창 평균, baseline_method=median이면 창별 건수의 중앙값)와 견줘 급증한 분류를 돌려준다 (DEP-CS-05). 샘플은 문의 ID만 담고 원문은 담지 않는다. 총량 이상은 data 소관이다.",
       "input_schema": "agents/support/src/support_agent/insight_schemas.py#SurgeInput",
       "output_schema": "agents/support/src/support_agent/insight_schemas.py#SurgeReport",
       "grade": "read",
