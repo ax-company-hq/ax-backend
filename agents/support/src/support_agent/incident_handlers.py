@@ -2,8 +2,8 @@
 
 SCN-A 8단계. 영향 고객(데이터분석 영향 분석)은 문의를 안 낸 사람도 있어서
 `request_compensation`(문의가 있어야 한다)으로는 보낼 수 없다. 총괄만 사건(`ctx_inc_`) 안에서
-부를 수 있고, 단가·건수 상한은 정책표가 정한다. 고객 한 명마다 마케팅 `issue_coupon`(B 등급,
-재무 검증·한도 초과는 C 보류)에 한 건씩 직렬로 요청하며, 지급은 마케팅이 한다.
+부를 수 있고, 단가·건수 상한은 정책표가 정한다. 고객 한 명마다 마케팅 `issue_coupon`(A 등급,
+안전 관문의 한도 검사, 초과는 C 보류)에 한 건씩 직렬로 요청하며, 지급은 마케팅이 한다.
 같은 사건·구매자·사유는 한 번만 요청한다 (`request_compensation`과 같은 키라 문의 경로로
 이미 보상한 고객은 다시 보내지 않는다).
 """
@@ -127,7 +127,7 @@ async def request_incident_compensation(request: AgentRequest) -> AgentResult:
                 status = "requested"
             elif marketing_status == "input-required":  # 한도 초과로 사람 승인을 기다린다 (C 보류)
                 status = "held"
-            elif marketing_status == "working":  # 재무 검증 중이라 번호가 소비되지 않았다
+            elif marketing_status == "working":  # 처리 중이라 번호가 소비되지 않았다
                 status = "pending"
             else:
                 status = "failed"
@@ -151,7 +151,7 @@ async def request_incident_compensation(request: AgentRequest) -> AgentResult:
                 stopped = True
 
     bad = [r for r in results if r.status in ("failed", "skipped", "pending")]
-    notes = ["지급은 마케팅 issue_coupon이 재무 검증과 한도 검사를 거쳐 한다"]
+    notes = ["지급은 마케팅 issue_coupon이 안전 관문의 한도 검사를 거쳐 한다"]
     if limit_reached:
         notes.append(
             f"사건당 상한(최대 {compensation.MAX_INCIDENT_BUYERS}명, "

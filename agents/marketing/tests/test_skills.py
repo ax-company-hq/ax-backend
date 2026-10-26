@@ -88,7 +88,7 @@ def test_agent_card_matches_template_format() -> None:
     assert card.name == "marketing"
     assert {s.id for s in card.skills} == set(handlers.HANDLERS)
     issue = next(s for s in card.skills if s.id == "issue_coupon")
-    assert (issue.grade, issue.verifier) == ("B", "finance")
+    assert (issue.grade, issue.verifier) == ("A", None)
     assert client.get("/.well-known/agent-card.json").json()["name"] == "marketing"
 
 
