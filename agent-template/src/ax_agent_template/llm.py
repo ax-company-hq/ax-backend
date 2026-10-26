@@ -30,13 +30,10 @@ from typing import Any, TypeVar
 import httpx
 from pydantic import BaseModel, ValidationError
 
+from ax_agent_template import llm_usage
 from ax_agent_template.config import env_prefix
-from ax_agent_template.logging import log_event
 
 T = TypeVar("T", bound=BaseModel)
-
-# 계약 `LogKind`에 이 종류가 추가되기 전에는 표준 로거에만 남고 공통 로그 저장소에는 쓰이지 않는다.
-LLM_CALL_KIND = "llm_call"
 
 UNTRUSTED_OPEN = "<untrusted_data>"
 UNTRUSTED_CLOSE = "</untrusted_data>"
@@ -267,29 +264,26 @@ class LLMClient:
         success: bool,
         tenant_id: str = "shop-demo",
     ) -> None:
-        """호출 1회의 사용량(NFR-06)을 공통 로그에 남긴다.
+        """호출 1회의 사용량(NFR-06)을 LLM 사용량 저장소(계약 `LlmCallRecord`)에 남긴다.
 
-        숫자만 남기고 프롬프트·응답은 넣지 않는다.
+        숫자만 남기고 프롬프트·응답은 넣지 않는다. 기록이 실패해도 호출은 멈추지 않는다.
         """
-        log_event(
-            context_id or "none",
-            tenant_id,
-            LLM_CALL_KIND,
-            {
-                "department": self.dept,
-                "model": model,
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "success": success,
-            },
+        llm_usage.record_call(
             source=self.dept,
+            department=self.dept,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            success=success,
+            context_id=context_id,
+            tenant_id=tenant_id,
         )
 
     async def embed(self, texts: list[str], context_id: str | None = None) -> list[list[float]]:
         """OpenAI 호환 `/embeddings`로 텍스트별 벡터를 돌려준다. 입력 순서를 유지한다.
 
         모델은 `<부서>_EMBED_MODEL`(없으면 `EMBED_MODEL`), 엔드포인트·키는 LLM 설정을 쓴다.
-        `context_id`가 있으면 호출 사용량을 공통 로그에 남긴다.
+        `context_id`가 있으면 호출 사용량을 LLM 사용량 저장소에 남긴다.
         """
         if not self.settings.embed_model:
             raise LLMNotConfiguredError(
