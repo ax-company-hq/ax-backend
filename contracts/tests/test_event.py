@@ -25,6 +25,7 @@ from ax_contracts.schemas import (
     ShipmentDelayedData,
     ShopDegradedData,
     SupportInquiryReceivedData,
+    SupportInquiryResolvedData,
 )
 
 ENVELOPE_JSON = json.dumps(
@@ -63,12 +64,13 @@ def test_unknown_event_type_is_rejected() -> None:
 
 def test_event_type_catalog() -> None:
     values = {t.value for t in EventType}
-    assert len(values) == 24
+    assert len(values) == 25
     for expected in (
         "order.created",
         "payment.failed",
         "shop.recovered",
         "support.inquiry_received",
+        "support.inquiry_resolved",
         "metric.anomaly",
         "infra.anomaly_detected",
         "incident.resolved",
@@ -162,6 +164,35 @@ def test_support_inquiry_received_data() -> None:
         SupportInquiryReceivedData(inquiry_id=7, urgency="urgent", message_count=1)
     with pytest.raises(ValidationError):
         SupportInquiryReceivedData(inquiry_id=7, message_count=0)
+
+
+def test_support_inquiry_resolved_data() -> None:
+    assert EVENT_DATA_MODELS[EventType.SUPPORT_INQUIRY_RESOLVED] is SupportInquiryResolvedData
+    answered = SupportInquiryResolvedData(inquiry_id=7, status="resolved", resolution="answered")
+    assert answered.order_id is None and answered.coupon_id is None
+    full = SupportInquiryResolvedData(
+        inquiry_id=7,
+        order_id="ord_1",
+        status="resolved",
+        resolution="compensated",
+        claim_id=3,
+        claim_decision="approve",
+        coupon_id="cpn_1",
+        refund_amount=2000,
+    )
+    assert full.model_dump(mode="json")["refund_amount"] == 2000
+    with pytest.raises(ValidationError):
+        SupportInquiryResolvedData(inquiry_id=7, status="closed", resolution="answered")
+    with pytest.raises(ValidationError):
+        SupportInquiryResolvedData(inquiry_id=7, status="resolved", resolution="refunded")
+    with pytest.raises(ValidationError):
+        SupportInquiryResolvedData(
+            inquiry_id=7, status="resolved", resolution="answered", refund_amount=-1
+        )
+    with pytest.raises(ValidationError):  # 고객 원문 같은 모르는 필드는 거부
+        SupportInquiryResolvedData(
+            inquiry_id=7, status="resolved", resolution="answered", message="원문"
+        )
 
 
 def test_infra_anomaly_event_has_data_model() -> None:
