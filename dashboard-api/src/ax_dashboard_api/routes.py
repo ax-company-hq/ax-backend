@@ -11,8 +11,6 @@ from fastapi import APIRouter, Depends, Query
 from ax_contracts.schemas.hr import (
     AnswerHandoverQuestionOutput,
     AuditEntry,
-    ChangeStatus,
-    ChangeView,
     CheckPlanInput,
     CheckPlanOutput,
     DecideCandidateCardOutput,
@@ -21,8 +19,6 @@ from ax_contracts.schemas.hr import (
     HandoverQuestion,
     HandoverStatus,
     HandoverView,
-    OnboardingView,
-    StartOnboardingOutput,
 )
 from ax_contracts.schemas.record import Card
 from ax_dashboard_api import (
@@ -49,7 +45,6 @@ from ax_dashboard_api.schemas import (
     InspectionBody,
     Kpi,
     NoteBody,
-    OnboardingStepBody,
     QueueProcessBody,
     ReviewStatusBody,
     StatusBody,
@@ -426,46 +421,6 @@ async def decide_candidate_card(card_id: str, body: CandidateDecisionBody) -> di
         "decide_candidate_card", payload, target=f"card:{card_id}:{body.decision}"
     )
     return ok(DecideCandidateCardOutput.model_validate(out))
-
-
-@router.get("/onboardings")
-async def onboardings(member_id: str | None = None, area: str | None = None) -> dict:
-    if is_mock():
-        items = mock_hr.BOARD.list_onboardings(member_id, area)
-    else:
-        out = await hr_client.call("list_onboardings", _given(member_id=member_id, area=area))
-        items = [OnboardingView.model_validate(o) for o in out["onboardings"]]
-    return ok(items, total=len(items))
-
-
-@router.post("/onboardings/{onboarding_id}/steps/{step_id}")
-async def update_onboarding_step(
-    onboarding_id: str, step_id: str, body: OnboardingStepBody
-) -> dict:
-    """단계 완료 표시(또는 취소). 진행률은 hr(목은 코드)이 다시 센 값이다."""
-    if is_mock():
-        return ok(mock_hr.BOARD.update_step(onboarding_id, step_id, body.done))
-    out = await hr_client.call(
-        "update_onboarding_step",
-        {"onboarding_id": onboarding_id, "step_id": step_id, "done": body.done},
-        target=f"onboarding:{onboarding_id}:{step_id}:{body.done}",
-    )
-    return ok(StartOnboardingOutput.model_validate(out))
-
-
-@router.get("/assignment-changes")
-async def assignment_changes(
-    status: ChangeStatus | None = None, area: str | None = None, member_id: str | None = None
-) -> dict:
-    """발령·퇴직·입사·교대 요청. 시작·확정은 통합 에이전트가 하고 화면은 조회만 한다."""
-    if is_mock():
-        items = mock_hr.BOARD.list_changes(status, area, member_id)
-    else:
-        out = await hr_client.call(
-            "list_changes", _given(status=status, area=area, member_id=member_id)
-        )
-        items = [ChangeView.model_validate(c) for c in out["changes"]]
-    return ok(items, total=len(items))
 
 
 @router.get("/roster")
