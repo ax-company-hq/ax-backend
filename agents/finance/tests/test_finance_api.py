@@ -209,6 +209,7 @@ def test_configured_human_tokens(client: TestClient, monkeypatch: pytest.MonkeyP
     )
     assert ok.json()["data"]["confirmed_by"] == "byunghwan"
     monkeypatch.delenv("AGENT_TEMPLATE_MOCK")  # 목 모드가 아니면 human:<이름>은 받지 않는다
+    monkeypatch.delenv("FINANCE_MOCK", raising=False)  # CI는 FINANCE_MOCK=1도 켠다
     refused = client.post(
         "/api/finance/closing/confirm", json={"date": "2026-10-20"}, headers=HUMAN
     )
