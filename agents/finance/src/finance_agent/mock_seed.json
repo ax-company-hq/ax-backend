@@ -5,9 +5,9 @@
       "affected_customer_count": 3,
       "damage_amount": 87000,
       "affected_customer_ids": [
-        "buy_a1",
-        "buy_b2",
-        "buy_c3"
+        "buy_0901",
+        "buy_0902",
+        "buy_0903"
       ]
     },
     "ctx_inc_0002": {
@@ -15,12 +15,12 @@
       "affected_customer_count": 6,
       "damage_amount": 214500,
       "affected_customer_ids": [
-        "buy_d4",
-        "buy_e5",
-        "buy_f6",
-        "buy_g7",
-        "buy_h8",
-        "buy_i9"
+        "buy_0904",
+        "buy_0905",
+        "buy_0906",
+        "buy_0907",
+        "buy_0908",
+        "buy_0909"
       ]
     }
   },

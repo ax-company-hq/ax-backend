@@ -97,7 +97,7 @@ def _recheck(data: dict, sources: MockSources | None = None, refunds: dict | Non
     return {"status": "completed", "output": out.model_dump(mode="json")}
 
 
-def _coupon(count: int = 1, unit: int = 5000, buyer: str = "buy_a1", **extra: Any) -> dict:
+def _coupon(count: int = 1, unit: int = 5000, buyer: str = "buy_0901", **extra: Any) -> dict:
     return {
         "purpose_code": "compensation",
         "buyer_id": buyer,
@@ -168,8 +168,8 @@ def test_verify_rejects_when_safety_amount_differs(client: TestClient) -> None:
 
 
 def test_verify_rejects_unaffected_buyer(client: TestClient) -> None:
-    """보상 쿠폰은 data 영향 고객에게만. 시드의 영향 고객은 buy_a1·buy_b2·buy_c3."""
-    out = _recheck(_verify(_coupon(buyer="buy_zz")))["output"]
+    """보상 쿠폰은 data 영향 고객에게만. 시드의 영향 고객은 buy_0901·buy_0902·buy_0903."""
+    out = _recheck(_verify(_coupon(buyer="buy_0999")))["output"]
     assert (out["decision"], out["reason_code"]) == ("rejected", "not_affected")
 
 
@@ -487,7 +487,7 @@ def test_loss_reports_are_listed_for_dashboard(client: TestClient) -> None:
 # ---------------------------------------------------------------- 추가 테스트
 def test_campaign_coupon_skips_affected_check(client: TestClient) -> None:
     """캠페인 쿠폰은 장애 피해 고객 확인을 하지 않고 금액만 다시 계산한다."""
-    params = _coupon(buyer="buy_anyone") | {"purpose_code": "campaign", "campaign_id": "cmp_1"}
+    params = _coupon(buyer="buy_0998") | {"purpose_code": "campaign", "campaign_id": "cmp_1"}
     out = _recheck(_verify(params))["output"]
     assert (out["decision"], out["reason_code"]) == ("approved", "recomputed_match")
 

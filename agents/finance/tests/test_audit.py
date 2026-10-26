@@ -110,7 +110,7 @@ def _coupon(kit, cid, buyer, unit, when, ctx=None, count=1, purpose="compensatio
 def test_split_coupons_needs_near_limit_and_short_window(kit, fixed_now) -> None:
     t = kit.at("2026-10-22", "10:00")
     near = [
-        _coupon(kit, f"cpn_{i}", "buy_x", 18000, t + timedelta(minutes=20 * i)) for i in range(3)
+        _coupon(kit, f"cpn_{i}", "buy_0981", 18000, t + timedelta(minutes=20 * i)) for i in range(3)
     ]
     found = _by_code(_report(kit.books(coupons=near))[0]["findings"])
     assert "split_under_limit" in found
@@ -118,7 +118,7 @@ def test_split_coupons_needs_near_limit_and_short_window(kit, fixed_now) -> None
     assert "split_under_limit" not in _by_code(_report(kit.books(coupons=spread))[0]["findings"])
     small = [c | {"unit_value": 10000, "total_value": 10000} for c in near]
     assert "split_under_limit" not in _by_code(_report(kit.books(coupons=small))[0]["findings"])
-    one = [_coupon(kit, "cpn_9", "buy_x", 19000, t, count=3)]  # 한 번에 3장은 쪼개기가 아니다
+    one = [_coupon(kit, "cpn_9", "buy_0981", 19000, t, count=3)]  # 한 번에 3장은 쪼개기가 아니다
     assert "split_under_limit" not in _by_code(_report(kit.books(coupons=one))[0]["findings"])
 
 
@@ -128,7 +128,7 @@ def test_split_refunds_under_refund_limit(kit, fixed_now) -> None:
         {
             "refund_id": f"rfd_{i}",
             "order_id": f"ord_{i}",
-            "buyer_id": "buy_y",
+            "buyer_id": "buy_0982",
             "seller_id": "sel_a",
             "amount": 95000,
             "created_at": t + timedelta(hours=i),
@@ -136,7 +136,7 @@ def test_split_refunds_under_refund_limit(kit, fixed_now) -> None:
         for i in range(2)
     ]
     [f] = _by_code(_report(kit.books(refunds=refunds))[0]["findings"])["split_under_limit"]
-    assert "buy_y" in f["detail"] and f["refs"] == ["rfd_0", "rfd_1"]
+    assert "buy_0982" in f["detail"] and f["refs"] == ["rfd_0", "rfd_1"]
     over = [
         r | {"amount": 100000} for r in refunds
     ]  # 한도 이상은 관문이 C로 막는 건이라 쪼개기 아님
@@ -149,7 +149,7 @@ def test_repeat_refund_counts_orders(kit, fixed_now) -> None:
         {
             "refund_id": f"rfd_{i}",
             "order_id": "ord_same" if i < 2 else f"ord_{i}",
-            "buyer_id": "buy_z",
+            "buyer_id": "buy_0983",
             "seller_id": "sel_a",
             "amount": 1000,
             "created_at": t,
@@ -164,8 +164,8 @@ def test_repeat_refund_counts_orders(kit, fixed_now) -> None:
 def test_duplicate_coupon_same_context_only(kit, fixed_now) -> None:
     t = kit.at("2026-10-21")
     two = [
-        _coupon(kit, "cpn_1", "buy_q", 5000, t, "ctx_inc_1"),
-        _coupon(kit, "cpn_2", "buy_q", 5000, t, "ctx_inc_1"),
+        _coupon(kit, "cpn_1", "buy_0984", 5000, t, "ctx_inc_1"),
+        _coupon(kit, "cpn_2", "buy_0984", 5000, t, "ctx_inc_1"),
     ]
     assert "duplicate_coupon" in _by_code(_report(kit.books(coupons=two))[0]["findings"])
     two[1]["context_id"] = "ctx_inc_2"
@@ -228,7 +228,7 @@ def test_amount_recheck_flags_exceeding_refund(kit, fixed_now) -> None:
                 "unit_value": 5000,
                 "total_value": 10000,
                 "purpose_code": "compensation",
-                "buyer_id": "buy_1",
+                "buyer_id": "buy_0985",
             },
             "status": "executed",
             "computed_amount": 10000,

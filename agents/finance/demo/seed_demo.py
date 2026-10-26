@@ -8,7 +8,7 @@
     uv run python agents/finance/demo/seed_demo.py --safety http://localhost:8001 --finance http://localhost:8105
 
 가짜 데이터(finance `mock_seed.json`)
-- 사건 ctx_inc_0002: 영향 고객 buy_d4~buy_i9 6명, 실패 주문 8건, 피해 214,500원
+- 사건 ctx_inc_0002: 영향 고객 buy_0904~buy_0909 6명, 실패 주문 8건, 피해 214,500원
 - 결제: ord_1003 32,000원, ord_1004 18,000원, ord_1005 150,000원
 - 판매자 위험 점수: sel_1 12, sel_3 85, sel_4 30, sel_5 72
 """
@@ -104,27 +104,27 @@ def main() -> None:
     show("장애 기록 남기기", execute(s, "hr", "memory.card_write", "card-1", {"kind": "incident"}))
 
     # 1) 장애 보상 쿠폰 (마케팅 → 안전 레이어 → 재무가 다시 계산)
-    for buyer in ("buy_d4", "buy_e5", "buy_f6"):
+    for buyer in ("buy_0904", "buy_0905", "buy_0906"):
         show(
             f"보상 쿠폰 {buyer} 1장×5,000원",
             execute(s, "marketing", "issue_coupon", f"cpn-{buyer}", coupon(buyer, 1, 5000)),
         )
     show(
-        "영향 고객이 아닌 buy_zz에게 쿠폰",
-        execute(s, "marketing", "issue_coupon", "cpn-zz", coupon("buy_zz", 1, 5000)),
+        "영향 고객이 아닌 buy_0999에게 쿠폰",
+        execute(s, "marketing", "issue_coupon", "cpn-zz", coupon("buy_0999", 1, 5000)),
     )
     show(
         "총액을 틀리게 적은 쿠폰(3장×5,000원인데 5,000원)",
-        execute(s, "marketing", "issue_coupon", "cpn-wrong", coupon("buy_g7", 3, 5000, 5000)),
+        execute(s, "marketing", "issue_coupon", "cpn-wrong", coupon("buy_0907", 3, 5000, 5000)),
     )
     show(
         "한 고객에게 6만 원어치 쿠폰(고객당 5만 원 기준 넘음)",
-        execute(s, "marketing", "issue_coupon", "cpn-big", coupon("buy_h8", 3, 20000)),
+        execute(s, "marketing", "issue_coupon", "cpn-big", coupon("buy_0908", 3, 20000)),
     )
 
     show(
         "한 번에 50만 원 쿠폰(재무 AI 재량 한도 45만 원도 넘음 → 사람 확인)",
-        execute(s, "marketing", "issue_coupon", "cpn-huge", coupon("buy_i9", 25, 20000)),
+        execute(s, "marketing", "issue_coupon", "cpn-huge", coupon("buy_0909", 25, 20000)),
     )
 
     # 2) 환불 (고객지원 → 안전 레이어 → 재무가 결제 금액과 비교)
