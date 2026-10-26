@@ -1,4 +1,4 @@
-"""hr 액션 등록 (#180): A 5개, B 2개, C 2개."""
+"""hr 액션 등록 (#180, #375): A 3개, B 2개, C 1개. 온보딩·발령 요청·퇴직 확정은 hr에서 빠졌다."""
 
 from __future__ import annotations
 
@@ -12,11 +12,25 @@ from ax_safety.gate import Gate
 A_ACTIONS = [
     "start_handover",
     "answer_handover_question",
+    "decide_candidate_card",
+]
+
+# hr에서 뺀 액션 (#374, #375). 등록하지 않으니 무엇을 보내도 미등록이라 C(사람 승인)다.
+# (`confirm_reassignment`는 thresholds.toml 규칙이 가리켜서 사람 PR이 규칙과 함께 뺄 때까지 남긴다)
+REMOVED_ACTIONS = [
     "request_assignment_change",
     "start_onboarding",
     "update_onboarding_step",
-    "decide_candidate_card",
+    "confirm_offboarding",
 ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", REMOVED_ACTIONS)
+async def test_removed_hr_actions_are_unregistered_and_held(gate: Gate, act, action: str) -> None:
+    decision = await gate.execute(act(action, "hr", f"removed-{action}"))
+    assert (decision.grade, decision.status) == ("C", "held")
+    assert decision.hold_reason == HoldReason.UNREGISTERED_ACTION
 
 
 @pytest.mark.asyncio
@@ -71,13 +85,12 @@ async def test_confirm_reassignment_rules(gate: Gate, verifier: Any, act) -> Non
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("action", ["confirm_handover_incomplete", "confirm_offboarding"])
+@pytest.mark.parametrize("action", ["confirm_handover_incomplete"])
 async def test_hr_c_actions_always_held_with_summary(gate: Gate, act, action: str) -> None:
-    decision = await gate.execute(
-        act(action, "hr", f"c-{action}", summary="퇴직 확정 요청: emp_06 (support-desk)")
-    )
+    summary = "인수인계 미완성 확정 요청: emp_06 (support-desk)"
+    decision = await gate.execute(act(action, "hr", f"c-{action}", summary=summary))
     assert (decision.grade, decision.status) == ("C", "held")
     review = gate.store.get_review(decision.review_id or "")
     assert review is not None
-    assert review.report["summary"] == "퇴직 확정 요청: emp_06 (support-desk)"
+    assert review.report["summary"] == summary
     assert review.report["rules"] == [{"key": "base_grade", "value": "C"}]
