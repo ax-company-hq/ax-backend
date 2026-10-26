@@ -223,14 +223,22 @@ async def create_inquiry(request: AgentRequest) -> AgentResult:
     key = request.meta.idempotency_key or (
         f"{request.meta.context_id}:create_inquiry:user:{parsed.user_id}"
     )
+    incident = None
     if key not in STORE.results:  # 같은 요청의 재전송은 처음 정한 결과를 그대로 쓴다
         incident = await incident_context.resolve_for_order(
             request, parsed.order_id, parsed.user_id, SEND
         )
         if incident is not None:
-            request = incident_context.rebind(request, incident)
+            request = incident_context.rebind(request, incident.context_id)
 
-    extra = await _notice_sources(request, parsed.notice_id, parsed.notice_component)
+    # 호출한 쪽이 준 공지가 먼저이고, 없으면 사건에 보관된 점검 공지를 바로 읽는다.
+    incident_notice = incident.notice_id if incident is not None else None
+    extra = await _notice_sources(
+        request, parsed.notice_id or incident_notice, parsed.notice_component
+    )
+    if not extra and parsed.notice_id is None and incident_notice is not None:
+        # 사건의 공지를 읽지 못했으면 지금 게시 중인 공지를 찾아 본다 (사건 요청이라 자동)
+        extra = await _notice_sources(request, None, parsed.notice_component)
 
     async def apply() -> tuple[dict[str, Any], bool]:
         analysis, fallback = await drafting.analyze(message, subject, extra)

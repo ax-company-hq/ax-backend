@@ -9,13 +9,17 @@
 - 조회가 실패하거나 시간이 넘거나 응답이 이상하거나 사건이 없으면 기존 방식
   (`ctx_ui_`·`ctx_shop_`)으로 접수한다. 문의 응대는 멈추지 않는다.
 - 남의 주문, 시드 주문, 숫자 주문은 조회하지 않는다. 이미 사건 번호로 온 요청은 다시 묻지 않는다.
+- 총괄이 사건에 보관한 점검 공지 번호(`notice_id`, 계약 #356)를 함께 돌려주면 그 공지를
+  `get_notice`로 바로 읽는다. 값을 지어내지 않고, 번호 모양이 맞지 않으면 쓰지 않는다.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -38,6 +42,15 @@ SendFn = Callable[[str, AgentRequest], Awaitable[AgentResult]]
 INCIDENT_PREFIX = "ctx_inc_"
 PAYMENT_COMPONENT = "payment"
 LOOKUP_TIMEOUT_SECONDS = 3.0  # 사건 조회가 문의 접수를 오래 붙잡지 않게 한다
+NOTICE_ID_PATTERN = re.compile(r"^ntc_[0-9A-Za-z_-]{1,40}$")  # 마케팅 공지 번호 모양
+
+
+@dataclass(frozen=True)
+class IncidentRef:
+    """총괄이 알려 준 진행 중인 사건. `notice_id`는 사건에 보관된 점검 공지 번호(없으면 None)."""
+
+    context_id: str
+    notice_id: str | None = None
 
 
 def is_incident(context_id: str) -> bool:
@@ -91,8 +104,8 @@ def provable_occurrence(order: dict[str, Any]) -> tuple[str, datetime] | None:
 
 async def lookup(
     request: AgentRequest, send: SendFn, component: str, occurred_at: datetime
-) -> str | None:
-    """총괄에 진행 중인 사건 번호를 묻는다. 어떤 실패든 None이다."""
+) -> IncidentRef | None:
+    """총괄에 진행 중인 사건을 묻는다. 어떤 실패든 None이다."""
     query = AgentRequest(
         meta=request.meta.model_copy(update={"idempotency_key": None}),
         skill="find_active_incident",
@@ -112,14 +125,19 @@ async def lookup(
     except ValidationError:
         return None
     if found.found and found.context_id and is_incident(found.context_id):
-        return found.context_id
+        notice_id = found.notice_id if _is_notice_id(found.notice_id) else None
+        return IncidentRef(found.context_id, notice_id)
     return None
+
+
+def _is_notice_id(value: Any) -> bool:
+    return isinstance(value, str) and NOTICE_ID_PATTERN.fullmatch(value) is not None
 
 
 async def resolve_for_order(
     request: AgentRequest, order_id: Any, user_id: int, send: SendFn
-) -> str | None:
-    """문의의 주문으로 진행 중인 사건 번호를 찾는다. 찾지 못하면 None (기존 방식으로 접수)."""
+) -> IncidentRef | None:
+    """문의의 주문으로 진행 중인 사건을 찾는다. 찾지 못하면 None (기존 방식으로 접수)."""
     if is_incident(request.meta.context_id):
         return None
     if not isinstance(order_id, str) or not order_id.startswith("ord_"):
