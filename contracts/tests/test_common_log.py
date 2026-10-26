@@ -41,6 +41,19 @@ def test_naive_datetime_rejected():
         CommonLogQuery.model_validate({"to": "2026-01-01T00:00:00"})
 
 
+def test_llm_call_kind_accepted():
+    payload = {
+        "department": "finance",
+        "model": "m",
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "success": True,
+    }
+    r = LogRecord.model_validate(_record(kind="llm_call", payload=payload))
+    assert r.kind == "llm_call"
+    assert CommonLogQuery.model_validate({"kinds": ["llm_call"]}).kinds == ["llm_call"]
+
+
 def test_context_id_none_allowed():
     r = LogRecord.model_validate(_record(context_id=None))
     assert r.context_id is None
