@@ -39,7 +39,7 @@ curl -X POST localhost:<포트>/api/events -H 'Content-Type: application/json' -
 
 ## 총괄의 공통 규칙
 - 모든 요청 `meta.path`는 `["orchestrator"]`로 시작, `idempotency_key = <context_id>:<skill>:<단계 id>`, `deadline`은 호출 시각 + 30초.
-- 실패(`failed`)는 2번, 마감 초과(`canceled`)는 1번 재시도한다. `rejected`(`FORBIDDEN_SKILL`·`HOP_LIMIT`·소관 아님)는 같은 skill을 가진 다른 부서로 이관한다.
+- 실패(`failed`)는 2번, 마감 초과(`canceled`)는 1번 재시도한다. `rejected`(`FORBIDDEN_SKILL`·`HOP_LIMIT`·소관 아님)는 같은 skill을 가진 다른 부서로 이관한다. 그런 부서가 없으면 지어내지 않고 단계를 "이관 큐로 넘김"(`transfer_queued`)으로 표시한다.
 - `input-required`: `dept_input`이면 `output.question = {skill, input}`을 총괄이 해당 부서에 물어 답을 `input.answers`로 넣어 다시 부른다. `human_input`이면 사람 승인을 기다리고(총괄은 승인하지 않음), 마감이 지나면 자동 거절로 처리한다.
 - 카드에 없는 skill, 총괄이 요청할 수 없는 skill(`allowed_requesters`)은 "확인할 수 없음"으로 건너뛴다.
 - 보상·쿠폰은 총괄이 부르지 않는다(#228 결정 A). 고객지원이 문의 접수 때 처리하고 마케팅에 직접 요청한다.

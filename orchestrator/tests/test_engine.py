@@ -119,8 +119,11 @@ async def test_rejected_transfers_by_rule(harness) -> None:
 async def test_transfer_without_target_fails(harness) -> None:
     harness.fakes.script("marketing", "publish_notice", "forbidden")
     inc = await run(harness)
-    assert inc.steps["publish_notice"].status == "failed"
-    assert "이관 실패" in inc.steps["publish_notice"].note
+    step = inc.steps["publish_notice"]
+    assert step.status == "transfer_queued" and step.transferred_to is None
+    assert "이관 큐로 넘김" in step.note
+    assert inc.status == "degraded"
+    assert "이관 큐로 넘김" in "".join(inc.summary)
 
 
 @pytest.mark.asyncio

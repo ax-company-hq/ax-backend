@@ -25,11 +25,13 @@
 | `request_compensation` | A | dashboard-api, orchestrator | 보상 단가 판정 + 마케팅 `issue_coupon(compensation)` 직렬 요청 (DEP-CS-02) |
 | `diagnose_payment` | read | dashboard-api, orchestrator | 문의의 주문에서 결제가 막힌 곳(실패 원인·중복 결제·기록 불일치)과 다음 할 일을 주문·결제 기록으로 판단 (재결제·환불은 안 함) |
 | `suggest_compensation` | read | dashboard-api, orchestrator | 문의의 주문 사실로 지연 보상 후보를 제안 (쿠폰은 안 냄, 승인은 사람이) |
+| `customer_signals` | read | dashboard-api, orchestrator | 구매자 한 명의 이탈·재문의 위험 신호(미답 문의·감정·잦은 문의·거절/잦은 클레임)를 점수 기준표로 low·medium·high와 이유로 알려 줌 |
+| `list_at_risk_customers` | read | dashboard-api, orchestrator | 위험이 medium/high 이상인 구매자를 점수 높은 순으로 (리텐션·후속 연락 대상 목록) |
 | `request_change` | A | dashboard-api, orchestrator | 변경 요청을 기획개발 `create_ticket`으로 보내고 `ctx_req_`를 문의와 연결 |
 | `list_change_requests` | read | dashboard-api, orchestrator | 문의·변경 요청 연결 목록 |
 | `list_claims`, `get_claim`, `claim_stats`, `claim_queue` | read | dashboard-api, orchestrator | 클레임 목록·상세(판정 근거·감사 기록)·건수·보상 큐 |
 | `inquiry_overview` | read | dashboard-api, orchestrator, data | KPI(초안 채택률·수정 정도·가드 적중·분류별 건수)와 답변 대기 문의 (긴급도·대기 시간 순) |
-| `detect_inquiry_surge` | read | dashboard-api, orchestrator, data | 분류별 문의 급증 감지 (DEP-CS-05): 최근 창 건수를 평소 창 평균과 견줌 |
+| `detect_inquiry_surge` | read | dashboard-api, orchestrator, data | 분류별 문의 급증 감지 (DEP-CS-05): 최근 창 건수를 평소 창 평균(`baseline_method=median`이면 창별 건수의 중앙값)과 견줌 |
 | `create_claim` | A | dashboard-api, shop-api, orchestrator | 취소·반품·교환 접수 + 규칙 판정 |
 | `decide_claim` | A | dashboard-api | 사람 확인이 필요한 클레임 승인·거절 |
 | `receive_return`, `inspect_return` | A | dashboard-api (입고는 shop-api도) | 반품 입고, 검수 결과 기록 |
@@ -42,6 +44,7 @@
 - `request_compensation`은 단가를 코드 정책표(`compensation.py`)로 판정하고, 사건(`context_id`)별로 `sequence` 1부터 한 건씩 마케팅에 보낸다. 지급·`execute()`·재무 교차검증은 마케팅 쪽이라 support는 자기 상태를 바꾸지 않고 safety 등록도 필요 없다. 표에 없는 사유는 `not_eligible`. 번호는 마케팅이 소비한 경우(지급·재무 거절·보류·실행 실패)에만 올리고, 재무 검증 중(`working`)·번호/입력 오류·타임아웃·연결 실패는 같은 번호로 다시 보낸다. 같은 사건의 요청은 락으로 한 건씩 처리한다.
 - `suggest_compensation`(읽기)은 보상 후보만 제안한다 (`suggest_handlers.py`). 고객 문장은 읽지 않고, 문의의 주문(shop-api, 목 모드는 시드)의 약속 배송일·배송 완료 시각으로 코드가 지연 일수(채운 일수, 배송 전이면 지금까지)를 세어 `LATE_MIN_DAYS`(1일) 이상이면 `late_delivery` 후보를 돌려준다. 약속일이 없으면 `확인할 수 없음`으로 돌려주고 지어내지 않는다. 문의의 구매자(`buy_<번호>`)와 주문의 구매자가 다르면 not_found다. 응답의 `request`를 담당자가 승인하면 그대로 `request_compensation`에 보낸다 (자동 발급 없음: 마케팅 `issue_coupon`은 B 등급이라 재무 검증을 거치고 기준 금액 이상은 안전 레이어가 보류한다).
 - `diagnose_payment`(읽기)는 결제가 막힌 곳을 알려 준다 (`payment_handlers.py`). 고객 문장은 읽지 않고, 문의의 주문(shop-api, 결제 시도 기록 포함)으로 코드가 상황(`paid`, `payment_failed`, `not_attempted`, `duplicate_payment`, `inconsistent`, `cancelled`, `other`)과 다음 할 일(`retry_payment`, `wait_and_retry`, `complete_payment`, `review_refund`, `handoff_review`, `none`)을 정한다. 실패 코드가 `PG_UNAVAILABLE`이면 결제 서버 문제로, `PG_DECLINED`면 거절로 본다. 성공한 결제가 둘 이상이면 중복 금액을 계산해 환불 검토로 넘기며 자동 환불은 없다. 문의의 구매자와 주문의 구매자가 다르면 not_found이고, 주문 출처가 시드(목)이면 결제 기록이 없어 담당자 확인으로 돌려준다.
+- `customer_signals`·`list_at_risk_customers`(읽기)는 데이터분석팀 정리표의 이탈 예측·고객 행동 분석을 고객지원 데이터로 좁혀 적용한 것이다 (`customer_signals.py`). 문의·클레임 기록에서 코드가 점수를 센다: 하루 넘게 답 못 받은 문의 3점, 화난 메시지 건당 2점·답답한 메시지 건당 1점(각 2건까지), 30일 3건 이상 문의 2점, 이관 1점, 90일 안 거절된 클레임 2점, 클레임 2건 이상 2점. 합이 3점 이상 medium, 6점 이상 high이고 `recommended_action`은 none·proactive_check·personal_followup이다. 클레임이 90일에 3건 이상이면 이탈과 별개로 `claim_pattern_review`를 켠다. 구매자 가명 ID와 건수·이유 코드만 돌려주고 이름과 문의 원문은 읽지도 담지도 않는다. 구매 이력이 필요한 RFM·LTV·코호트는 data 소관이라 여기서 하지 않는다. 위험 단계는 사실에서 코드가 낸 값이라 쓰는 사람이 확인한다.
 
 ## 다국어와 키워드 (`languages.py`, `drafting.py`, `guard.py`)
 - 고객 메시지의 언어는 LLM이 아니라 **코드가 문자 종류로 판별**한다 (`languages.detect`): 한글 `ko`, 가나(한자 포함) `ja`, 한자만 `zh`, 라틴 문자 `en`, 그 밖(키릴·아랍·태국어 등) `other`. 분류 결과 `classification.language`에 담긴다.
@@ -106,6 +109,7 @@ ax-contracts, ax-agent-template
 ## 5. 하지 않는 것
 - 클레임 판정(`claim_rules.py`)은 취소·반품·교환만 한다. 주문 사실로 코드가 판정하고(`orders.py` 시드 주문, 7일 환불 기간·불량 증빙·잦은 요청·고액 확인), 금액은 입력으로 받지 않는다. 규칙 값은 시드이며 memory 정책 문서 API가 생기면 교체한다. 보상 쿠폰은 클레임이 아니라 `request_compensation`으로 요청하고 지급은 마케팅이 한다. 클레임은 판정에 쓴 주문 사실의 스냅샷(`receipt`), 상담원·검수 메모(`untrusted.note`), 감사 기록(판정 시 `abuse_score`, 승인·거절 시 `system_outcome`·`agent_action`, 지급 시 `refund_cash`)을 담고, 보상 큐 항목은 입고 시각·품목·화면용 차단 코드(`NOT_INSPECTED`, `ON_HOLD`)를 담는다.
 - 집계(`insights.py`)는 문의 기록에서 코드가 센다. 비율은 분모가 0이면 `null`이다(0으로 채우지 않음). 초안 수정 정도는 `send_reply`가 초안과 보낸 답변의 차이로 기록한다. 급증 감지는 평소가 0이면 건수 기준만 쓰고 `ratio`는 `null`이며, 샘플은 문의 ID만 담는다. `support.inquiry_surge` 이벤트 발행은 contracts에 data 모델이 생긴 뒤에 한다.
+- 급증 감지의 평소 기준은 `baseline_method`로 고른다. 기본 `mean`은 기준 기간의 창당 평균(기존 동작)이고, `median`은 기준 기간을 창으로 나눠 창별 건수(0건인 창 포함)의 중앙값을 쓴다. 지난 어느 한 시간에 문의가 몰렸어도 평소가 부풀지 않아 급증을 놓치지 않는다. 응답의 `baseline_method`에 쓴 방식이 나온다.
 - 클레임의 주문·구매자·품목 ID는 모두 **문자열**이다 (shop-api 형식에 맞춤): 주문 `Order.id`(시드 `"101"`, shop-api 연결 뒤 `ord_…`), 구매자 `buyer_id`(shop-api 형식 `buy_<4자리>`, 사용자 번호 N ↔ `buy_`+0 채운 4자리, `buyer_ids.py`), 품목 `itm_…`. 예전 기록은 읽을 때 지금 형식으로 바꾸고(`user_id: 1`·`usr_1`은 `buyer_id: buy_0001`), PostgreSQL `claims` 테이블은 시작할 때 자동으로 옮긴다(`user_id`→`buyer_id`, 값은 `buy_…`, `order_id` bigint→text). 문의 ID(`inq_<번호>`)는 그대로다. 재무 목(`mock_seed.json`)은 주문 키를 `"101"`·`"102"`로 찾으므로 시드 주문과 맞는다.
 - 환불 지급 요청(`refund_request`)의 `params.summary`는 코드가 만든 사실(금액·클레임·주문 ID·유형/사유 코드)만 담는다. 10만 원 이상 C 보류가 되면 safety가 앞 200자를 보류 기록에 담아 담당자가 대시보드에서 읽는다. 고객 이름·메모 같은 외부 입력은 넣지 않는다 (테스트로 확인).
 - 이벤트 `support.inquiry_received`(SHOP-09)는 `create_inquiry`·`add_customer_message`가 `execute()`로 실행되고 저장이 끝난 뒤 한 번씩 발행한다(agent-template `events.publish`). `data`는 계약 `SupportInquiryReceivedData`의 사실 필드(문의 ID, 분류, 긴급도, 고객 메시지 수)만 담고, 제목·본문은 전화번호·이메일을 가린 채 봉투 `untrusted`에만 담는다. 멱등 키 `<context_id>:support.inquiry_received:<inquiry_id>:<메시지 수>`가 `event_id`가 되어 재전송해도 한 번만 전달된다. 실행되지 않은 요청과 재시도(같은 `idempotency_key`)는 발행하지 않고, 발행이 실패해도 접수는 막지 않는다. 문의의 `order_id`도 클레임처럼 문자열이다(shop-api `ord_…`, 옛 숫자 기록·입력은 읽을 때 문자열로 바꾼다). 이벤트 `order_id`는 `ord_`로 시작할 때만 싣고, 시드 주문(`"101"`)처럼 그 형식이 아니면 지어내지 않고 `null`로 보낸다.

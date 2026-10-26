@@ -35,7 +35,7 @@ class DemoRequest(BaseModel):
 
     hold_rollback: bool = False  # 롤백이 C 등급 보류가 됨(사람 승인 대기)
     fail_marketing: bool = False  # 공지 게시가 한 번 실패(재시도로 복구)
-    wrong_owner: bool = False  # 공지 게시가 소관 아님으로 거절(이관)
+    wrong_owner: bool = False  # 공지 게시가 소관 아님으로 거절 → 이관 부서 없음 → 이관 큐로 넘김
     infra_card_empty: bool = False  # 인프라 카드 수집 실패(= 현재 dev 상태)
 
 
@@ -65,7 +65,6 @@ class AppState:
             fakes.script("marketing", "publish_notice", "fail")
         if demo.wrong_owner:
             fakes.script("marketing", "publish_notice", "forbidden")
-            fakes.extra_skills["support"] = [("publish_notice", "A", None)]  # 이관받을 부서
         real = real_depts_from_env(DEPTS)
         if real:
             set_agent_name("orchestrator")
@@ -185,7 +184,12 @@ async def receive_event(env: EventEnvelope) -> dict:
 
 @app.post("/api/incidents/{context_id}/holds/{step_id}")
 async def decide(context_id: str, step_id: str, body: Decision) -> dict:
-    """대시보드 승인 대기열의 사람 결정을 전달한다. 총괄이 승인하는 것이 아니다."""
+    """목 모드의 승인·거절 흉내. 총괄이 승인하는 것이 아니다.
+
+    이 엔드포인트에는 사람 토큰 확인이 없다(#265). 그래서 목 모드에서만 열고,
+    실제 모드의 사람 결정은 안전 관문 보류 큐 하나로만 간다.
+    """
+    _require_mock()
     if not (state.manager and state.manager.hold_decision(context_id, step_id, body.approved)):
         raise HTTPException(404, "대기 중인 보류가 없음")
     return {"data": {"ok": True}, "meta": {}}

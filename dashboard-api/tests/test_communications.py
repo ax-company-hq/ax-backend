@@ -1,9 +1,11 @@
 """부서별 소통 탭 조회 GET /api/dashboard/communications."""
 
+from datetime import UTC, datetime
+
 import pytest
 from fastapi.testclient import TestClient
 
-from ax_contracts.data_access.common_log import CommonLogQuery, CommonLogResult
+from ax_contracts.data_access.common_log import CommonLogQuery, CommonLogResult, LogRecord
 from ax_dashboard_api import communications
 from ax_dashboard_api.main import app
 
@@ -32,7 +34,10 @@ def test_mock_lists_lines_with_code_fields_only(monkeypatch):
         "outcome",
         "context_id",
         "execution_id",
+        "kind",
+        "event_type",
     }
+    assert (data[0]["kind"], data[0]["event_type"]) == ("message", None)
     assert (data[0]["from_agent"], data[0]["to_agent"]) == ("orchestrator", "support")
 
 
@@ -200,3 +205,93 @@ def test_dejafix_can_be_asked_by_any_of_its_names(monkeypatch):
     support = client.get(URL, params={"dept": "support"}).json()["data"]
     assert [x["from_agent"] for x in support] == ["support"]
     assert communications.agent_name("hr") == "hr"  # 이름이 같은 부서는 그대로
+
+
+def test_events_are_hidden_by_default_and_shown_only_when_asked(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_MOCK", "1")
+    plain = TestClient(app).get(URL).json()["data"]
+    assert [x["kind"] for x in plain] == ["message"] * 4
+    with_events = TestClient(app).get(URL, params={"include_events": "true"}).json()["data"]
+    assert len(with_events) == 5
+    event = with_events[-1]
+    assert (event["kind"], event["event_type"]) == ("event", "support.inquiry_received")
+    assert (event["from_agent"], event["to_agent"], event["skill"]) == ("support", None, None)
+    assert event["outcome"] == "completed" and event["execution_id"] is None
+
+
+def test_include_events_adds_the_event_kind_to_the_common_log_query(monkeypatch):
+    monkeypatch.delenv("DASHBOARD_MOCK", raising=False)
+    monkeypatch.delenv("AGENT_TEMPLATE_MOCK", raising=False)
+    seen: list[CommonLogQuery] = []
+
+    def reader(q: CommonLogQuery) -> CommonLogResult:
+        seen.append(q)
+        return CommonLogResult()
+
+    communications.set_reader(reader)
+    TestClient(app).get(URL)
+    TestClient(app).get(URL, params={"include_events": "true"})
+    assert "event_published" not in seen[0].kinds
+    assert "event_published" in seen[1].kinds
+
+
+def test_event_lines_are_filtered_by_dept_and_never_leak_payload_details(monkeypatch):
+    monkeypatch.delenv("DASHBOARD_MOCK", raising=False)
+    monkeypatch.delenv("AGENT_TEMPLATE_MOCK", raising=False)
+    records = [
+        LogRecord.model_validate(
+            {
+                "log_id": f"log_{n}",
+                "context_id": "ctx_ui_1",
+                "occurred_at": datetime(2026, 10, 26, 9, n, tzinfo=UTC),
+                "source": source,
+                "kind": "event_published",
+                "payload": {
+                    "event_type": event_type,
+                    "event_id": f"evt_{n}",
+                    "customer": "김하늘 010-1234-5678",
+                },
+            }
+        )
+        for n, (source, event_type) in enumerate(
+            [("support", "support.inquiry_received"), ("marketing", "coupon.issued")]
+        )
+    ]
+    communications.set_reader(lambda q: CommonLogResult(records=records))
+    both = TestClient(app).get(URL, params={"include_events": "true"}).json()["data"]
+    assert [x["event_type"] for x in both] == ["support.inquiry_received", "coupon.issued"]
+    marketing = TestClient(app).get(URL, params={"include_events": "true", "dept": "marketing"})
+    assert [x["event_type"] for x in marketing.json()["data"]] == ["coupon.issued"]
+    assert "010-1234-5678" not in str(both) and "evt_" not in str(both)
+
+
+def test_an_event_line_with_an_odd_payload_still_renders(monkeypatch):
+    monkeypatch.delenv("DASHBOARD_MOCK", raising=False)
+    monkeypatch.delenv("AGENT_TEMPLATE_MOCK", raising=False)
+    record = LogRecord.model_validate(
+        {
+            "log_id": "log_x",
+            "occurred_at": datetime(2026, 10, 26, 9, 0, tzinfo=UTC),
+            "source": "support",
+            "kind": "event_published",
+            "payload": {"event_type": 123},
+        }
+    )
+    communications.set_reader(lambda q: CommonLogResult(records=[record]))
+    (line,) = TestClient(app).get(URL, params={"include_events": "true"}).json()["data"]
+    assert line["kind"] == "event" and line["event_type"] is None
+
+
+def test_a_log_reader_that_returns_other_kinds_cannot_add_hidden_lines(monkeypatch):
+    monkeypatch.delenv("DASHBOARD_MOCK", raising=False)
+    monkeypatch.delenv("AGENT_TEMPLATE_MOCK", raising=False)
+    memory = LogRecord.model_validate(
+        {
+            "log_id": "log_m",
+            "occurred_at": datetime(2026, 10, 26, 9, 0, tzinfo=UTC),
+            "source": "memory",
+            "kind": "memory_referenced",
+        }
+    )
+    communications.set_reader(lambda q: CommonLogResult(records=[memory]))
+    assert TestClient(app).get(URL, params={"include_events": "true"}).json()["data"] == []
