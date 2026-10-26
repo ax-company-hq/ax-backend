@@ -3,11 +3,12 @@
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from ax_contracts.schemas import AgentRequest, AgentResult, TaskStatus
-from support_agent import compensation, handlers
+from support_agent import compensation, handlers, shop_client
 from support_agent.main import app, load_card
 from support_agent.schemas import Analysis
 from support_agent.store import InquiryStore
@@ -166,6 +167,30 @@ def test_the_same_request_twice_sends_each_buyer_once(sent: Sent) -> None:
 
 
 def test_a_buyer_already_compensated_through_an_inquiry_is_not_sent_again(sent: Sent) -> None:
+    shop_client.use_client(
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    json={
+                        "data": {
+                            "order_id": "ord_0001",
+                            "buyer_id": "buy_0001",
+                            "status": "payment_failed",
+                            "payments": [
+                                {
+                                    "payment_id": "pay_1",
+                                    "status": "failed",
+                                    "failure_code": "PG_UNAVAILABLE",
+                                }
+                            ],
+                        },
+                        "meta": {},
+                    },
+                )
+            )
+        )
+    )
     handlers.STORE.create(
         context_id=CTX,
         tenant_id="shop-demo",
