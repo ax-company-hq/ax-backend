@@ -28,6 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from ax_agent_template import config as template_config
 from ax_agent_template import execute as gate_module
 from ax_contracts.schemas import TENANT_ID_DEFAULT, Evidence, ExecuteDecision, RequestMeta
+from ax_contracts.schemas.planning import ChangeResultInput
 from ax_contracts.schemas.record import RecordCase, RecordKind
 from planning_agent.domain.autocheck import (
     WAIT_CROSS_CHECK,
@@ -81,6 +82,7 @@ from planning_agent.domain.rules import (
 )
 from planning_agent.domain.seed import initial_state
 from planning_agent.domain.trace import changed_paths_for
+from planning_agent.result_notify import ResultSender, send_change_result
 
 AGENT_NAME = "planning"
 TEAM_LEAD = "노예진"  # 확정·머지·승급 승인 버튼을 누르는 팀장 (목)
@@ -376,11 +378,13 @@ class PlanningService:
         clock: Clock | None = None,
         gate: Gate | None = None,
         tenant_id: str = TENANT_ID_DEFAULT,
+        result_sender: ResultSender | None = None,
     ):
         self._clock_factory: Callable[[], Clock] = (
             (lambda: clock) if clock else default_clock_factory()
         )
         self._gate = gate or template_gate
+        self._send_result: ResultSender = result_sender or send_change_result
         self.tenant_id = tenant_id
         self.gate_calls: list[GateCall] = []
         self._subscribers: dict[int, tuple[asyncio.AbstractEventLoop, asyncio.Queue]] = {}
@@ -1149,6 +1153,7 @@ class PlanningService:
             if r.id == req.id:
                 r.spec = spec_id
                 r.state = "완료"
+        await self._notify_result(s, req, "completed", prs=[pr], spec_id=spec_id)
         s.first_pr_minutes.append(3)
 
         # 자동 처리 이력을 쌓고, 연속 정상이 기준에 닿으면 승급을 제안한다 (실행은 사람 승인 뒤)
@@ -2148,6 +2153,10 @@ class PlanningService:
             )
             for r in closed:
                 r.state = "완료"
+            spec_tasks = {x.id for x in s.tasks if x.spec == spec_id}
+            spec_prs = [x for x in s.prs if x.task in spec_tasks]
+            for r in closed:
+                await self._notify_result(s, r, "completed", prs=spec_prs, spec_id=spec_id)
             to = req.from_ if req else closed[0].from_
             s.activity.append(
                 self._act(
@@ -2216,6 +2225,58 @@ class PlanningService:
             author=AGENT_NAME,
         )
 
+    async def _notify_result(
+        self,
+        s: State,
+        req: Request,
+        status: Literal["completed", "declined"],
+        *,
+        prs: list[PR] | None = None,
+        spec_id: str | None = None,
+        reason_code: str | None = None,
+    ) -> None:
+        """요청을 닫을 때 요청 부서에 `receive_change_result`를 보낸다(계약 #293).
+
+        같은 요청에 묶인 중복 요청(`duplicate_of`)의 부서에도 한 번씩 보낸다. summary는 코드가 만든
+        한 줄이고 고객 응대 문구로 쓰지 않는다(#293 리뷰). 보내기 실패는 요청 닫기를 막지 않는다.
+        """
+        merged = [p for p in (prs or []) if p.merged] if status == "completed" else []
+        times = [p.merged_at for p in merged if p.merged_at]
+        label = "완료" if status == "completed" else "기각"
+        summary = f"{req.id} {label}" + (
+            f" · {', '.join(p.id for p in merged)} 머지" if merged else ""
+        )
+        result = ChangeResultInput(
+            request_id=req.id,
+            status=status,
+            pr_numbers=[p.number for p in merged],
+            merged_at=max(times) if times else None,
+            spec_id=spec_id,
+            reason_code=reason_code if status == "declined" else None,
+            summary=summary,
+        )
+        seen: set[str] = set()
+        for r in [req, *(x for x in s.requests if x.duplicate_of == req.id)]:
+            if r.from_ in seen:
+                continue
+            seen.add(r.from_)
+            try:
+                how = await self._send_result(r.from_, req.context_id, self.tenant_id, result)
+            except Exception:  # 통지 실패가 요청 닫기를 되돌리지 않게 한다
+                how = "보내지 못함 (오류)"
+            s.activity.append(
+                self._act(
+                    self.clock(),
+                    req.context_id,
+                    "planning",
+                    r.from_,
+                    "receive_change_result",
+                    "A2A",
+                    f"{summary} 결과 통지 · {how}",
+                    "A",
+                )
+            )
+
     async def _send_rejection(self, s: State, record: RecordCase, target: str) -> None:
         """hr `record_case`(kind decision_rejected)를 execute로 보내고 활동에 남긴다."""
         case = f"① kind decision_rejected · {target}"
@@ -2277,6 +2338,7 @@ class PlanningService:
             )
         )
         r.state = "기각"
+        await self._notify_result(s, r, "declined", reason_code="draft_rejected")
         s.activity.append(
             self._act(
                 self.clock(),
