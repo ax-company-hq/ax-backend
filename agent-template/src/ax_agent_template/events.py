@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 
 from ax_agent_template.config import is_mock
+from ax_agent_template.logging import log_event
 from ax_contracts.schemas import EventEnvelope, EventType
 
 EventHandler = Callable[[EventEnvelope], Awaitable[None]]
@@ -28,6 +29,23 @@ def reset_mock_bus() -> None:
     _mock_subscribers.clear()
 
 
+def _log_published(envelope: EventEnvelope) -> None:
+    """발행에 성공한 이벤트를 공통 로그에 한 줄 남긴다 (#330).
+
+    payload에는 종류와 `event_id`만 담고 `data`·`untrusted`는 옮기지 않는다. 사건이 아닌
+    이벤트(`context_id` 없음)는 건너뛴다. 로그 실패는 `log_event`가 삼키므로 발행을 막지 않는다.
+    """
+    if envelope.context_id is None:
+        return
+    log_event(
+        envelope.context_id,
+        envelope.tenant_id,
+        "event_published",
+        {"event_type": envelope.type.value, "event_id": envelope.event_id},
+        source=envelope.source,
+    )
+
+
 async def publish(envelope: EventEnvelope) -> None:
     """이벤트를 발행한다. 같은 `event_id`는 한 번만 전달한다."""
     if not is_mock():
@@ -35,6 +53,7 @@ async def publish(envelope: EventEnvelope) -> None:
     if any(sent.event_id == envelope.event_id for sent in MOCK_PUBLISHED):
         return
     MOCK_PUBLISHED.append(envelope)
+    _log_published(envelope)
     for types, handler in list(_mock_subscribers):
         if envelope.type in types:
             await handler(envelope)
