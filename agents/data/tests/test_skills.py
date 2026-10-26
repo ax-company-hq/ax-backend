@@ -40,7 +40,7 @@ async def test_impact_matches_seed_answer() -> None:
     assert out.failed_order_count == EXPECTED_FAILED_ORDER_COUNT
     assert out.affected_customer_count == EXPECTED_AFFECTED_CUSTOMER_COUNT
     assert out.damage_amount == EXPECTED_DAMAGE_AMOUNT
-    assert out.affected_customer_ids == ["buyer_a", "buyer_b", "buyer_c", "buyer_d"]
+    assert out.affected_customer_ids == ["buy_0001", "buy_0002", "buy_0003", "buy_0004"]
     assert out.summary == text
     assert result.fallback is False
 
