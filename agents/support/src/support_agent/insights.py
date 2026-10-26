@@ -4,16 +4,22 @@
 - 급증(DEP-CS-05): 최근 `window` 동안의 분류별 고객 메시지 수를, 그 앞 `baseline` 기간의 같은 길이
   창당 평균과 견준다. `min_count` 이상이고 평소의 `ratio`배 이상이면 급증이다. 평소가 0이면
   (비교할 수 없다) 건수 기준만으로 판정하고 배수는 None으로 둔다.
+- 기준선 방식: 기본 `mean`(창당 평균)은 지난 어느 한 시간에 몰린 문의 하나에도 평소가 부풀어
+  급증을 놓칠 수 있다. `median`은 기준 기간을 창으로 나눠 창별 건수의 중앙값을 평소로 쓴다
+  (건수가 0인 창도 센다). 기본값은 기존 동작을 지키려고 `mean`이다.
 """
 
 from __future__ import annotations
 
+import statistics
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 
 from support_agent.insight_schemas import (
+    BaselineMethod,
     InquiryKpis,
     InquiryOverview,
+    KeywordCount,
     SurgeReport,
     TopicSurge,
     WaitingInquiry,
@@ -54,6 +60,23 @@ def kpis(store: InquiryStore) -> InquiryKpis:
         for a in analyses
         if a.timings_ms and {"classify", "draft"} <= set(a.timings_ms)
     ]
+    by_language: Counter[str] = Counter()
+    for conversation in conversations:
+        classified = [
+            m.analysis.classification
+            for m in conversation.messages
+            if m.role == "customer" and m.analysis and m.analysis.classification
+        ]
+        if classified:
+            by_language[classified[-1].language] += 1
+    keyword_counts: Counter[str] = Counter()
+    for analysis in analyses:
+        if analysis.classification:  # 한 메시지에서 같은 키워드는 한 번만 센다 (대소문자 무시)
+            keyword_counts.update({w.casefold() for w in analysis.classification.keywords})
+    top_keywords = [
+        KeywordCount(keyword=keyword, count=count)
+        for keyword, count in sorted(keyword_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
+    ]
     return InquiryKpis(
         conversations=len(conversations),
         by_status=dict(Counter(c.status for c in conversations)),
@@ -69,6 +92,9 @@ def kpis(store: InquiryStore) -> InquiryKpis:
         guard_findings=dict(findings),
         by_category=dict(Counter(c.category for c in conversations if c.category)),
         by_urgency=dict(Counter(c.urgency for c in conversations if c.urgency)),
+        by_sentiment=dict(Counter(c.sentiment for c in conversations if c.sentiment)),
+        by_language=dict(by_language),
+        top_keywords=top_keywords,
     )
 
 
@@ -100,6 +126,7 @@ def detect_surge(
     baseline_hours: int = 24,
     min_count: int = 5,
     ratio: float = 3.0,
+    baseline_method: BaselineMethod = "mean",
 ) -> SurgeReport:
     window = timedelta(minutes=window_minutes)
     baseline = timedelta(hours=baseline_hours)
@@ -107,8 +134,11 @@ def detect_surge(
     baseline_from = recent_from - baseline
     windows_in_baseline = baseline / window
 
+    median = baseline_method == "median"
+    whole_windows = max(int(windows_in_baseline), 1)
     recent: dict[str, list[int]] = {}
     earlier: Counter[str] = Counter()
+    per_slot: dict[str, Counter[int]] = {}  # 중앙값용: 주제별 (몇 번째 이전 창 → 건수)
     for conversation, message in _customer_messages(store.all()):
         if not (message.analysis and message.analysis.classification):
             continue
@@ -118,10 +148,17 @@ def detect_surge(
             recent.setdefault(topic, []).append(conversation.id)
         elif baseline_from < at <= recent_from:
             earlier[topic] += 1
+            slot = int((recent_from - at) / window)
+            if slot < whole_windows:
+                per_slot.setdefault(topic, Counter())[slot] += 1
 
     surges: list[TopicSurge] = []
     for topic, ids in recent.items():
-        per_window = earlier[topic] / windows_in_baseline
+        if median:
+            slots = per_slot.get(topic, Counter())
+            per_window = float(statistics.median(slots[i] for i in range(whole_windows)))
+        else:
+            per_window = earlier[topic] / windows_in_baseline
         times = round(len(ids) / per_window, 2) if per_window else None
         if len(ids) >= min_count and (times is None or times >= ratio):
             surges.append(
@@ -137,6 +174,7 @@ def detect_surge(
     return SurgeReport(
         window_minutes=window_minutes,
         baseline_hours=baseline_hours,
+        baseline_method=baseline_method,
         evaluated_at=now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         total_in_window=sum(len(v) for v in recent.values()),
         surges=surges,

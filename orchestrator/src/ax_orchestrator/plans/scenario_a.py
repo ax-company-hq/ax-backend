@@ -1,7 +1,11 @@
-"""시나리오 A: 결제 API 장애 (docs/planning.md 5장).
+"""시나리오 A: 결제 API 장애 (docs/planning.md 5장, docs/notes/scn-a 정리).
 
-보상·쿠폰 단계는 없다(#228 결정 A): 고객지원이 문의 접수 때 보상을 판정하고 마케팅 쿠폰을 직접
-요청한다. 총괄은 공지 게시와 재무 손실 리포트(재무 장부의 `coupon.issued`로 보상액 계산)만 부른다.
+- 영향 고객 일괄 보상: 데이터 영향 분석의 고객 목록을 총괄이 고객지원
+  `request_incident_compensation`에 한 번에 넘긴다(문의를 안 낸 고객 포함).
+  문의를 낸 고객의 보상은 고객지원이 직통으로 처리한다(#228).
+- 갈림길: 원인 미확정이면 롤백하지 않고 이관 큐로, 복구 확인이 실패하면
+  정상화 공지 없이 이관 큐로 돌린다.
+- 사건 후: 재무 감사(`audit_report`)와 데이터 처리 시간 요약(`kpi_summary`)을 요청한다.
 """
 
 from __future__ import annotations
@@ -86,6 +90,54 @@ def _recovered_draft(inc: Incident) -> dict[str, Any]:
     }
 
 
+RECOVERY_TIMEOUT_SECONDS = 180.0  # 인프라가 30초 간격 최대 5회 다시 확인하는 시간을 기다려 준다
+
+
+def _rollback_gate(inc: Incident) -> tuple[str, str, str] | None:
+    """원인이 정해지지 않았으면 롤백하지 않는다. 사람이 원인을 확인하게 이관 큐로 넘긴다."""
+    diagnosis = _out(inc, "diagnose")
+    if diagnosis.get("status") == "suspected" and diagnosis.get("suspects"):
+        return None
+    return (
+        "transfer_queued",
+        "no_rollback_target",
+        "원인 미확정 — 롤백하지 않고 사람이 원인을 확인하도록 이관 큐로 넘김",
+    )
+
+
+def _recovery_verdict(output: dict[str, Any]) -> tuple[str, str] | None:
+    """서버·결제 실패율이 정상으로 돌아오지 않았으면(인프라가 재시도한 뒤에도) 사람이 판단한다."""
+    if output.get("recovered") is False:
+        return (
+            "not_recovered",
+            "복구 확인 실패 — 정상화 공지 없이 사람이 판단하도록 이관 큐로 넘김",
+        )
+    return None
+
+
+def _compensation(inc: Incident) -> dict[str, Any]:
+    # 고객 목록은 데이터 영향 분석 결과 그대로(가명 ID). 단가·건수 상한은 고객지원 정책표가 정한다.
+    return {
+        "buyer_ids": list(_out(inc, "impact").get("affected_customer_ids") or []),
+        "reason_code": "payment_failure",
+        "impact_ref": f"{inc.context_id}:impact",
+    }
+
+
+def _compensation_gate(inc: Incident) -> tuple[str, str, str] | None:
+    if _out(inc, "impact").get("affected_customer_ids"):
+        return None
+    return ("skipped", "no_affected_customers", "영향 고객 목록이 없어 보상 요청 없음")
+
+
+def _audit(inc: Incident) -> dict[str, Any]:
+    return {"context_id": inc.context_id}  # 이 사건의 쿠폰·실행 기록만 점검한다
+
+
+def _kpi(inc: Incident) -> dict[str, Any]:
+    return {"context_ids": [inc.context_id]}
+
+
 def scenario_a() -> Plan:
     return Plan(
         name="scenario_a",
@@ -98,6 +150,7 @@ def scenario_a() -> Plan:
                 "원인 배포 롤백 (B)",
                 after=("diagnose", "impact"),
                 build=_rollback,
+                gate=_rollback_gate,
             ),
             Step(
                 "related_prs",
@@ -128,13 +181,23 @@ def scenario_a() -> Plan:
                 "점검 공지 게시 (marketing)",
                 after=("notice",),
                 build=_publish_notice,
+                keep={"notice_id": "notice_id"},
+            ),
+            Step(
+                "compensation",
+                "request_incident_compensation",
+                "영향 고객 일괄 보상 (support)",
+                after=("impact",),
+                build=_compensation,
+                gate=_compensation_gate,
+                required=False,
             ),
             Step(
                 "loss",
                 "loss_aggregation",
                 "손실 리포트 (finance)",
                 after=("impact",),
-                also_after=("publish_notice",),
+                also_after=("publish_notice", "compensation"),
                 build=_loss,
             ),
             Step(
@@ -143,6 +206,8 @@ def scenario_a() -> Plan:
                 "복구 검증 (infra)",
                 after=("rollback",),
                 build=_recovery,
+                verdict=_recovery_verdict,
+                timeout=RECOVERY_TIMEOUT_SECONDS,
             ),
             Step(
                 "recovered_draft",
@@ -157,6 +222,23 @@ def scenario_a() -> Plan:
                 "정상화 공지 (marketing)",
                 after=("recovered_draft",),
                 build=_recovered_notice,
+                keep={"notice_id": "recovered_notice_id"},
+            ),
+            Step(
+                "audit",
+                "audit_report",
+                "사후 감사 (finance)",
+                also_after=("compensation", "loss"),
+                build=_audit,
+                required=False,
+            ),
+            Step(
+                "kpi",
+                "kpi_summary",
+                "처리 시간 요약 (data)",
+                also_after=("recovered_notice",),
+                build=_kpi,
+                required=False,
             ),
             Step(
                 "record",
@@ -166,6 +248,9 @@ def scenario_a() -> Plan:
                     "recovered_notice",
                     "link_incident",
                     "loss",
+                    "compensation",
+                    "audit",
+                    "kpi",
                 ),
                 kind="record",
             ),

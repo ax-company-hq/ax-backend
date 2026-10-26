@@ -1,7 +1,7 @@
 """finance skill 입출력 (재무 구성안 4-2, 공통 구성안 12장).
 
-다른 부서와 함께 쓰는 `VerifyAmountInput`·`VerifyAmountOutput`·`VerifyReason`은
-contracts가 원본이다.
+다른 부서와 함께 쓰는 `VerifyAmountInput`·`VerifyAmountOutput`·`VerifyReason`,
+`ReviewHoldInput`·`ReviewHoldOutput`은 contracts가 원본이다.
 금액은 모두 정수 원이다.
 """
 
@@ -80,24 +80,9 @@ class SettlementHoldOutput(AxModel):
 
 
 # -------------------------------------------- review_hold (safety → finance, AI 1차 판단)
-class ReviewHoldInput(AxModel):
-    """사람 확인(C)으로 넘어온 건. 금액·누적은 안전 장치가 계산한 값이다."""
-
-    review_id: str
-    execution_id: str
-    action: str
-    requester: str
-    params: dict[str, Any] = Field(default_factory=dict)
-    computed_amount: int | None = None
-    hold_reason: str
-    rules: list[dict[str, Any]] = Field(default_factory=list)
-    totals: dict[str, int | None] = Field(default_factory=dict)
-
-
-class ReviewHoldOutput(AxModel):
-    decision: Literal["approve", "reject", "escalate"]
-    reason_code: str
-    explanation: str
+# 안전 레이어와 함께 쓰는 형식이라 contracts가 원본이다. 여기서는 다시 내보내기만 한다.
+ReviewHoldInput = _contract.ReviewHoldInput
+ReviewHoldOutput = _contract.ReviewHoldOutput
 
 
 # ---------------------------------- review_threshold_change (safety → finance, 기준 바꾸기 판단)

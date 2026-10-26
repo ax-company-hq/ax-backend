@@ -30,6 +30,12 @@ class Step:
     serial_group: str | None = None
     required: bool = True
     kind: str = "call"  # call | record(사건 종료 기록)
+    keep: dict[str, str] = field(default_factory=dict)  # 결과 필드 → 사건에 보관할 이름
+    # 호출하기 전에 "지금은 하지 않는다"를 판단한다: (상태, 사유 코드, 메모) 또는 None(그대로 호출)
+    gate: Callable[[Incident], tuple[str, str, str] | None] = lambda inc: None
+    # 성공한 결과를 보고 사람이 봐야 하면 이관 큐로 돌린다: (사유 코드, 메모) 또는 None
+    verdict: Callable[[dict[str, Any]], tuple[str, str] | None] = lambda output: None
+    timeout: float | None = None  # 이 단계만 마감을 길게 줄 때(예: 복구 확인 재시도) 초
 
 
 @dataclass
@@ -90,6 +96,7 @@ class Incident:
     holds: dict[str, Any] = field(default_factory=dict)  # step_id -> Hold
     summary: list[str] = field(default_factory=list)
     metrics: dict[str, Any] = field(default_factory=dict)
+    shared: dict[str, Any] = field(default_factory=dict)  # 부서가 준 값 중 다른 부서에 넘길 것
 
     @staticmethod
     def new_context_id() -> str:
@@ -111,6 +118,7 @@ class Incident:
             "events": self.events,
             "summary": self.summary,
             "metrics": self.metrics,
+            "shared": self.shared,
             "pending_holds": [
                 {"step_id": sid, "skill": self.steps[sid].skill, "label": self.steps[sid].label}
                 for sid, hold in self.holds.items()

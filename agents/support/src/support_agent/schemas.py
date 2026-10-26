@@ -40,6 +40,8 @@ class Classification(AxModel):
     urgency: Urgency
     search_query: str
     pii_masked: list[str] = Field(default_factory=list)
+    language: str = "ko"  # 고객 메시지의 언어 (`languages.detect`, 코드가 판별: ko·en·ja·zh·other)
+    keywords: list[str] = Field(default_factory=list)  # 핵심 단어 최대 5개 (개인정보 제거)
 
 
 class Source(AxModel):
@@ -58,6 +60,8 @@ class Draft(AxModel):
     reply: str
     source_ids: list[str] = Field(default_factory=list)
     validation: Validation
+    language: str = "ko"  # `reply`를 쓴 언어 (고객 언어, 가드가 검사하지 못하는 언어는 en)
+    reply_ko: str | None = None  # 한국어가 아닐 때 상담원이 읽을 한국어 번역
 
 
 class Analysis(AxModel):
@@ -119,11 +123,13 @@ class LLMClassification(AxModel):
     sentiment: Sentiment
     urgency: Urgency
     search_query: str
+    keywords: list[str] = Field(default_factory=list)
 
 
 class StyleReply(AxModel):
     style: DraftStyle
     reply: str
+    reply_ko: str | None = None
 
 
 class LLMDrafts(AxModel):
@@ -133,10 +139,12 @@ class LLMDrafts(AxModel):
 # ---------------------------------------------------------------- skill 입력
 class ListInquiriesInput(AxModel):
     status: InquiryStatus | None = None
+    user_id: int | None = None  # 이 고객의 문의만 (고객 화면을 대신 부르는 shop-api는 필수)
 
 
 class GetInquiryInput(AxModel):
     inquiry_id: int
+    user_id: int | None = None  # 이 고객의 문의일 때만 (shop-api는 필수, 남의 문의는 not_found)
 
 
 class CreateInquiryInput(AxModel):
@@ -147,6 +155,8 @@ class CreateInquiryInput(AxModel):
     order_id: EntityId | None = None
     order_no: str | None = None
     notice_id: str | None = None  # 문의가 가리키는 공지. 있으면 마케팅 get_notice로 사실을 읽는다
+    # 공지 번호를 모를 때 찾을 구성요소. 이게 있거나 사건(ctx_inc_) 요청이면 게시 중인 공지를 찾는다
+    notice_component: Literal["api", "db", "payment"] | None = None
 
 
 class AddCustomerMessageInput(AxModel):
@@ -154,6 +164,8 @@ class AddCustomerMessageInput(AxModel):
 
     inquiry_id: int
     notice_id: str | None = None
+    notice_component: Literal["api", "db", "payment"] | None = None  # CreateInquiryInput과 같다
+    user_id: int | None = None  # shop-api는 필수: 이 고객의 문의에만 메시지를 덧붙일 수 있다
 
 
 class CheckReplyInput(AxModel):

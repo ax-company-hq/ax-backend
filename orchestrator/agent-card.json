@@ -1,5 +1,23 @@
 {
   "name": "orchestrator",
   "owner": "준하",
-  "skills": []
+  "description": "총괄 — 이벤트로 사건을 열고 부서에 나눠 맡기며, 다른 부서의 사건 조회에 답한다",
+  "url": "http://orchestrator:8000/a2a",
+  "version": "0.1.0",
+  "capabilities": {
+    "streaming": false,
+    "push_notifications": false
+  },
+  "skills": [
+    {
+      "id": "find_active_incident",
+      "description": "구성요소(component)와 문의·주문 시각(occurred_at)에 맞는 사건의 context_id를 돌려준다. 맞는 사건이 없으면 found=false로 답한다. 사건을 열거나 바꾸지 않는다.",
+      "input_schema": "contracts/src/ax_contracts/schemas/escalation.py#FindActiveIncidentInput",
+      "output_schema": "contracts/src/ax_contracts/schemas/escalation.py#FindActiveIncidentOutput",
+      "grade": "read",
+      "allowed_requesters": ["support"],
+      "verifier": null,
+      "priority": "required"
+    }
+  ]
 }

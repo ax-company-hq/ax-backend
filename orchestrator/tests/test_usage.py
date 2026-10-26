@@ -88,7 +88,7 @@ async def test_scenario_records_every_call_per_dept(harness: Harness) -> None:
     await engine.run(new_incident(), scenario_a())
     assert usage.summary("marketing")["calls"] == 4
     assert usage.summary("hr")["calls"] == 1
-    assert usage.summary("data")["calls"] == 1
+    assert usage.summary("data")["calls"] == 2  # 영향 분석 + 처리 시간 요약(kpi_summary)
 
 
 def _fresh_state(monkeypatch) -> None:

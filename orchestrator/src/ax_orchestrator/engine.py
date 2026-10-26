@@ -132,6 +132,14 @@ class Engine:
         if step.kind == "record":
             await self._record(inc, step, run)
             return
+        blocked = step.gate(inc)
+        if (
+            blocked is not None
+        ):  # 앞 단계 결과로 보아 지금은 부르지 않는다(지어내지 않고 이유를 남김)
+            run.status, run.reason_code, run.note = blocked
+            run.finished_at = now()
+            inc.log(f"{step.label}: {run.note}")
+            return
         entry = self.registry.find(step.skill)
         if entry is None:
             self._skip(inc, run, "담당 부서를 확인할 수 없음 (Agent Card에 skill 없음)")
@@ -143,6 +151,33 @@ class Engine:
         inc.log(f"{step.label}: {entry.dept}에 요청")
         payload = step.build(inc)
         await self._call_and_handle(inc, step, run, entry.dept, payload)
+        self._judge(inc, step, run)
+        self._keep(inc, step, run)
+
+    @staticmethod
+    def _judge(inc: Incident, step: Step, run: StepRun) -> None:
+        """성공했어도 결과가 정상이 아니면(예: 복구 확인 실패) 이관 큐로 돌려 사람이 보게 한다."""
+        if run.status != "completed":
+            return
+        verdict = step.verdict(run.output)
+        if verdict is not None:
+            run.reason_code, run.note = verdict
+            run.status = "transfer_queued"
+            inc.log(f"{run.label}: {run.note}")
+
+    @staticmethod
+    def _keep(inc: Incident, step: Step, run: StepRun) -> None:
+        """성공한 단계의 결과에서 다른 부서에 넘길 값(예: `notice_id`)을 사건에 보관한다.
+
+        부서가 값을 주지 않았으면 만들어 내지 않고 비워 둔다.
+        """
+        if run.status != "completed":
+            return
+        for field_name, keep_as in step.keep.items():
+            value = run.output.get(field_name)
+            if value is not None:
+                inc.shared[keep_as] = value
+                inc.log(f"{run.label}: {keep_as} 보관 ({value})")
 
     def _skip(self, inc: Incident, run: StepRun, note: str) -> None:
         run.status, run.note, run.finished_at = "skipped", note, now()
@@ -160,7 +195,7 @@ class Engine:
             context_id=inc.context_id,
             token="orchestrator",
             path=["orchestrator"],
-            deadline=now() + timedelta(seconds=self.step_timeout),
+            deadline=now() + timedelta(seconds=step.timeout or self.step_timeout),
             idempotency_key=f"{inc.context_id}:{skill}:{step.id}",
         )
         return AgentRequest(meta=meta, skill=skill, input=payload, sequence=sequence)

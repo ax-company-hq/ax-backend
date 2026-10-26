@@ -38,13 +38,15 @@ class InquiryStore:
         # 초안 채택·수정·거절 기록 (KPI용)
         self.draft_events: list[dict[str, Any]] = []
 
-    def list(self, status: InquiryStatus | None = None) -> list[ConversationListItem]:
+    def list(
+        self, status: InquiryStatus | None = None, user_id: int | None = None
+    ) -> list[ConversationListItem]:
         items = [
             ConversationListItem.model_validate(
                 c.model_dump(include=set(ConversationListItem.model_fields))
             )
             for c in self._conversations.values()
-            if status is None or c.status == status
+            if (status is None or c.status == status) and (user_id is None or c.user_id == user_id)
         ]
         return sorted(items, key=lambda c: (c.updated_at, c.id), reverse=True)
 

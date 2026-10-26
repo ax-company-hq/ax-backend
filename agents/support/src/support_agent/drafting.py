@@ -15,7 +15,7 @@ from typing import Any
 
 from ax_agent_template.config import is_mock
 from ax_agent_template.llm import LLMClient, MockLLMClient
-from support_agent import guard, kb
+from support_agent import guard, kb, languages
 from support_agent.schemas import (
     STYLES,
     Analysis,
@@ -38,6 +38,7 @@ _MOCK_CLASSIFICATION = LLMClassification(
     sentiment="frustrated",
     urgency="medium",
     search_query="환불 불량",
+    keywords=["환불", "불량"],
 )
 _MOCK_DRAFTS = LLMDrafts(
     replies=[
@@ -68,10 +69,46 @@ _FALLBACK_REPLIES: dict[DraftStyle, str] = {
     "concise": "문의가 접수되었습니다. 확인 후 안내드리겠습니다.",
     "step_by_step": "문의 접수, 내용 확인, 처리 안내 순서로 진행하며 단계마다 말씀드리겠습니다.",
 }
-_CATEGORY_KEYWORDS = {
-    "refund": ("환불", "반품", "교환", "불량", "찢어", "파손"),
-    "shipping": ("배송", "택배", "도착", "언제"),
+# 언어별 대체 템플릿. 환불·보상을 약속하지 않는 문장만 둔다 (가드 통과를 테스트가 확인한다).
+_FALLBACK_BY_LANGUAGE: dict[str, dict[DraftStyle, str]] = {
+    "ko": _FALLBACK_REPLIES,
+    "en": {
+        "empathetic": "We are sorry for the inconvenience. We will review your inquiry and "
+        "get back to you shortly.",
+        "concise": "Your inquiry has been received. We will review it and follow up.",
+        "step_by_step": "We will receive your inquiry, review the details, and explain the next "
+        "steps at each stage.",
+    },
+    "ja": {
+        "empathetic": "ご不便をおかけし申し訳ございません。"
+        "内容を確認のうえ、改めてご案内いたします。",
+        "concise": "お問い合わせを受け付けました。確認後にご案内いたします。",
+        "step_by_step": "受付、内容の確認、ご案内の順で進め、各段階でご連絡いたします。",
+    },
+    "zh": {
+        "empathetic": "给您带来不便，我们深表歉意。我们会先确认您咨询的内容，再尽快与您联系。",
+        "concise": "已收到您的咨询，确认后会与您联系。",
+        "step_by_step": "我们会按受理、确认内容、告知后续步骤的顺序处理，并在每个阶段与您联系。",
+    },
 }
+_CATEGORY_KEYWORDS = {
+    "refund": (
+        "환불", "반품", "교환", "불량", "찢어", "파손",
+        "refund", "return", "exchange", "broken", "damaged", "defect",
+        "返金", "返品", "交換", "不良", "破損",
+        "退款", "退货", "换货", "损坏", "破损",
+    ),
+    "shipping": (
+        "배송", "택배", "도착", "언제",
+        "shipping", "delivery", "arrive", "tracking",
+        "配送", "届", "追跡",
+        "快递", "物流", "配送", "到货",
+    ),
+}  # fmt: skip
+# 근거 문서(한국어)를 찾기 위한 분류별 대체 검색어. 한국어가 아닌 문의의 대체 경로에서만 쓴다.
+_CATEGORY_QUERY = {"refund": "환불 교환 반품", "shipping": "배송 지연 도착"}
+MAX_KEYWORDS = 5
+MAX_KEYWORD_LENGTH = 30
 
 
 def get_llm() -> LLMClient:
@@ -87,33 +124,63 @@ def get_llm() -> LLMClient:
     return LLMClient("support")
 
 
+def clean_keywords(values: list[str]) -> list[str]:
+    """LLM이 고른 키워드를 코드로 거른다: 개인정보 제거, 빈 값·긴 문장 제외, 중복 제거, 최대 5개."""
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for value in values:
+        word = str(value).strip()
+        if not word or len(word) > MAX_KEYWORD_LENGTH or guard.find_pii(word):
+            continue  # 개인정보가 든 키워드는 가리지 않고 버린다 (마스킹 표시가 키워드가 된다)
+        key = word.casefold()
+        if key not in seen:
+            seen.add(key)
+            cleaned.append(word)
+    return cleaned[:MAX_KEYWORDS]
+
+
 def keyword_classification(text: str) -> LLMClassification:
     """LLM 없이 키워드로 분류한다 (대체 경로)."""
-    category = next(
-        (name for name, words in _CATEGORY_KEYWORDS.items() if any(w in text for w in words)),
-        "general",
-    )
+    lowered = text.casefold()
+    hits = {
+        name: [w for w in words if w.casefold() in lowered]
+        for name, words in _CATEGORY_KEYWORDS.items()
+    }
+    category = next((name for name, found in hits.items() if found), "general")
+    korean = languages.detect(text) == "ko"
     return LLMClassification(
         intent_ko="문의",
         category=category,
         sentiment="calm",
         urgency="medium",
-        search_query=text[:80],
+        search_query=text[:80] if korean else _CATEGORY_QUERY.get(category, ""),
+        keywords=clean_keywords(hits.get(category, [])),
     )
 
 
-def _validated_drafts(replies: list[StyleReply], sources: list[Source]) -> list[Draft]:
-    by_style = {r.style: r.reply for r in replies}
+def _validated_drafts(
+    replies: list[StyleReply], sources: list[Source], language: str = "ko"
+) -> list[Draft]:
+    """초안 3가지를 만들고 가드로 검사한다. 빠진 스타일은 `language`의 대체 템플릿으로 채운다."""
+    by_style = {r.style: r for r in replies}
+    templates = _FALLBACK_BY_LANGUAGE[language]
     source_ids = [s.id for s in sources]
-    return [
-        Draft(
-            style=style,
-            reply=by_style.get(style) or _FALLBACK_REPLIES[style],
-            source_ids=source_ids,
-            validation=guard.check_reply(by_style.get(style) or _FALLBACK_REPLIES[style]),
+    drafts = []
+    for style in STYLES:
+        given = by_style.get(style)
+        text = given.reply if given and given.reply.strip() else templates[style]
+        gloss = given.reply_ko if given and given.reply.strip() else _FALLBACK_REPLIES[style]
+        drafts.append(
+            Draft(
+                style=style,
+                reply=text,
+                source_ids=source_ids,
+                validation=guard.check_reply(text),
+                language=language,
+                reply_ko=None if language == "ko" else (gloss or None),
+            )
         )
-        for style in STYLES
-    ]
+    return drafts
 
 
 async def analyze(
@@ -125,13 +192,18 @@ async def analyze(
     """
     started = time.perf_counter()
     masked, pii_kinds = guard.mask_pii(text)
+    # 언어는 코드가 문자 종류로 판별한다. 답변은 가드가 검사할 수 있는 언어(ko·en·ja·zh)로만 쓴다
+    language = languages.detect(f"{subject} {text}")
+    reply_language = languages.reply_language(language)
     untrusted: dict[str, Any] = {"subject": guard.mask_pii(subject)[0], "customer_message": masked}
     llm = get_llm()
     fallback = False
 
     try:
         classified = await llm.structured(
-            "고객 메시지의 의도, 분야, 감정, 긴급도를 분류하고 정책 문서 검색 질의를 만들어라.",
+            "고객 메시지의 의도, 분야, 감정, 긴급도를 분류하고 정책 문서 검색 질의를 만들어라. "
+            "정책 문서는 한국어이므로 search_query는 고객 언어와 관계없이 한국어로 쓴다. "
+            "keywords에는 고객 메시지의 핵심 단어를 최대 5개 넣고 개인정보는 넣지 않는다.",
             LLMClassification,
             untrusted=untrusted,
         )
@@ -140,7 +212,13 @@ async def analyze(
         classified = keyword_classification(masked)
         fallback = True
 
-    classification = Classification(**classified.model_dump(), pii_masked=pii_kinds)
+    classified_data = classified.model_dump()
+    keywords = clean_keywords(classified_data.pop("keywords", []))
+    if not keywords:  # LLM이 키워드를 못 줬으면 규칙으로 찾은 것을 쓴다
+        keywords = keyword_classification(masked).keywords
+    classification = Classification(
+        **classified_data, pii_masked=pii_kinds, language=language, keywords=keywords
+    )
     sources = [*(extra_sources or []), *kb.search(classification.search_query or masked)]
     classify_ms = int((time.perf_counter() - started) * 1000)
 
@@ -149,7 +227,9 @@ async def analyze(
         policy = "\n".join(f"[{s.id}] {s.title} {s.section}: {s.text}" for s in sources)
         drafted = await llm.structured(
             "아래 정책 문서에 근거해 고객 답변 초안을 empathetic, concise, step_by_step 세 가지 "
-            "스타일로 쓴다. 환불·보상을 약속하지 않고 개인정보를 적지 않는다.\n\n"
+            "스타일로 쓴다. 환불·보상을 약속하지 않고 개인정보를 적지 않는다. "
+            f"reply는 {languages.NAMES[reply_language]}로 쓴다. 한국어가 아니면 상담원이 읽을 "
+            "한국어 번역을 reply_ko에 함께 넣는다.\n\n"
             f"정책 문서:\n{policy or '(근거 없음)'}",
             LLMDrafts,
             untrusted=untrusted,
@@ -160,7 +240,7 @@ async def analyze(
         replies = []
         fallback = True
 
-    drafts = _validated_drafts(replies, sources)
+    drafts = _validated_drafts(replies, sources, reply_language)
     analysis = Analysis(
         classification=classification,
         sources=sources,

@@ -28,7 +28,7 @@ async def test_scenario_a_completes(harness) -> None:
     assert inc.status == "resolved"
     assert all(s.status == "completed" for s in inc.steps.values())
     assert harness.events == ["incident.opened", "incident.resolved"]
-    assert inc.metrics["steps_total"] == 12
+    assert inc.metrics["steps_total"] == 15
 
 
 @pytest.mark.asyncio

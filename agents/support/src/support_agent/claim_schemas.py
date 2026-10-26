@@ -11,6 +11,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BeforeValidator, Field, model_validator
 
 from ax_contracts.schemas.common import TENANT_ID_DEFAULT, AxModel
+from support_agent import buyer_ids
 
 
 def _legacy_id(value: Any) -> Any:
@@ -96,7 +97,7 @@ class Claim(AxModel):
     context_id: str
     order_id: EntityId
     order_no: str
-    buyer_id: str  # 구매자 ID (shop-api `buyer_id`, 예: usr_1)
+    buyer_id: str  # 구매자 ID (shop-api `buyer_id`, 예: buy_0001)
     payment_id: str | None = None  # 환불할 결제 (shop-api). 시드 주문은 없다
     customer: str
     type: ClaimType
@@ -130,11 +131,13 @@ class Claim(AxModel):
     @model_validator(mode="before")
     @classmethod
     def _read_legacy_buyer(cls, data: Any) -> Any:
-        """숫자 `user_id`로 저장된 예전 기록은 `buyer_id`(`usr_<번호>`)로 읽는다."""
-        if isinstance(data, dict) and "buyer_id" not in data and "user_id" in data:
+        """예전 기록(숫자 `user_id`, `usr_<번호>`)은 `buyer_id`(`buy_<4자리>`)로 읽는다."""
+        if isinstance(data, dict):
             data = dict(data)
-            legacy = data.pop("user_id")
-            data["buyer_id"] = f"usr_{legacy}" if isinstance(legacy, int) else str(legacy)
+            if "buyer_id" not in data and "user_id" in data:
+                data["buyer_id"] = data.pop("user_id")
+            if "buyer_id" in data:
+                data["buyer_id"] = buyer_ids.normalize(data["buyer_id"])
         return data
 
 
@@ -196,7 +199,7 @@ class ClaimItemRequest(AxModel):
 class CreateClaimInput(AxModel):
     """클레임 접수. 사유 설명은 `untrusted.description`으로 받는다."""
 
-    buyer_id: str  # 구매자 ID (usr_…). 주문의 구매자와 같아야 한다
+    buyer_id: str  # 구매자 ID (buy_…). 주문의 구매자와 같아야 한다
     customer_name: str
     order_id: str  # 주문 ID (shop-api는 ord_…)
     type: ClaimType

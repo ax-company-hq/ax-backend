@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from ax_contracts.schemas import IdPrefix
 from ax_shop_api.db import TENANT_ID, Db
 
 SELLERS = [
@@ -48,6 +49,7 @@ def seed(db: Db) -> bool:
         conn.execute("INSERT INTO counters VALUES ('product', ?)", (len(PRODUCTS),))
         for number in range(1, BUYER_COUNT + 1):
             conn.execute(
-                "INSERT INTO buyers VALUES (?, ?, NULL, ?)", (f"buy_{number:04d}", TENANT_ID, now)
+                "INSERT INTO buyers VALUES (?, ?, NULL, ?)",
+                (f"{IdPrefix.BUYER}{number:04d}", TENANT_ID, now),
             )
     return True

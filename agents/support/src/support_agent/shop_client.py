@@ -96,6 +96,8 @@ def to_order(data: dict[str, Any]) -> Order | None:
         buyer_id=data["buyer_id"],
         status="delivered" if delivered_at else "preparing",
         paid_at=paid_at,
+        promised_delivery_at=_moment(data.get("promised_delivery_at")),
+        shipped_at=_moment(data.get("shipped_at")),
         delivered_at=delivered_at,
         shipping_fee=data.get("shipping_fee", 0),
         points_used=data.get("points_used", 0),
@@ -121,6 +123,19 @@ async def fetch_order(order_id: str) -> Order | None:
     if response.status_code != 200:
         raise _error(response)
     return to_order(response.json()["data"])
+
+
+async def fetch_order_facts(order_id: str) -> dict[str, Any] | None:
+    """주문 원본(결제 시도 포함)을 읽는다. 없으면 None, 연결 실패는 `ShopError`.
+
+    `fetch_order`는 결제가 끝난 주문만 돌려주지만, 결제 문제를 보려면 실패한 주문도 필요하다.
+    """
+    response = await _send("GET", f"/orders/{order_id}")
+    if response.status_code == 404:
+        return None
+    if response.status_code != 200:
+        raise _error(response)
+    return response.json()["data"]
 
 
 async def load_order(order_id: str) -> Order | None:
