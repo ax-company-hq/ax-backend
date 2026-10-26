@@ -30,7 +30,7 @@
 단계 정의의 `keep`에 적은 결과 필드는 성공한 단계에서만 사건 `shared`에 보관하고, `/api/incidents`의 사건 응답(`shared`)으로 보인다. 부서가 값을 주지 않으면 만들어 내지 않고 비워 둔다.
 - `notice_id`: 점검 공지(`publish_notice`)의 공지 번호. 고객지원이 `get_notice`로 공지 사실을 읽을 때 쓴다.
 - `recovered_notice_id`: 정상화 공지의 공지 번호.
-- 고객지원에 이 값을 넘기는 방법은 아직 계약이 없다(`FindActiveIncidentOutput`에 필드가 없음). 계약 요청 뒤에 이어 붙인다.
+- 고객지원에는 `find_active_incident` 응답의 `notice_id`로 넘긴다(점검 공지가 게시됐을 때만, 아직 없으면 비움). 정상화 공지 번호는 응답 형식에 없다.
 
 ## 3. 사건 상태
 `open` → `resolved`(모든 필수 단계 완료) / `degraded`(일부 단계 실패·보류·건너뜀으로 종료).
