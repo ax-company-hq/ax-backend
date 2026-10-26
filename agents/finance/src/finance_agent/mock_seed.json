@@ -5,9 +5,9 @@
       "affected_customer_count": 3,
       "damage_amount": 87000,
       "affected_customer_ids": [
-        "buy_a1",
-        "buy_b2",
-        "buy_c3"
+        "buy_0901",
+        "buy_0902",
+        "buy_0903"
       ]
     },
     "ctx_inc_0002": {
@@ -15,12 +15,124 @@
       "affected_customer_count": 6,
       "damage_amount": 214500,
       "affected_customer_ids": [
-        "buy_d4",
-        "buy_e5",
-        "buy_f6",
-        "buy_g7",
-        "buy_h8",
-        "buy_i9"
+        "buy_0904",
+        "buy_0905",
+        "buy_0906",
+        "buy_0907",
+        "buy_0908",
+        "buy_0909"
+      ]
+    },
+    "ctx_inc_scn_a_0001": {
+      "failed_order_count": 6,
+      "affected_customer_count": 4,
+      "damage_amount": 95000,
+      "affected_customer_ids": [
+        "buy_0001",
+        "buy_0002",
+        "buy_0003",
+        "buy_0004"
+      ],
+      "by_category": [
+        {
+          "category": "books",
+          "failed_order_count": 4,
+          "damage_amount": 82500
+        },
+        {
+          "category": "stationery",
+          "failed_order_count": 2,
+          "damage_amount": 12500
+        }
+      ]
+    },
+    "ctx_inc_0100": {
+      "failed_order_count": 2,
+      "affected_customer_count": 2,
+      "damage_amount": 30000,
+      "affected_customer_ids": [
+        "buy_0005",
+        "buy_0006"
+      ],
+      "by_category": [
+        {
+          "category": "books",
+          "failed_order_count": 2,
+          "damage_amount": 30000
+        }
+      ]
+    },
+    "ctx_inc_0101": {
+      "failed_order_count": 2,
+      "affected_customer_count": 2,
+      "damage_amount": 41000,
+      "affected_customer_ids": [
+        "buy_0007",
+        "buy_0012"
+      ],
+      "by_category": [
+        {
+          "category": "books",
+          "failed_order_count": 2,
+          "damage_amount": 41000
+        }
+      ]
+    },
+    "ctx_inc_0102": {
+      "failed_order_count": 1,
+      "affected_customer_count": 1,
+      "damage_amount": 23000,
+      "affected_customer_ids": [
+        "buy_0007"
+      ],
+      "by_category": [
+        {
+          "category": "books",
+          "failed_order_count": 1,
+          "damage_amount": 23000
+        }
+      ]
+    },
+    "ctx_inc_0103": {
+      "failed_order_count": 2,
+      "affected_customer_count": 2,
+      "damage_amount": 35500,
+      "affected_customer_ids": [
+        "buy_0007",
+        "buy_0014"
+      ],
+      "by_category": [
+        {
+          "category": "books",
+          "failed_order_count": 1,
+          "damage_amount": 27000
+        },
+        {
+          "category": "stationery",
+          "failed_order_count": 1,
+          "damage_amount": 8500
+        }
+      ]
+    },
+    "ctx_inc_0104": {
+      "failed_order_count": 3,
+      "affected_customer_count": 2,
+      "damage_amount": 52000,
+      "affected_customer_ids": [
+        "buy_0011",
+        "buy_0016"
+      ],
+      "by_category": [
+        {
+          "category": "books",
+          "failed_order_count": 2,
+          "damage_amount": 44000
+        },
+        {
+          "category": "stationery",
+          "failed_order_count": 1,
+          "damage_amount": 8000
+        }
       ]
     }
   },
@@ -41,5 +153,5 @@
     "sel_4": 30,
     "sel_5": 72
   },
-  "_note": "payments 101·102는 고객지원 시드 주문(agents/support orders.py)의 현금 결제 합계(상품 + 배송비 3,000원, 포인트 제외)"
+  "_note": "payments 101·102는 고객지원 시드 주문(agents/support orders.py)의 현금 결제 합계(상품 + 배송비 3,000원, 포인트 제외) impacts.ctx_inc_scn_a_0001은 data 목(agents/data seed.py, 장애 구간 6건·4명·95,000원)과 같은 숫자다. ctx_inc_0100은 감사 시연용 지난 사건(buy_0999는 영향 고객이 아닌데 보상 쿠폰을 받음)."
 }

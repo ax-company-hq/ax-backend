@@ -67,6 +67,19 @@ def _fmt(value: object, *, comma: bool = False) -> str:
     return str(value)
 
 
+def _kpi_template(facts: dict[str, int | float | str]) -> str:
+    """1차·2차 사건 MTTR 비교 한 줄. facts의 diff_minutes는 1차 − 2차(분)다."""
+    diff = facts.get("diff_minutes")
+    if not isinstance(diff, int | float) or isinstance(diff, bool):
+        return "1차·2차 사건의 복구 시간을 비교할 수 없습니다."
+    if diff == 0:
+        return "2차 사건은 1차와 같은 시간에 복구했습니다."
+    if diff < 0:
+        return f"2차 사건은 1차보다 {_fmt(-diff)}분 늦게 복구했습니다."
+    memory = "회사 기억을 참조해 " if facts.get("second_used_memory") == "예" else ""
+    return f"2차 사건은 {memory}1차보다 {_fmt(diff)}분 빨리 복구했습니다."
+
+
 def _template(kind: str, facts: dict[str, int | float | str]) -> str:
     if kind == "impact":
         return (
@@ -79,6 +92,8 @@ def _template(kind: str, facts: dict[str, int | float | str]) -> str:
             f"{_fmt(facts.get('metric'))} 지표가 기준선 {_fmt(facts.get('baseline'))} 대비 "
             f"{_fmt(facts.get('observed'))}로 {_fmt(facts.get('ratio'))}배입니다."
         )
+    if kind == "kpi":
+        return _kpi_template(facts)
     pairs = ", ".join(f"{k}={v}" for k, v in facts.items())
     return f"{kind}: {pairs}" if pairs else f"{kind}: 표시할 값이 없습니다."
 

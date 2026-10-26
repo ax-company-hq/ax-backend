@@ -1,0 +1,45 @@
+# 재무 설정 (재무 재설계 2026-10-23, docs/notes/finance/2026-10-23-finance-redesign.md 5장).
+#
+# 판매 수수료율, 정산 주기, PG 수수료율, 예산·경보 기준, 사후 감사 기준이다.
+# 안전 관문이 건별로 쓰는 한도(thresholds.toml)와 다르다: 여기 값은 재무 리포트 계산에만 쓴다.
+# 금액은 정수 원, 비율은 0~1 소수. 바꾸면 PR로 (재무 담당 확인).
+
+[commission]
+default_rate = 0.10                 # 기본 판매 수수료 10%
+[commission.category_rates]
+book = 0.10                         # 도서 10%
+stationery = 0.08                   # 문구 8%
+
+[settlement]
+cycle = "weekly"                    # 주 정산 (월~일)
+pay_days_after_period_end = 6       # 지급일 = 정산 기간 마지막 날(일) + 6일
+
+[pg]
+fee_rate = 0.031                    # PG 수수료율 기본 3.1%
+payout_days = 2                     # 판매일 + 2일에 PG 정산금 지급 (D+2)
+fee_tolerance = 1                   # 수수료 반올림 허용 오차(원). 넘으면 fee_anomaly
+
+[budget]
+coupon_month = 300000               # 이번 달 쿠폰 예산 (회사 부담)
+refund_month = 600000               # 이번 달 환불 예산 (참고 경보용)
+warn_ratio = 0.8                    # 소진율이 이 이상이거나 월말 예상이 예산을 넘으면 warn
+over_ratio = 1.0                    # 소진율이 이 이상이면 over
+
+[proposal]
+window_days = 14                    # 한도 제안에 쓰는 최근 기간
+percentile = 0.95                   # 이 분위 값을 기준으로 제안
+round_to = 10000                    # 제안 값은 이 단위로 올림
+min_change_ratio = 0.1              # 지금 값과 10% 넘게 다를 때만 제안
+max_step_ratio = 0.3                # 한 번 제안에서 지금 값의 30% 넘게 바꾸지 않음 (적용은 기준표 PR)
+
+[audit]
+near_limit_ratio = 0.9              # 한도의 90% 이상 ~ 한도 이하면 "한도 바로 아래"
+split_window_minutes = 60           # 같은 고객 쪼개기를 보는 시간 창
+split_min_count = 3                 # 쿠폰 장수가 이만큼이면 쪼개기 의심
+refund_split_window_hours = 24      # 환불 쪼개기를 보는 시간 창
+refund_split_min_count = 2
+repeat_refund_min = 3               # 같은 고객 환불이 기간 안에 이 횟수 이상
+refund_rate_jump_ratio = 1.5        # 환불률이 지난 기간의 1.5배 이상이고
+refund_rate_jump_min_diff = 0.01    # 1%p 이상 올랐으면 급변
+gate_hold_min = 3                   # 관문 보류·거절이 기간 안에 이 수 이상이고
+gate_hold_jump_ratio = 2.0          # 지난 기간의 2배 이상이면 추이 경보
