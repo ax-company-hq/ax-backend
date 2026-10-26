@@ -260,6 +260,16 @@
       "priority": "recommended"
     },
     {
+      "id": "diagnose_payment",
+      "description": "문의의 주문에서 결제가 어디서 막혔는지 주문 상태와 결제 시도 기록으로 코드가 정한다(읽기). 결제 완료·결제 실패(서버 문제인지 거절인지)·결제 시도 없음·중복 결제·기록 불일치·취소를 가르고 다음 할 일(재시도·대기·환불 검토·담당자 확인)을 돌려준다. 고객 원문은 읽지 않고, 재결제·취소·환불은 하지 않는다. 문의의 구매자와 주문의 구매자가 다르면 not_found다.",
+      "input_schema": "agents/support/src/support_agent/payment_schemas.py#DiagnosePaymentInput",
+      "output_schema": "agents/support/src/support_agent/payment_schemas.py#PaymentDiagnosis",
+      "grade": "read",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
       "id": "customer_signals",
       "description": "구매자(buy_…) 한 명의 이탈·재문의 위험 신호를 문의·클레임 기록에서 코드가 센다(읽기). 하루 넘게 답 못 받은 문의, 화난·답답한 메시지, 잦은 문의, 이관, 거절된 클레임, 잦은 클레임을 점수 기준표로 더해 low·medium·high와 이유(코드·건수·점수)를 돌려준다. 클레임이 3건 이상이면 이탈과 별개로 패턴 검토 표시를 단다. 고객 이름과 문의 원문은 읽지도 돌려주지도 않는다. 구매 이력이 필요한 RFM·LTV·코호트는 data 소관이다.",
       "input_schema": "agents/support/src/support_agent/signal_schemas.py#CustomerSignalsInput",
