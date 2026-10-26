@@ -18,10 +18,10 @@ uv run python -m ax_orchestrator
 `ax_contracts`의 `AgentRequest/AgentResult/EventEnvelope`를 그대로 쓴다. 새 계약 없음.
 
 ## 4. 구성
-`registry.py`(카드 수집) · `hybrid.py`(부서별 실제/가짜 선택) · `real.py`(HTTP 카드 수집) · `guide.py`(연동 안내서 생성) · `manager.py`(이벤트→사건) · `engine.py`(plan 실행·재시도·이관·중계) · `plans/scenario_a.py`(시나리오 A 데이터) · `mock/`(가짜 부서·하네스) · `static/demo.html`(목업 화면)
+`registry.py`(카드 수집) · `hybrid.py`(부서별 실제/가짜 선택) · `real.py`(HTTP 카드 수집) · `guide.py`(연동 안내서 생성) · `manager.py`(이벤트→사건·사건 조회) · `engine.py`(plan 실행·재시도·이관·중계) · `plans/scenario_a.py`(시나리오 A 데이터) · `a2a.py`(총괄 자신의 `/a2a` skill `find_active_incident`) · `mock/`(가짜 부서·하네스) · `static/demo.html`(목업 화면)
 
 ## 5. 하지 않는 것
 분석 문장·금액·등급을 만들지 않는다. C 등급을 승인하지 않는다(사람이 대시보드에서). 부서 DB를 직접 건드리지 않는다. 외부 텍스트를 지시로 해석하지 않는다.
 
 ## 6. 아직 없는 것 (실제 연동 단계)
-Redis Streams 이벤트 버스(템플릿 TODO), 실제 부서 호출, SQLite 저장·재시작 복구, 총괄 자신의 `/a2a` skill.
+Redis Streams 이벤트 버스(템플릿 TODO), 실제 부서 호출, SQLite 저장·재시작 복구, 총괄 `/a2a`의 나머지 skill(이상 보고·해결 보고 접수, 계약 선행). `find_active_incident`는 있다.
