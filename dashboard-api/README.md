@@ -127,3 +127,13 @@ ax-contracts, ax-agent-template
 ## 5. 하지 않는 것
 - 다른 서비스 DB를 직접 읽지 않는다. 판매 사이트 환불·쿠폰 API를 직접 호출하지 않는다.
 - LLM을 직접 호출하지 않는다 (답변 초안·가드·요약은 support 에이전트).
+
+## 쓰기 API 사람 토큰 (#295)
+
+상태를 바꾸는 요청(GET·HEAD·OPTIONS 외)은 `Authorization: Bearer <사람 토큰>`이 있어야 한다. 읽기와 `POST /plan-checks`(저장 없는 판정)는 토큰 없이 열려 있다.
+
+- 토큰: `DASHBOARD_HUMAN_TOKENS="이름:토큰,이름:토큰"` (없으면 `SAFETY_HUMAN_TOKENS`). 화면은 안전 관문과 같은 `VITE_SAFETY_HUMAN_TOKEN`을 보내면 된다.
+- 목 모드에서는 `human:<이름>`도 받는다. 에이전트 토큰(`mock:`)은 항상 거부한다.
+- 실패는 `{error: {code, message}}`: 토큰 없음 401 `AUTH_REQUIRED`, 에이전트 토큰 403 `HUMAN_TOKEN_REQUIRED`, 모르는 토큰 403 `HUMAN_TOKEN_INVALID`.
+- 토큰이 설정되지 않았고 목 모드도 아니면 쓰기는 모두 거부된다 (fail-closed).
+- 확인한 사람 이름은 요청마다 `request.state.human`에 담긴다 (A2A 요청자는 여전히 서비스 토큰).
