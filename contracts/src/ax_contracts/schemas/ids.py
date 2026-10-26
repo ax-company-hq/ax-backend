@@ -18,6 +18,7 @@ class IdPrefix(StrEnum):
     PAYMENT = "pay_"
     PRODUCT = "prd_"
     SELLER = "sel_"
+    BUYER = "buy_"  # 구매자 가명 ID. buy_ + 4자리 숫자, 개인정보를 담지 않는다
     RETURN = "ret_"
     REFUND = "rfd_"
     CLAIM = "clm_"  # 고객지원 클레임. 이벤트 data에는 넣지 않는다
