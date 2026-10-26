@@ -23,22 +23,28 @@ class ShopClient(Protocol):
     async def list_failed_orders(self, query: ShopFailedOrdersQuery) -> ShopFailedOrdersResult: ...
 
 
-def demo_shift(window_from: datetime, window_to: datetime | None = None) -> timedelta:
+def demo_shift(window_from: datetime) -> timedelta:
     """시드 장애 시작을 데모 anchor로 옮길 거리. `DEMO_ALIGN_FROM` 전 구간은 0(고정 날짜)이다.
 
-    데모 anchor는 이 경로(impact_analysis)만 정한다(`demo_anchor.anchor_for`). 저장된 장애와 겹치는
-    구간은 같은 사건이라 기존 anchor를, 장애가 끝난 뒤 시작하는 구간은 새 사건이라 새 anchor를 쓴다.
+    데모 anchor는 이 경로(impact_analysis)만 정한다(`demo_anchor.anchor_for`). 구간 시작이 저장된
+    anchor와 1분 이내면 같은 사건이라 기존 anchor를, 그 밖에는 새 사건이라 새 anchor를 쓴다.
     """
     if window_from < DEMO_ALIGN_FROM:
         return timedelta(0)
-    return demo_anchor.anchor_for(window_from, window_to) - INCIDENT_FROM
+    return demo_anchor.anchor_for(window_from) - INCIDENT_FROM
 
 
 def _demo_order(order: FailedOrder, shift: timedelta) -> FailedOrder:
-    """장애 구간 안 주문은 장애 길이에 비례해 압축하고, 함정 주문은 상대 위치 그대로 옮긴다."""
+    """장애 구간 안 주문은 [허용 오차, 장애 길이) 안으로 비례 압축하고, 함정 주문은 그대로 옮긴다.
+
+    같은 사건 재조회는 구간 시작이 anchor보다 최대 1분(허용 오차) 늦을 수 있다. 장애 주문을 그 뒤에
+    두어야 재조회 구간에서도 6건이 모두 들어간다.
+    """
     offset = order.failed_at - INCIDENT_FROM
     if INCIDENT_FROM <= order.failed_at < INCIDENT_TO:
-        offset = offset * (demo_anchor.incident_length() / (INCIDENT_TO - INCIDENT_FROM))
+        lead = demo_anchor.SAME_INCIDENT_TOLERANCE
+        span = demo_anchor.incident_length() - lead
+        offset = lead + offset * (span / (INCIDENT_TO - INCIDENT_FROM))
     return order.model_copy(update={"failed_at": INCIDENT_FROM + shift + offset})
 
 
@@ -50,7 +56,7 @@ class MockShopClient:
     """
 
     async def list_failed_orders(self, query: ShopFailedOrdersQuery) -> ShopFailedOrdersResult:
-        shift = demo_shift(query.from_, query.to)
+        shift = demo_shift(query.from_)
         seeds = [_demo_order(o, shift) if shift else o for o in SEED_FAILED_ORDERS]
         orders = [
             o

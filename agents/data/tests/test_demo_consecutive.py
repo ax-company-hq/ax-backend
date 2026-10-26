@@ -1,7 +1,7 @@
 """SCN-A 인수 기준 "재시도 없이 연속 3회 성공": 같은 프로세스에서 사건을 연달아 주입한다.
 
-anchor는 impact_analysis만 정한다. 장애가 끝난 뒤 시작하는 구간을 물으면 새 사건이라 anchor를
-새로 잡고, 저장된 장애와 겹치는 구간은 같은 사건의 재조회라 anchor를 유지한다. 지표는 읽기만 한다.
+anchor는 impact_analysis만 정한다. 구간 시작이 저장된 anchor와 1분 이내면 같은 사건의 재조회라
+anchor를 유지하고, 그 밖에는(구간이 겹쳐도) 새 사건이라 anchor를 새로 잡는다. 지표는 읽기만 한다.
 """
 
 from __future__ import annotations
@@ -104,12 +104,59 @@ def test_same_incident_window_twice_keeps_anchor(clock: _Clock) -> None:
 
 
 def test_overlapping_window_keeps_anchor(clock: _Clock) -> None:
-    """저장된 장애와 겹치는 구간은 같은 사건이라 anchor를 바꾸지 않는다."""
+    """구간 시작이 anchor와 1분 이내인 재조회는 같은 사건이라 anchor를 바꾸지 않고 6건 그대로다.
+
+    (새 규칙: 같은 사건 판정은 "장애와 겹침"이 아니라 "구간 시작이 1분 이내"다. 예전 입력인
+    장애 끝 1분 전 시작 구간은 이제 새 사건이며
+    `test_overlap_with_different_start_is_new_incident`가 확인한다.)
+    """
+    window_from, window_to = _window(FIRST_OPENED_AT)
+    _impact(window_from, window_to)
+    late = timedelta(seconds=40)  # 허용 오차 안에서 늦게 시작한 재조회
+    again = _impact(window_from + late, window_to + late)
+    assert demo_anchor.current() == window_from
+    assert again.failed_order_count == seed.EXPECTED_FAILED_ORDER_COUNT
+
+
+def test_overlap_with_different_start_is_new_incident(clock: _Clock) -> None:
+    """장애와 겹쳐도 구간 시작이 1분 넘게 다르면 새 사건이다 (e2e가 쉬지 않고 다시 주입한 경우)."""
     window_from, window_to = _window(FIRST_OPENED_AT)
     _impact(window_from, window_to)
     end = window_from + demo_anchor.incident_length()
-    _impact(end - timedelta(minutes=1), end + timedelta(minutes=30))
+    out = _impact(end - timedelta(minutes=1), end + timedelta(minutes=30))
+    assert demo_anchor.current() == end - timedelta(minutes=1)
+    assert out.failed_order_count == seed.EXPECTED_FAILED_ORDER_COUNT
+
+
+def test_runs_one_minute_apart_each_get_full_impact(clock: _Clock) -> None:
+    """e2e `--runs 3` 재현: 쉬지 않고 1분 간격으로 "그 순간 ±15분" impact 3회 → 매번 같은 정답."""
+    results = []
+    for run in range(3):
+        clock.now = FIRST_OPENED_AT + timedelta(minutes=run)
+        window_from, window_to = _window(clock.now)
+        out = _impact(window_from, window_to)
+        # 정확히 1분 간격은 허용 오차 경계라 같은 사건으로 남을 수 있다. 어느 쪽이든 정답은 같다
+        anchor = demo_anchor.current()
+        assert anchor is not None
+        assert abs(anchor - window_from) <= demo_anchor.SAME_INCIDENT_TOLERANCE, f"{run + 1}회차"
+        results.append((out.failed_order_count, out.affected_customer_count, out.damage_amount))
+    expected = (
+        seed.EXPECTED_FAILED_ORDER_COUNT,
+        seed.EXPECTED_AFFECTED_CUSTOMER_COUNT,
+        seed.EXPECTED_DAMAGE_AMOUNT,
+    )
+    assert results == [expected] * 3  # judge.merge_runs: 회차 결과가 같아야 통과
+
+
+def test_requery_within_tolerance_keeps_all_orders(clock: _Clock) -> None:
+    """같은 사건 재조회가 허용 오차 끝(1분)만큼 늦어도 장애 주문이 빠지지 않는다."""
+    window_from, window_to = _window(FIRST_OPENED_AT)
+    first = _impact(window_from, window_to)
+    tol = demo_anchor.SAME_INCIDENT_TOLERANCE
+    late = _impact(window_from + tol, window_to + tol)
+    early = _impact(window_from - tol, window_to - tol)
     assert demo_anchor.current() == window_from
+    assert first == late == early
 
 
 def test_window_after_incident_end_is_new_incident(clock: _Clock) -> None:

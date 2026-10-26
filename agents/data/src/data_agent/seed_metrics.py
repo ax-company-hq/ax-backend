@@ -86,7 +86,7 @@ def demo_incident(
     start = _analysis_start(window_from, window_to)
     if start < DEMO_ALIGN_FROM:
         return None
-    anchor = demo_anchor.anchor_for(start, window_to) if starts_incident else demo_anchor.current()
+    anchor = demo_anchor.anchor_for(start) if starts_incident else demo_anchor.current()
     if anchor is None:
         return (start, start)  # 빈 구간: 장애 없음
     return anchor, anchor + demo_anchor.incident_length()
