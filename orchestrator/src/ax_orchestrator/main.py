@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from ax_agent_template.config import set_agent_name
 from ax_contracts.schemas import EventEnvelope, EventType
+from ax_orchestrator.a2a import build_a2a_app
 from ax_orchestrator.engine import Engine
 from ax_orchestrator.hybrid import HybridDepartments, real_depts_from_env
 from ax_orchestrator.manager import IncidentManager
@@ -193,3 +194,7 @@ async def decide(context_id: str, step_id: str, body: Decision) -> dict:
     if not (state.manager and state.manager.hold_decision(context_id, step_id, body.approved)):
         raise HTTPException(404, "대기 중인 보류가 없음")
     return {"data": {"ok": True}, "meta": {}}
+
+
+# 총괄 자신의 `/a2a`·`/.well-known/agent-card.json`. 위의 경로가 먼저 맞고 나머지만 여기로 온다.
+app.mount("/", build_a2a_app(lambda: state.manager))

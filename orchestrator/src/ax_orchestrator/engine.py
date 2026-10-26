@@ -143,6 +143,21 @@ class Engine:
         inc.log(f"{step.label}: {entry.dept}에 요청")
         payload = step.build(inc)
         await self._call_and_handle(inc, step, run, entry.dept, payload)
+        self._keep(inc, step, run)
+
+    @staticmethod
+    def _keep(inc: Incident, step: Step, run: StepRun) -> None:
+        """성공한 단계의 결과에서 다른 부서에 넘길 값(예: `notice_id`)을 사건에 보관한다.
+
+        부서가 값을 주지 않았으면 만들어 내지 않고 비워 둔다.
+        """
+        if run.status != "completed":
+            return
+        for field_name, keep_as in step.keep.items():
+            value = run.output.get(field_name)
+            if value is not None:
+                inc.shared[keep_as] = value
+                inc.log(f"{run.label}: {keep_as} 보관 ({value})")
 
     def _skip(self, inc: Incident, run: StepRun, note: str) -> None:
         run.status, run.note, run.finished_at = "skipped", note, now()
