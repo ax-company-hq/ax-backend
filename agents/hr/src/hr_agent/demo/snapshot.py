@@ -1,6 +1,6 @@
 """데모 화면이 보여 줄 현재 상태(카드·보류 큐·감사 로그 등)를 한 번에 모은다.
 
-기능이 늘 때마다 여기에 항목을 더한다(명부, 인수인계, 온보딩, 발령·퇴직 등).
+기능이 늘 때마다 여기에 항목을 더한다(명부, 인수인계 등).
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ from hr_agent.roster import store as roster
 from hr_agent.roster.gaps import compute_gaps
 from hr_agent.roster.service import roster_entries
 from hr_agent.services import Services
-from hr_agent.util import loads
 
 
 async def card_rows(svc: Services) -> list[dict[str, Any]]:
@@ -46,27 +45,10 @@ async def snapshot(svc: Services) -> dict[str, Any]:
                 ),
             }
         )
-    changes = svc.store.all("SELECT * FROM assignment_changes ORDER BY created_at, change_id")
-    for row in changes:
-        row["checklist"] = loads(row["checklist"], [])
-        row.pop("previous", None)
-    onboardings = []
-    for row in svc.store.all("SELECT * FROM onboardings ORDER BY created_at, onboarding_id"):
-        steps = svc.store.all(
-            "SELECT step_id, step_order, title, card_id, done FROM onboarding_steps"
-            " WHERE onboarding_id = ? ORDER BY step_order",
-            (row["onboarding_id"],),
-        )
-        done = sum(1 for s in steps if s["done"])
-        onboardings.append(
-            {**row, "steps": steps, "progress": round(100 * done / len(steps)) if steps else 0}
-        )
     gaps = compute_gaps(svc.store, svc.clock())
     return {
         "clock": svc.clock().isoformat(),
-        "changes": changes,
         "handovers": handovers,
-        "onboardings": onboardings,
         "roster": [e.model_dump(mode="json") for e in roster_entries(svc)],
         "roster_gaps": {
             "no_owner": gaps.no_owner_areas,

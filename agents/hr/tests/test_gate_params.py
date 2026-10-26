@@ -56,26 +56,3 @@ def test_confirm_handover_sends_completeness_percent_and_short_summary(svc, clie
     assert isinstance(params["completeness_percent"], int)
     assert 0 <= params["completeness_percent"] <= 100
     assert len(params["summary"]) <= 200
-
-
-def test_confirm_reassignment_sends_unassigned_and_duplicate_counts(svc, client) -> None:
-    seen = _spy(svc)
-    ctx = "ctx_asg_0100"
-    change = client.post(
-        "/a2a",
-        json=_body(
-            "request_assignment_change",
-            {"change_kind": "transfer", "member_id": "emp_01", "area": "payment"},
-            "r",
-            ctx,
-        ),
-    ).json()["output"]["change_id"]
-    client.post(
-        "/a2a",
-        json=_body(
-            "confirm_reassignment", {"change_id": change, "successor_id": "emp_02"}, "x", ctx
-        ),
-    )
-    _, params = next((a, p) for a, p in seen if a == "confirm_reassignment")
-    assert params["unassigned_count"] == 0 and params["duplicate_count"] == 0
-    assert len(params["summary"]) <= 200

@@ -119,31 +119,6 @@ def main(out_dir: Path) -> None:
         "ctx_hnd_0001",
         "dashboard-api",
     )
-    onboarding = call(
-        "start_onboarding", {"member_id": "emp_10", "area": "payment"}, "o1", "ctx_onb_0001"
-    )
-    call(
-        "update_onboarding_step",
-        {
-            "onboarding_id": onboarding["output"]["onboarding_id"],
-            "step_id": onboarding["output"]["steps"][0]["step_id"],
-            "done": True,
-        },
-        "u1",
-        "ctx_onb_0001",
-        "dashboard-api",
-    )
-    call(
-        "request_assignment_change",
-        {
-            "change_kind": "offboarding",
-            "member_id": "emp_03",
-            "area": "search",
-            "successor_id": "emp_04",
-        },
-        "c1",
-        "ctx_asg_0001",
-    )
     svc.clock.advance(minutes=5)
 
     def read(skill: str, inp: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -151,8 +126,6 @@ def main(out_dir: Path) -> None:
 
     handovers = read("list_handovers")
     questions = read("list_open_questions")
-    onboardings = read("list_onboardings")
-    changes = read("list_changes")
     roster = read("get_roster")
     candidates = read("list_candidate_cards")
     audit = read("get_audit_timeline", {"context_id": "ctx_hnd_0001"})
@@ -184,25 +157,11 @@ def main(out_dir: Path) -> None:
         "ctx_hnd_0001",
         "dashboard-api",
     )["output"]
-    step_done = call(
-        "update_onboarding_step",
-        {
-            "onboarding_id": onboardings["onboardings"][0]["onboarding_id"],
-            "step_id": onboardings["onboardings"][0]["steps"][1]["step_id"],
-            "done": True,
-        },
-        "u2",
-        "ctx_onb_0001",
-        "dashboard-api",
-    )["output"]
 
     files = {
         "GET_handovers": envelope(handovers["handovers"], len(handovers["handovers"])),
         "GET_handover-questions": envelope(questions["questions"], len(questions["questions"])),
         "POST_handover-questions_answer": envelope(answer),
-        "GET_onboardings": envelope(onboardings["onboardings"], len(onboardings["onboardings"])),
-        "POST_onboardings_step": envelope(step_done),
-        "GET_assignment-changes": envelope(changes["changes"], len(changes["changes"])),
         "GET_roster": envelope(roster),
         "GET_candidate-cards": envelope(candidates["cards"], len(candidates["cards"])),
         "POST_candidate-cards_decision": envelope(approve),

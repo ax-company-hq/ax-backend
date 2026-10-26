@@ -1,24 +1,9 @@
 {
   "data": {
-    "completeness": 60,
-    "handover_id": "hnd_37109f50fa84",
-    "remaining_questions": [
-      {
-        "assignee_id": "emp_03",
-        "context_id": "ctx_asg_0001",
-        "gap_field": "rollback_criteria",
-        "question": "search 영역의 '되돌리는 기준'이(가) 비어 있어요. 후임이 알아야 할 내용을 알려 주세요.",
-        "question_id": "qst_hnd_37109f50fa84_rollback_criteria"
-      },
-      {
-        "assignee_id": "emp_03",
-        "context_id": "ctx_asg_0001",
-        "gap_field": "known_risks",
-        "question": "search 영역의 '알려진 위험'이(가) 비어 있어요. 후임이 알아야 할 내용을 알려 주세요.",
-        "question_id": "qst_hnd_37109f50fa84_known_risks"
-      }
-    ],
-    "status": "input_required"
+    "completeness": 100,
+    "handover_id": "hnd_748c7c4358f6",
+    "remaining_questions": [],
+    "status": "ready"
   },
   "meta": {
     "tenant_id": "shop-demo"
