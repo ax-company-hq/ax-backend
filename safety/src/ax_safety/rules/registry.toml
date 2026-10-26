@@ -8,6 +8,7 @@
 # - verifier, verify_skill: B 교차검증 주체와 그 skill. owner와 같으면 등록을 거부한다
 # - amount: 금액 계산 방법. count_field × unit_field 또는 amount_field 하나
 #   claimed_fields는 요청 쪽이 적어 보낸 총액 필드다. 코드 계산값과 다르면 C(amount_mismatch)
+# - on_verify_reject: 에이전트 검증자가 거절했을 때 "reject"(기본, 바로 rejected) | "hold"(사람 보류 큐 C)
 # - customer_field, purpose_field: 누적 기준(고객당·사건당 보상)에 쓰는 필드
 
 # ---- 마케팅 (재헌)
@@ -152,6 +153,8 @@ owner = "infra"
 base_grade = "B"
 verifier = "planning"
 verify_skill = "verify_rollback_target"
+# 검증자가 롤백 대상을 거절해도 장애는 계속되므로 끝내지 않고 사람이 본다 (SCN-A, 인프라 합의)
+on_verify_reject = "hold"
 
 [[actions]]
 action = "restart_service"

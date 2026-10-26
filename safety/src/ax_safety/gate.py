@@ -10,6 +10,8 @@
    `claimed_grade`는 기록만 한다.
 5. A는 `executed`. B는 검증자 skill로 교차검증해 승인이면 `executed`, 거절이면 `rejected`
    (`verify_rejected`), 무응답·오류면 C 보류(`verify_timeout`). C는 보류 큐에 넣고 `held`.
+   레지스트리에 `on_verify_reject = "hold"`인 액션(예: `rollback_deployment`)은 검증자 거절도
+   C 보류(`verify_rejected`)로 보내고, 보고서에 검증자 결과를 붙인다.
 6. 모든 단계는 감사 로그에 남긴다. 감사 로그를 못 남기면 실행하지 않는다(fail-closed).
 
 `executed`는 "요청 에이전트가 이제 쓰기 도구를 불러도 된다"는 뜻이다. 실제 쓰기는 요청 쪽이 한다.
@@ -250,6 +252,17 @@ class Gate:
                 request,
                 execution_id,
                 HoldReason.VERIFY_TIMEOUT,
+                report,
+                amount=amount,
+                customer=customer,
+                verifier=spec.verifier,
+            )
+        if outcome.result == "rejected" and spec.on_verify_reject == "hold":
+            report["verification"]["detail"] = outcome.detail
+            return await self._hold(
+                request,
+                execution_id,
+                HoldReason.VERIFY_REJECTED,
                 report,
                 amount=amount,
                 customer=customer,

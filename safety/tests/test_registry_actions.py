@@ -273,3 +273,96 @@ async def test_claim_refund_still_needs_finance_check(gate: Gate, verifier: Any,
     )
     assert (decision.grade, decision.status, decision.verifier) == ("B", "executed", "finance")
     assert verifier.tasks[-1].input["params"]["claim_id"] == 1
+
+
+# ---- 롤백 숫자 기준 (SCN-A). 실제 기준표 추가는 사람 PR이라 여기서는 테스트 전용 표로 확인한다
+_ROLLBACK_RULES = [
+    {"key": "rollback_multiple_suspects", "field": "suspect_count", "op": ">", "value": 1},
+    {"key": "rollback_low_confidence", "field": "low_confidence", "op": ">", "value": 0},
+    {"key": "rollback_irreversible", "field": "irreversible_count", "op": ">", "value": 0},
+    {"key": "rollback_repeat", "field": "prior_rollbacks", "op": ">", "value": 0},
+]
+_ROLLBACK_OK = {
+    "suspect_count": 1,
+    "low_confidence": 0,
+    "irreversible_count": 0,
+    "prior_rollbacks": 0,
+}
+
+
+@pytest.fixture
+def rollback_gate(verifier: Any, sent: Any, clock: Any) -> Gate:
+    from ax_safety.rules import Rule, load_registry, load_thresholds
+    from ax_safety.store import Store
+
+    table = load_thresholds()
+    extra = [
+        Rule(action="rollback_deployment", metric="param", **rule)  # type: ignore[arg-type]
+        for rule in _ROLLBACK_RULES
+    ]
+    table = table.model_copy(update={"rules": [*table.rules, *extra]})
+    return Gate(load_registry(), table, Store(), verifier, sent, now=clock)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "key"),
+    [
+        ("suspect_count", 2, "rollback_multiple_suspects"),
+        ("low_confidence", 1, "rollback_low_confidence"),
+        ("irreversible_count", 1, "rollback_irreversible"),
+        ("prior_rollbacks", 1, "rollback_repeat"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_rollback_param_rules_escalate_to_c(
+    rollback_gate: Gate, verifier: Any, act, field: str, value: int, key: str
+) -> None:
+    params = {**_ROLLBACK_OK, field: value}
+    decision = await rollback_gate.execute(
+        act("rollback_deployment", "infra", f"rb-{key}", **params)
+    )
+    assert (decision.grade, decision.status) == ("C", "held")
+    assert decision.hold_reason == HoldReason.OVER_THRESHOLD
+    review = rollback_gate.store.get_review(decision.review_id or "")
+    assert review is not None
+    assert [hit["key"] for hit in review.report["rules"]] == [key]
+    assert verifier.tasks == []  # C로 올라가면 검증자를 부르지 않는다
+
+
+@pytest.mark.parametrize(
+    "field", ["suspect_count", "low_confidence", "irreversible_count", "prior_rollbacks"]
+)
+@pytest.mark.parametrize("bad", ["missing", "1", 1.5, True, -1, None])
+@pytest.mark.asyncio
+async def test_rollback_param_rules_fail_closed(
+    rollback_gate: Gate, verifier: Any, act, field: str, bad: Any
+) -> None:
+    params: dict[str, Any] = dict(_ROLLBACK_OK)
+    if bad == "missing":
+        params.pop(field)
+    else:
+        params[field] = bad
+    decision = await rollback_gate.execute(
+        act("rollback_deployment", "infra", f"rb-bad-{field}-{bad!r}", **params)
+    )
+    assert (decision.grade, decision.status) == ("C", "held")
+    review = rollback_gate.store.get_review(decision.review_id or "")
+    assert review is not None
+    assert {
+        "key": next(r["key"] for r in _ROLLBACK_RULES if r["field"] == field),
+        "invalid": field,
+    } in review.report["rules"]
+    assert verifier.tasks == []
+
+
+@pytest.mark.asyncio
+async def test_rollback_all_clear_goes_to_b_verification(
+    rollback_gate: Gate, verifier: Any, act
+) -> None:
+    decision = await rollback_gate.execute(
+        act("rollback_deployment", "infra", "rb-clear", **_ROLLBACK_OK)
+    )
+    assert (decision.grade, decision.status) == ("B", "executed")
+    assert [(t.verifier, t.skill) for t in verifier.tasks] == [
+        ("planning", "verify_rollback_target")
+    ]
