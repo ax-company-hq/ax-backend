@@ -10,7 +10,7 @@ import re
 from typing import Any
 
 PREFIX = "buy_"
-_LEGACY = re.compile(r"^usr_(\d+)$")
+_LEGACY = re.compile(r"^usr_([0-9]+)$")  # \d는 유니코드 숫자도 받는다
 
 
 def from_number(number: int) -> str:
