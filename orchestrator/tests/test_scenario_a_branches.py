@@ -22,12 +22,17 @@ def called(harness, skill: str) -> list:
 
 # ---------------------------------------------------------------- 영향 고객 일괄 보상
 @pytest.mark.asyncio
-async def test_all_affected_customers_are_sent_to_support(harness) -> None:
+async def test_all_affected_customers_are_sent_to_support_in_one_request(
+    harness, monkeypatch
+) -> None:
+    _many_customers(
+        monkeypatch, 4
+    )  # 50명 이하면 한 번에 보낸다. 50명을 넘는 경우는 아래 분할 테스트가 본다
     inc = await run(harness)
     requests = called(harness, "request_incident_compensation")
+    assert len(requests) == 1
     impact_ids = inc.outputs["impact"]["affected_customer_ids"]
-    assert [b for r in requests for b in r.input["buyer_ids"]] == impact_ids  # 50명씩 나뉠 수 있다
-    assert all(len(r.input["buyer_ids"]) <= 50 for r in requests)
+    assert requests[0].input["buyer_ids"] == impact_ids
     assert requests[0].input["reason_code"] == "payment_failure"
     assert requests[0].input["impact_ref"] == f"{inc.context_id}:impact"
     assert inc.steps["compensation"].dept == "support"
