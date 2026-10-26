@@ -56,7 +56,7 @@ async def test_mock_llm_returns_registered_response_and_records_prompt() -> None
 
 
 @pytest.mark.asyncio
-async def test_real_client_needs_model_and_base_url() -> None:
+async def test_real_client_needs_configuration_and_is_still_a_stub() -> None:
     with pytest.raises(LLMNotConfiguredError):
         await LLMClient("hr", LLMSettings()).structured("질문", Answer)
     with pytest.raises(LLMNotConfiguredError, match="BASE_URL"):
