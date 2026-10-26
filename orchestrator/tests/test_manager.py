@@ -88,7 +88,7 @@ def test_demo_api_runs_scenario_and_hold_decision(monkeypatch) -> None:
         assert client.get("/api/registry").json()["data"]["depts"]
 
 
-def test_demo_wrong_owner_option_is_queued_for_transfer(monkeypatch) -> None:
+def test_demo_wrong_owner_option_is_transferred_not_failed(monkeypatch) -> None:
     monkeypatch.setattr(state, "mock", True)
     monkeypatch.setattr(state, "latency", 0.0)
     monkeypatch.setattr(state, "manager", None)
