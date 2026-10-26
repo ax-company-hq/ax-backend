@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -9,9 +10,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ax_agent_template import events
-from ax_contracts.schemas import RequestMeta
+from ax_contracts.schemas import RequestMeta, VerifyAmountInput
 from finance_agent import handlers
 from finance_agent.main import app
+from finance_agent.recheck import recompute
 from finance_agent.sources import LiveSources, MockSources, order_key, paid_total
 
 META = RequestMeta(
@@ -100,29 +102,18 @@ async def test_live_paid_amount_when_shop_is_down() -> None:
 
 
 def _verify(client: TestClient, order_id: object, amount: int) -> dict:
-    body = {
-        "meta": {
-            "context_id": "ctx_req_1",
-            "token": "mock:safety",
-            "path": [],
-            "deadline": (datetime.now(UTC) + timedelta(seconds=30)).isoformat(),
-        },
-        "skill": "verify_amount",
-        "input": {
-            "execution_id": f"exe_{order_id}_{amount}",
-            "action": "refund_request",
-            "requester": "support",
-            "params": {
-                "claim_id": 1,
-                "order_id": order_id,
-                "buyer_id": "usr_1",
-                "refund_amount": amount,
-            },
-            "computed_amount": amount,
-            "threshold_version": 1,
-        },
-    }
-    return TestClient(app).post("/a2a", json=body).json()["output"]
+    """환불 다시 계산(`recheck.recompute`, 예전 verify_amount 계산). 캣북스·사후 감사가 쓴다."""
+    data = VerifyAmountInput(
+        execution_id=f"exe_{order_id}_{amount}",
+        action="refund_request",
+        requester="support",
+        params={"claim_id": 1, "order_id": order_id, "buyer_id": "usr_1", "refund_amount": amount},
+        computed_amount=amount,
+        threshold_version=1,
+    )
+    state = handlers.state()
+    out = asyncio.run(recompute(META, data, state.sources, state.ledger.refunds))
+    return out.model_dump(mode="json")
 
 
 def test_support_numeric_order_id_is_verified() -> None:

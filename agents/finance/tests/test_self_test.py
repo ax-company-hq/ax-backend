@@ -12,22 +12,22 @@ from ax_agent_template import events
 from finance_agent import handlers, selftest
 from finance_agent.handlers import recompute
 from finance_agent.main import app
-from finance_agent.review import load_policy
 from finance_agent.sources import MockSources
 
 REGISTRY = {
     "actions": [
-        {"action": "issue_coupon", "verifier": "finance"},
-        {"action": "refund_request", "verifier": "finance"},
+        {"action": "issue_coupon", "base_grade": "A", "verifier": None},
+        {"action": "refund_request", "base_grade": "A", "verifier": None},
+        {"action": "confirm_settlement", "base_grade": "C", "verifier": None},
     ]
 }
-THRESHOLDS = {"auto_review": {"enabled": True, "reviewer": "finance"}}
+THRESHOLDS = {"version": 1, "rules": [{"key": "refund_single", "value": 100000}]}
+ROUTING = "쿠폰·환불은 규칙 검사, 정산 확정은 사람 승인"
 
 
 @pytest.fixture(autouse=True)
 def _mock_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_TEMPLATE_MOCK", "1")
-    monkeypatch.setenv("FINANCE_CATBOOKS_URL", "http://catbooks")
     events.reset_mock_bus()
     handlers.reset_state(MockSources())
 
@@ -49,16 +49,17 @@ def _network(up: set[str], registry: dict | None = None, thresholds: dict | None
 
 
 async def _run(client: httpx.AsyncClient) -> dict[str, Any]:
-    return await selftest.run_self_test(recompute, load_policy(), http_client=client)
+    return await selftest.run_self_test(recompute, http_client=client)
 
 
 @pytest.mark.asyncio
 async def test_all_green_when_everything_is_up() -> None:
-    result = await _run(_network({"safety", "shop-api", "data", "catbooks"}))
+    result = await _run(_network({"safety", "shop-api", "data"}))
     assert result["result"] == "pass", [c for c in result["checks"] if not c["ok"]]
     assert result["passed"] == result["total"] >= 14
     names = {c["name"] for c in result["checks"]}
     assert {"금액을 틀리게 적은 쿠폰 막기", "결제보다 큰 환불 막기", "안전 장치 연결"} <= names
+    assert {"결산 계산 공식", "대사 상태 나누기", "판매자 정산 공식", "사후 감사 규칙"} <= names
 
 
 @pytest.mark.asyncio
@@ -66,58 +67,73 @@ async def test_missing_data_sources_only_warn() -> None:
     result = await _run(_network({"safety"}))
     assert result["result"] == "warn"
     bad = {c["name"]: c["level"] for c in result["checks"] if not c["ok"]}
-    assert bad == {"쇼핑몰 연결": "warn", "데이터 AI 연결": "warn", "캣북스 연결": "warn"}
-
-
-@pytest.mark.asyncio
-async def test_catbooks_down_only_warns() -> None:
-    result = await _run(_network({"safety", "shop-api", "data"}))
-    assert result["result"] == "warn"
-    bad = [(c["name"], c["level"]) for c in result["checks"] if not c["ok"]]
-    assert bad == [("캣북스 연결", "warn")]
+    assert bad == {"쇼핑몰 연결": "warn", "데이터 AI 연결": "warn"}
 
 
 @pytest.mark.asyncio
 async def test_safety_down_fails() -> None:
-    result = await _run(_network({"shop-api", "data", "catbooks"}))
+    result = await _run(_network({"shop-api", "data"}))
     assert result["result"] == "fail"
     failed = {c["name"] for c in result["checks"] if not c["ok"] and c["level"] == "fail"}
-    assert {"안전 장치 연결", "쿠폰·환불 검증을 재무 AI가 맡는지"} <= failed
+    assert {"안전 장치 연결", ROUTING} <= failed
 
 
 @pytest.mark.asyncio
-async def test_wrong_routing_and_auto_review_off_are_reported() -> None:
-    registry = {
+async def test_old_finance_routing_or_missing_settlement_action_fails() -> None:
+    """안전 장치가 아직 쿠폰을 재무 검증으로 보내거나 정산 확정이 C가 아니면 빨간불."""
+    old = {
         "actions": [
-            {"action": "issue_coupon", "verifier": "data"},
-            {"action": "refund_request", "verifier": "finance"},
+            {"action": "issue_coupon", "base_grade": "B", "verifier": "finance"},
+            {"action": "refund_request", "base_grade": "A", "verifier": None},
+            {"action": "confirm_settlement", "base_grade": "C", "verifier": None},
         ]
     }
-    result = await _run(
-        _network(
-            {"safety", "shop-api", "data", "catbooks"},
-            registry,
-            {"auto_review": {"enabled": False}},
-        )
-    )
+    result = await _run(_network({"safety", "shop-api", "data"}, old))
     by = {c["name"]: c for c in result["checks"]}
-    assert not by["쿠폰·환불 검증을 재무 AI가 맡는지"]["ok"]
-    assert (by["AI 1차 판단 켜짐"]["ok"], by["AI 1차 판단 켜짐"]["level"]) == (False, "warn")
+    assert (by[ROUTING]["ok"], by[ROUTING]["level"]) == (False, "fail")
     assert result["result"] == "fail"
+
+    no_settle = {"actions": REGISTRY["actions"][:2]}
+    result = await _run(_network({"safety", "shop-api", "data"}, no_settle))
+    assert not {c["name"]: c for c in result["checks"]}[ROUTING]["ok"]
+
+
+@pytest.mark.asyncio
+async def test_thresholds_unreadable_only_warns() -> None:
+    result = await _run(_network({"safety", "shop-api", "data"}, thresholds={"version": 1}))
+    bad = [(c["name"], c["level"]) for c in result["checks"] if not c["ok"]]
+    assert bad == [("기준표 읽기", "warn")]
+    assert result["result"] == "warn"
+
+
+@pytest.mark.asyncio
+async def test_module_checks_cover_every_new_module() -> None:
+    """결산·대사·정산·예산·감사 규칙 점검이 모두 통과한다(가짜 자료, 실제 기록 없음)."""
+    result = await _run(_network({"safety", "shop-api", "data"}))
+    by = {c["name"]: c for c in result["checks"]}
+    for name in (
+        "결산 계산 공식",
+        "대사 상태 나누기",
+        "판매자 정산 공식",
+        "예산 경보 기준",
+        "사후 감사 규칙",
+        "한도 제안 설정 읽기",
+    ):
+        assert by[name]["ok"], (name, by[name]["detail"])
+    assert "13,000원" in by["판매자 정산 공식"]["detail"]
 
 
 @pytest.mark.asyncio
 async def test_broken_judgement_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
     """판단 코드가 고장 나면(무조건 통과) 테스트가 빨간불을 켠다."""
-    from finance_agent.schemas import VerifyAmountOutput
+    from finance_agent.recheck import VerifyAmountOutput
 
     async def always_approve(*args: Any, **kwargs: Any) -> VerifyAmountOutput:
         return VerifyAmountOutput(decision="approved", reason_code="recomputed_match")
 
     result = await selftest.run_self_test(
         always_approve,
-        load_policy(),
-        http_client=_network({"safety", "shop-api", "data", "catbooks"}),
+        http_client=_network({"safety", "shop-api", "data"}),
     )
     failed = {c["name"] for c in result["checks"] if not c["ok"]}
     assert "금액을 틀리게 적은 쿠폰 막기" in failed and "결제보다 큰 환불 막기" in failed
@@ -126,9 +142,9 @@ async def test_broken_judgement_is_caught(monkeypatch: pytest.MonkeyPatch) -> No
 
 @pytest.mark.asyncio
 async def test_self_test_leaves_no_trace_in_real_records() -> None:
-    await _run(_network({"safety", "shop-api", "data", "catbooks"}))
-    ledger = handlers.state().ledger
-    assert ledger.verify_log == [] and ledger.ai_reviews == [] and ledger.refunds == {}
+    await _run(_network({"safety", "shop-api", "data"}))
+    ledger, records = handlers.state().ledger, handlers.state().records
+    assert records.closings == {} and records.batches == {} and ledger.refunds == {}
 
 
 def test_endpoints_run_and_remember_last(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -173,3 +189,114 @@ def test_last_result_expires_after_12_hours(monkeypatch: pytest.MonkeyPatch) -> 
 @pytest.mark.parametrize("bad", [{}, {"ran_at": "어제"}, {"ran_at": None}])
 def test_strange_timestamps_count_as_old(bad: dict) -> None:
     assert selftest.is_fresh(bad) is False
+
+
+def _fake_result(result: str = "pass") -> dict[str, Any]:
+    from datetime import UTC, datetime
+
+    return {
+        "result": result,
+        "summary": "ok",
+        "checks": [],
+        "passed": 0,
+        "total": 0,
+        "duration_ms": 1,
+        "ran_at": datetime.now(UTC).isoformat(),
+    }
+
+
+def test_manual_run_is_marked_manual_and_meta_shows_auto_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_run(*args: Any, **kwargs: Any) -> dict:
+        return _fake_result()
+
+    monkeypatch.setattr("finance_agent.main.run_self_test", fake_run)
+    client = TestClient(app)
+    assert client.get("/api/finance/self-test").json()["data"]["trigger"] == "manual"
+    body = client.get("/api/finance/self-test/last").json()
+    assert body["data"]["trigger"] == "manual"
+    assert body["meta"] == {"ttl_hours": 12, "interval_seconds": 0, "next_run_at": None}
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"), [(None, 600), ("", 600), ("0", 0), ("30", 30), ("-5", 0), ("x", 600)]
+)
+def test_self_test_interval_env(monkeypatch: pytest.MonkeyPatch, raw: str | None, expected: int):
+    from finance_agent import main
+
+    if raw is None:
+        monkeypatch.delenv("FINANCE_SELF_TEST_SECONDS", raising=False)
+    else:
+        monkeypatch.setenv("FINANCE_SELF_TEST_SECONDS", raw)
+    assert main.self_test_seconds() == expected
+
+
+@pytest.mark.asyncio
+async def test_loop_runs_repeatedly_and_survives_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """한 번 실패해도 루프는 계속 돌고, 결과는 trigger=auto로 남는다 (실제 시간을 기다리지 않음)."""
+    import asyncio
+
+    from finance_agent import main
+
+    calls: list[int] = []
+    done = asyncio.Event()
+
+    async def flaky_run(*args: Any, **kwargs: Any) -> dict:
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("boom")
+        if len(calls) >= 3:
+            done.set()
+        return _fake_result()
+
+    monkeypatch.setattr(main, "run_self_test", flaky_run)
+    task = asyncio.create_task(main.self_test_loop(0, first_delay=0))
+    await asyncio.wait_for(done.wait(), timeout=2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert len(calls) >= 3
+    assert handlers.state().last_self_test["trigger"] == "auto"
+    assert main.SELF_TEST_SCHEDULE["next_run_at"] is not None
+
+
+def test_lifespan_starts_auto_test_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    import time
+    from datetime import datetime
+
+    from finance_agent import main
+
+    async def fake_run(*args: Any, **kwargs: Any) -> dict:
+        return _fake_result("warn")
+
+    monkeypatch.setattr(main, "run_self_test", fake_run)
+    monkeypatch.setattr(main, "SELF_TEST_FIRST_DELAY", 0)
+    monkeypatch.setenv("FINANCE_SELF_TEST_SECONDS", "600")
+    with TestClient(app) as client:
+        body: dict = {}
+        for _ in range(200):
+            body = client.get("/api/finance/self-test/last").json()
+            if body["data"]:
+                break
+            time.sleep(0.01)
+        assert body["data"]["result"] == "warn" and body["data"]["trigger"] == "auto"
+        assert body["meta"]["interval_seconds"] == 600
+        next_run = datetime.fromisoformat(body["meta"]["next_run_at"])
+        assert next_run.tzinfo is not None
+    assert main.SELF_TEST_SCHEDULE == {"interval_seconds": 0, "next_run_at": None}
+
+
+def test_lifespan_does_not_start_auto_test_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    from finance_agent import main
+
+    async def fake_run(*args: Any, **kwargs: Any) -> dict:
+        raise AssertionError("자동 테스트가 꺼져 있어야 한다")
+
+    monkeypatch.setattr(main, "run_self_test", fake_run)
+    monkeypatch.setattr(main, "SELF_TEST_FIRST_DELAY", 0)
+    monkeypatch.setenv("FINANCE_SELF_TEST_SECONDS", "0")
+    with TestClient(app) as client:
+        meta = client.get("/api/finance/self-test/last").json()["meta"]
+        assert (meta["interval_seconds"], meta["next_run_at"]) == (0, None)
+        assert handlers.state().last_self_test is None
