@@ -24,6 +24,7 @@
 | `set_inquiry_status` | A | dashboard-api, orchestrator | 상태 변경 |
 | `request_compensation` | A | dashboard-api, orchestrator | 보상 단가 판정 + 마케팅 `issue_coupon(compensation)` 직렬 요청 (DEP-CS-02) |
 | `suggest_compensation` | read | dashboard-api, orchestrator | 문의의 주문 사실로 지연 보상 후보를 제안 (쿠폰은 안 냄, 승인은 사람이) |
+| `request_incident_compensation` | A | orchestrator | 사건(`ctx_inc_`) 영향 고객 전원에게 보상 쿠폰 요청 (문의를 안 낸 고객 포함, SCN-A 8단계) |
 | `request_change` | A | dashboard-api, orchestrator | 변경 요청을 기획개발 `create_ticket`으로 보내고 `ctx_req_`를 문의와 연결 |
 | `list_change_requests` | read | dashboard-api, orchestrator | 문의·변경 요청 연결 목록 |
 | `list_claims`, `get_claim`, `claim_stats`, `claim_queue` | read | dashboard-api, orchestrator | 클레임 목록·상세(판정 근거·감사 기록)·건수·보상 큐 |
@@ -40,6 +41,7 @@
 - `create_inquiry`·`add_customer_message`는 선택 입력 `notice_id`가 있으면 마케팅 `get_notice`로 공지 사실(본문·약속·기간)을 읽어 답변 근거(`notice:<id>`)의 맨 앞에 넣는다. 공지를 찾지 못하거나 마케팅이 응답하지 않으면 근거 없이 진행한다 ("확인할 수 없음").
 - `request_compensation`은 단가를 코드 정책표(`compensation.py`)로 판정하고, 사건(`context_id`)별로 `sequence` 1부터 한 건씩 마케팅에 보낸다. 지급·`execute()`·재무 교차검증은 마케팅 쪽이라 support는 자기 상태를 바꾸지 않고 safety 등록도 필요 없다. 표에 없는 사유는 `not_eligible`. 번호는 마케팅이 소비한 경우(지급·재무 거절·보류·실행 실패)에만 올리고, 재무 검증 중(`working`)·번호/입력 오류·타임아웃·연결 실패는 같은 번호로 다시 보낸다. 같은 사건의 요청은 락으로 한 건씩 처리한다.
 - `suggest_compensation`(읽기)은 보상 후보만 제안한다 (`suggest_handlers.py`). 고객 문장은 읽지 않고, 문의의 주문(shop-api, 목 모드는 시드)의 약속 배송일·배송 완료 시각으로 코드가 지연 일수(채운 일수, 배송 전이면 지금까지)를 세어 `LATE_MIN_DAYS`(1일) 이상이면 `late_delivery` 후보를 돌려준다. 약속일이 없으면 `확인할 수 없음`으로 돌려주고 지어내지 않는다. 문의의 구매자(`buy_<번호>`)와 주문의 구매자가 다르면 not_found다. 응답의 `request`를 담당자가 승인하면 그대로 `request_compensation`에 보낸다 (자동 발급 없음: 마케팅 `issue_coupon`은 B 등급이라 재무 검증을 거치고 기준 금액 이상은 안전 레이어가 보류한다).
+- `request_incident_compensation`(A)은 장애로 피해를 본 고객 전원의 보상을 요청한다 (`incident_handlers.py`). 영향 고객은 데이터분석 영향 분석 결과를 총괄이 `buyer_ids`로 넘기며 문의가 없는 고객도 대상이다. 총괄만, 사건(`ctx_inc_`) 안에서만 부를 수 있고, 구매자 ID가 `buy_<4자리>`가 아니거나 50명을 넘으면 전체를 거부한다. 사유는 `payment_failure`만 받고 단가(시드 2,000원)와 건수 상한(3건)은 정책표가 정한다. 고객마다 마케팅 `issue_coupon`에 한 건씩 직렬로 요청하며(재무 검증, 한도 초과는 C 보류 → 결과 `held`) 지급은 마케팅이 한다. 같은 사건·구매자·사유는 `request_compensation`과 같은 키라 한 번만 요청되고, 마케팅에 닿지 않으면 남은 고객은 `skipped`로 멈춘다 (소비되지 않은 `sequence`로 다시 요청할 수 있다). `request_compensation`도 같은 정책표라 문의를 낸 고객은 `payment_failure` 사유로 보상할 수 있다.
 
 ## 다국어와 키워드 (`languages.py`, `drafting.py`, `guard.py`)
 - 고객 메시지의 언어는 LLM이 아니라 **코드가 문자 종류로 판별**한다 (`languages.detect`): 한글 `ko`, 가나(한자 포함) `ja`, 한자만 `zh`, 라틴 문자 `en`, 그 밖(키릴·아랍·태국어 등) `other`. 분류 결과 `classification.language`에 담긴다.

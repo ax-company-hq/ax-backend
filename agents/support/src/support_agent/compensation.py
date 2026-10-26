@@ -15,6 +15,7 @@ from datetime import datetime
 # 사유 코드 → 쿠폰 1건 단가(원). 표에 없는 사유는 보상 대상이 아니다.
 UNIT_VALUE_BY_REASON: dict[str, int] = {
     "late_delivery": 2000,
+    "payment_failure": 2000,  # 결제 장애로 주문이 실패한 고객 (SCN-A). 시드 값, 재무가 확정
     "damaged": 3000,
     "wrong_item": 3000,
     "missing_item": 3000,

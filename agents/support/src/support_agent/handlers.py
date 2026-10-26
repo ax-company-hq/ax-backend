@@ -386,12 +386,12 @@ async def request_compensation(request: AgentRequest) -> AgentResult:
         return _done(request, output, outcome="not_eligible", evidence=evidence)
 
     async with LEDGER.lock(context_id):  # 같은 사건의 요청은 한 건씩 (같은 번호를 읽는 경쟁 방지)
-        return await _request_coupon(request, parsed, decision, key, evidence)
+        return await _request_coupon(request, parsed.buyer_id, decision, key, evidence)
 
 
 async def _request_coupon(
     request: AgentRequest,
-    parsed: RequestCompensationInput,
+    buyer_id: str,
     decision: compensation.CompensationDecision,
     key: str,
     evidence: Evidence,
@@ -406,7 +406,7 @@ async def _request_coupon(
         skill="issue_coupon",
         input={
             "purpose_code": "compensation",
-            "buyer_id": parsed.buyer_id,
+            "buyer_id": buyer_id,
             "count": decision.count,
             "unit_value": decision.unit_value,
             "claimed_total": decision.total_value,
