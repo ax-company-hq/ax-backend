@@ -65,7 +65,8 @@ def column_type(column: str) -> str:
     return COLUMN_TYPES.get(column, "text")
 
 
-# 주문·구매자 ID가 숫자였던 예전 `claims` 테이블을 문자열 열로 옮긴다 (`user_id` → `buyer_id`).
+# 주문·구매자 ID가 숫자였던 예전 `claims` 테이블을 문자열 열로 옮긴다 (`user_id` → `buyer_id`,
+# 값은 `buy_<4자리>`). 잠시 쓰던 `usr_<번호>`도 같은 형식으로 고친다.
 # 새로 만든 테이블에는 아무 일도 하지 않고, 여러 번 실행해도 안전하다. 예전 기록의 `doc`은
 # `Claim` 모델이 읽을 때 문자열로 바꿔 준다 (`claim_schemas.EntityId`).
 LEGACY_CLAIMS_MIGRATION = """DO $$
@@ -73,13 +74,16 @@ BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema()
              AND table_name = 'claims' AND column_name = 'user_id') THEN
     ALTER TABLE claims RENAME COLUMN user_id TO buyer_id;
-    ALTER TABLE claims ALTER COLUMN buyer_id TYPE text USING 'usr_' || buyer_id::text;
+    ALTER TABLE claims ALTER COLUMN buyer_id TYPE text
+      USING 'buy_' || lpad(buyer_id::text, 4, '0');
   END IF;
   IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema()
              AND table_name = 'claims' AND column_name = 'order_id'
              AND data_type = 'bigint') THEN
     ALTER TABLE claims ALTER COLUMN order_id TYPE text USING order_id::text;
   END IF;
+  UPDATE claims SET buyer_id = 'buy_' || lpad(substr(buyer_id, 5), 4, '0')
+    WHERE buyer_id ~ '^usr_[0-9]+$';
 END $$;"""
 
 

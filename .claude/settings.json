@@ -22,8 +22,7 @@
       "Read(//proc/**)",
       "Read(./**/.git/config)",
       "Bash(git push --force *)",
-      "Bash(git push -f *)",
-      "Bash(gh pr merge *)"
+      "Bash(git push -f *)"
     ]
   }
 }

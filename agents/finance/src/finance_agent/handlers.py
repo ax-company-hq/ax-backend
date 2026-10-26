@@ -273,8 +273,8 @@ async def loss_aggregation(request: AgentRequest) -> AgentResult:
         return data
     context_id = data.context_id or request.meta.context_id
     window = {
-        "from": data.window_from.isoformat(),
-        "to": data.window_to.isoformat(),
+        "window_from": data.window_from.isoformat(),
+        "window_to": data.window_to.isoformat(),
         **({"category": data.category} if data.category else {}),
     }
     impact = await state().sources.impact(request.meta, context_id, window)

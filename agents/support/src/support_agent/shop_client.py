@@ -96,6 +96,8 @@ def to_order(data: dict[str, Any]) -> Order | None:
         buyer_id=data["buyer_id"],
         status="delivered" if delivered_at else "preparing",
         paid_at=paid_at,
+        promised_delivery_at=_moment(data.get("promised_delivery_at")),
+        shipped_at=_moment(data.get("shipped_at")),
         delivered_at=delivered_at,
         shipping_fee=data.get("shipping_fee", 0),
         points_used=data.get("points_used", 0),

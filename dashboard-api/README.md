@@ -66,7 +66,7 @@ support 출력은 `claim_mapping.py`에서 화면 모델로 바꾼다 (값을 �
 - 검수 값: 화면 `ok`·`mismatch`·`pending` ↔ support `pass`·`fail`·`partial`·없음 (`mismatch` 요청은 `fail`로 보낸다, 모르는 값은 422).
 - 규칙·공제 코드와 감사 액션 이름은 화면 라벨 표(`RULE_KO`, `AUDIT_KO`)의 키에 맞춘다 (대응이 없는 코드는 그대로 둔다).
 - 거절된 클레임은 환불 예정액·적립금을 0으로 보낸다.
-- support 클레임의 `order_id`·`order_item_id`·`buyer_id`는 문자열이다. 화면 모델은 주문·품목 ID를 숫자 또는 문자열로 받고, `user_id`는 `buyer_id`가 `usr_<숫자>`일 때만 그 숫자로 채운다(아니면 비움).
+- support 클레임의 `order_id`·`order_item_id`·`buyer_id`는 문자열이다. 화면 모델은 주문·품목 ID를 숫자 또는 문자열로 받고, `user_id`는 `buyer_id`가 `buy_<4자리>`일 때만 그 숫자로 채운다(아니면 비움, `claim_mapping.buyer_id_for`가 반대 방향: 1 → `buy_0001`).
 - 비어 있는 값: `description`(고객 원문은 저장하지 않는다), `tracking`, `compensation`(보상 쿠폰은 `request_compensation`), `hold_reason`.
 - 지급 연동이 막힌 항목(재무 검증 중·보류·거부)은 `process` 결과에서 `held`와 `ON_HOLD` 이유로 보인다. 같은 큐를 다시 처리해도 지급 요청(`refund_request`)의 키는 support가 클레임을 접수한 사건 기준으로 고정하므로(`<claim.context_id>:refund_request:claim:<id>`), 검증 중인 건이나 승인된 보류 건을 다시 처리하면 같은 판정이 이어지고 중복 지급되지 않는다. dashboard-api 호출마다 새 `ctx_ui_`를 붙여도 상관없다.
 - 감사 기록의 `agent_override`(상담원 승인) 라벨은 화면 표기에 맞춘 이름이다. `claim_stats.agent_overrides`는 자동 판정을 뒤집는 경우만 세는데 지금은 자동 판정을 바꿀 수 없어 항상 0이다.
@@ -103,7 +103,7 @@ support 출력은 `claim_mapping.py`에서 화면 모델로 바꾼다 (값을 �
 | GET `/communications?dept&context_id` | 한 줄(`CommunicationLine`)의 배열, 시간 오름차순. `meta.total`, `meta.truncated` |
 - 읽기는 공통 로그 읽기 조회(`CommonLogQuery`/`CommonLogResult`)만 쓴다. 쓰는 쪽은 agent-template이 A2A 요청·응답을 자동 기록한다(#249). 읽는 곳은 `AX_COMMON_LOG_DB`(compose의 공유 볼륨, #271) SQLite 파일이고, 그 값이 없으면 목 모드가 아닐 때 503 `UPSTREAM_NOT_CONNECTED`다.
 - 한 줄에는 코드가 만든 필드만 담는다: `from_agent` → `to_agent`, `skill`, `outcome`(`completed`·`rejected`·`failed`·`held`·`needs_human`·`in_progress`), `occurred_at`, `context_id`, `execution_id`. `payload`와 고객 원문은 넣지 않는다. `execution_id`로 안전 레이어 결정과 이어 "보류·거부"를 한 줄에 보여 줄 수 있다.
-- `dept`는 그 부서가 보냈거나 받은 줄만, `context_id`는 같은 사건끼리 묶어 본다. 방향은 요청(`request_received`)이면 요청자 → 받은 쪽, 결과·결정이면 기록한 쪽 → 요청자다. 이벤트 발행·기억 참조는 부서 간 대화가 아니라서 뺀다. 이관 큐로 넘긴 건(`escalated`)은 `needs_human`으로 보인다.
+- `dept`는 그 부서가 보냈거나 받은 줄만, `context_id`는 같은 사건끼리 묶어 본다. `dept`는 에이전트 이름(`support`·`marketing`·`hr`·`data`·`finance`·`orchestrator`·`safety`·`planning`)이고, DejaFix 어댑터는 팀 기준 이름 `dejafix`(또는 `infra-dejafix`)와 에이전트 이름 `infra` 중 무엇으로 보내도 같은 줄을 돌려준다. 응답의 `from_agent`·`to_agent`는 에이전트 이름 그대로라 DejaFix는 `infra`로 나온다. 방향은 요청(`request_received`)이면 요청자 → 받은 쪽, 결과·결정이면 기록한 쪽 → 요청자다. 이벤트 발행·기억 참조는 부서 간 대화가 아니라서 뺀다. 이관 큐로 넘긴 건(`escalated`)은 `needs_human`으로 보인다.
 
 ### AI 대화방: 총괄 사건·안전 관문 기록 (읽기 전용 중계)
 | 경로 (`/api/dashboard` 아래) | 원본 | 응답 `data` |
