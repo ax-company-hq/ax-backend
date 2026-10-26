@@ -191,12 +191,12 @@
     },
     {
       "id": "process_claim_queue",
-      "description": "보상 큐의 준비된 건을 refund_request(execute, 재무 교차검증·기준 이상 C 보류)로 지급 처리한다. 실행되면 shop-api 환불 API로 현금을 환불하고, 실패하면 보류로 남겨 같은 키로 재시도한다.",
+      "description": "보상 큐의 준비된 건을 refund_request(execute, 안전 관문의 한도 검사·기준 이상 C 보류)로 지급 처리한다. 실행되면 shop-api 환불 API로 현금을 환불하고, 실패하면 보류로 남겨 같은 키로 재시도한다.",
       "input_schema": "agents/support/src/support_agent/claim_schemas.py#ProcessClaimQueueInput",
       "output_schema": "agents/support/src/support_agent/claim_schemas.py#QueueRun",
-      "grade": "B",
+      "grade": "A",
       "allowed_requesters": ["dashboard-api"],
-      "verifier": "finance",
+      "verifier": null,
       "priority": "recommended"
     },
     {
@@ -261,7 +261,7 @@
     },
     {
       "id": "request_incident_compensation",
-      "description": "사건(ctx_inc_)으로 피해를 본 영향 고객 목록(구매자 ID, 데이터분석 영향 분석 결과)에게 보상 쿠폰을 요청한다. 문의를 내지 않은 고객도 대상이다. 총괄만 부를 수 있다. 사유는 결제 장애(payment_failure)만 받고 단가와 건수 상한은 정책표가 정한다. 고객마다 마케팅 issue_coupon에 한 건씩 직렬로 요청하며(재무 검증·한도 초과는 C 보류) 지급은 마케팅이 한다. 같은 사건·구매자·사유는 한 번만 요청하고, 마케팅에 닿지 않으면 남은 요청을 멈춘다.",
+      "description": "사건(ctx_inc_)으로 피해를 본 영향 고객 목록(구매자 ID, 데이터분석 영향 분석 결과)에게 보상 쿠폰을 요청한다. 문의를 내지 않은 고객도 대상이다. 총괄만 부를 수 있다. 사유는 결제 장애(payment_failure)만 받고 단가와 건수 상한은 정책표가 정한다. 고객마다 마케팅 issue_coupon에 한 건씩 직렬로 요청하며(안전 관문의 한도 검사, 초과는 C 보류) 지급은 마케팅이 한다. 같은 사건·구매자·사유는 한 번만 요청하고, 마케팅에 닿지 않으면 남은 요청을 멈춘다.",
       "input_schema": "agents/support/src/support_agent/incident_schemas.py#RequestIncidentCompensationInput",
       "output_schema": "agents/support/src/support_agent/incident_schemas.py#IncidentCompensationOutput",
       "grade": "A",

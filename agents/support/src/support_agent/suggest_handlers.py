@@ -3,7 +3,7 @@
 고객이 쓴 문장은 읽지 않는다. 주문(shop-api)의 약속 배송일·배송 완료 시각으로 코드가 지연 일수를
 세고, 정책표(`compensation.py`)로 단가를 정한다. 아무것도 바꾸지 않고 쿠폰도 내지 않는다.
 담당자가 승인하면 응답의 `request`를 그대로 `request_compensation`에 보낸다 (마케팅 `issue_coupon`은
-B 등급이라 재무 검증을 거치고 기준 금액 이상은 안전 레이어가 보류한다).
+A 등급이라 안전 관문의 한도 검사를 거치고 기준 금액 이상은 안전 레이어가 보류한다).
 """
 
 from __future__ import annotations
