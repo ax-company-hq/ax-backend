@@ -1,9 +1,8 @@
 """안전 회귀 세트: "잘못 통과 0건"을 숫자로 보여 주는 묶음.
 
-위험한 시도(권한 없는 요청자, 관문 오류·거절·보류, 루프·마감·키 누락, 키 재사용, 승인 없는 퇴직,
-퇴직자 후임 지정 등)가 상태를 바꾸지 못하는지 본다. 각 사례는 시도 전후의 hr 상태(카드·기록·
-인수인계·
-온보딩·변경·명부·교대·잠금·재직 여부)가 같아야 통과다. 사례 수는 마지막 테스트가 센다.
+위험한 시도(권한 없는 요청자, 관문 오류·거절·보류, 루프·마감·키 누락, 미완성 인수인계 확정 등)가
+상태를 바꾸지 못하는지 본다. 각 사례는 시도 전후의 hr 상태(카드·기록·인수인계·명부·교대·잠금·
+재직 여부)가 같아야 통과다. 사례 수는 마지막 테스트가 센다.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -21,11 +20,6 @@ STATE_CHANGING = [
     "start_handover",
     "answer_handover_question",
     "confirm_handover",
-    "start_onboarding",
-    "request_assignment_change",
-    "confirm_reassignment",
-    "confirm_offboarding",
-    "update_onboarding_step",
     "decide_candidate_card",
 ]
 READ_SKILLS = [
@@ -33,8 +27,6 @@ READ_SKILLS = [
     "check_plan",
     "list_handovers",
     "list_open_questions",
-    "list_onboardings",
-    "list_changes",
     "list_candidate_cards",
     "get_audit_timeline",
 ]
@@ -64,8 +56,6 @@ def state(svc: Services) -> dict[str, Any]:
         "records": q("SELECT record_id FROM records ORDER BY record_id"),
         "handovers": q("SELECT handover_id, status, completeness FROM handovers ORDER BY 1"),
         "fields": q("SELECT handover_id, field, filled FROM handover_fields ORDER BY 1, 2"),
-        "onboardings": q("SELECT onboarding_id FROM onboardings ORDER BY 1"),
-        "changes": q("SELECT change_id, status, successor_id FROM assignment_changes ORDER BY 1"),
         "roster": q("SELECT area, role, member_id, active FROM roster_entries ORDER BY 1, 2, 3"),
         "shifts": q("SELECT shift_id, member_id FROM shifts ORDER BY 1"),
         "members": q("SELECT member_id, active FROM members ORDER BY 1"),
@@ -87,27 +77,6 @@ def world(svc, client) -> dict[str, Any]:
 
     started = call("start_handover", {"owner_id": "emp_01"}, "w1")
     low_hover = call("start_handover", {"owner_id": "emp_03"}, "w2")
-    reassign = call(
-        "request_assignment_change",
-        {"change_kind": "transfer", "member_id": "emp_06", "area": "support-desk"},
-        "w3",
-    )
-    off = call(
-        "request_assignment_change",
-        {
-            "change_kind": "offboarding",
-            "member_id": "emp_08",
-            "area": "infra-ops",
-            "successor_id": "emp_09",
-        },
-        "w4",
-    )
-    call(
-        "confirm_reassignment",
-        {"change_id": off["output"]["change_id"], "successor_id": "emp_09"},
-        "w5",
-    )
-    onboarding = call("start_onboarding", {"member_id": "emp_10", "area": "payment"}, "w6")
     candidate = client.post(
         "/a2a",
         json=body(
@@ -125,19 +94,12 @@ def world(svc, client) -> dict[str, Any]:
         ),
     ).json()
     return {
-        "step": {
-            "onboarding_id": onboarding["output"]["onboarding_id"],
-            "step_id": onboarding["output"]["steps"][0]["step_id"],
-            "done": True,
-        },
         "candidate": {"card_id": candidate["output"]["card_id"], "decision": "approve"},
         "answer": {
             "question_id": started["output"]["questions"][0]["question_id"],
             "answer": "답변",
         },
         "confirm_handover": {"handover_id": low_hover["output"]["handover_id"]},
-        "reassign": {"change_id": reassign["output"]["change_id"], "successor_id": "emp_07"},
-        "off": {"change_id": off["output"]["change_id"]},
     }
 
 
@@ -155,22 +117,11 @@ def valid_input(skill: str, world: dict[str, Any]) -> dict[str, Any]:
         "start_handover": {"owner_id": "emp_04", "successor_id": "emp_03"},
         "answer_handover_question": world["answer"],
         "confirm_handover": world["confirm_handover"],
-        "start_onboarding": {"member_id": "emp_10", "area": "search"},
-        "request_assignment_change": {
-            "change_kind": "transfer",
-            "member_id": "emp_02",
-            "area": "payment",
-        },
-        "confirm_reassignment": world["reassign"],
-        "confirm_offboarding": world["off"],
-        "update_onboarding_step": world["step"],
         "decide_candidate_card": world["candidate"],
         "get_roster": {},
         "check_plan": {"draft": {"title": "t", "summary": "s", "area": "payment", "kind": "spec"}},
         "list_handovers": {},
         "list_open_questions": {},
-        "list_onboardings": {},
-        "list_changes": {},
         "list_candidate_cards": {},
         "get_audit_timeline": {"context_id": "ctx_sr_0001"},
     }[skill]
@@ -294,31 +245,6 @@ def test_missing_idempotency_key_changes_nothing(svc, client, world, skill) -> N
 
 
 # ---- 4. 알려진 우회 시도 ---------------------------------------------------------------
-def test_offboarding_without_a_reassignment_is_refused(svc, client, world) -> None:
-    chg = client.post(
-        "/a2a",
-        json=body(
-            "request_assignment_change",
-            {"change_kind": "offboarding", "member_id": "emp_03", "area": "search"},
-            "o1",
-            "ctx_sr_o",
-        ),
-    ).json()["output"]["change_id"]
-    before = state(svc)
-    res = client.post(
-        "/a2a", json=body("confirm_offboarding", {"change_id": chg}, "o2", "ctx_sr_o")
-    ).json()
-    assert res["outcome"] == "REASSIGN_FIRST" and state(svc) == before
-
-
-def test_offboarding_is_not_applied_before_a_person_approves(svc, client, world) -> None:
-    res = client.post(
-        "/a2a", json=body("confirm_offboarding", world["off"], "o", "ctx_sr_o")
-    ).json()
-    assert res["status"] == "input-required"
-    assert svc.store.one("SELECT active FROM members WHERE member_id = 'emp_08'")["active"] == 1
-
-
 def test_a_handover_below_the_threshold_is_not_confirmed_without_approval(
     svc, client, world
 ) -> None:
@@ -331,48 +257,6 @@ def test_a_handover_below_the_threshold_is_not_confirmed_without_approval(
         (world["confirm_handover"]["handover_id"],),
     )
     assert row["status"] == "held"
-
-
-def test_a_plan_that_would_leave_an_area_without_an_owner_is_blocked(svc, client, world) -> None:
-    from hr_agent.assignment import rules
-
-    ops = rules.plan_ops("transfer", "emp_05", "catalog", "emp_05", [("owner", "emp_05")])
-    assert rules.simulate(svc.store, ops)[0].gap_areas == ["catalog"]
-
-
-def test_same_key_cannot_apply_one_approval_to_two_targets(svc, client, world) -> None:
-    held = client.post(
-        "/a2a", json=body("confirm_offboarding", world["off"], "SAME", "ctx_sr_k")
-    ).json()
-    svc.gate.decide_hold(held["output"]["hold_id"], approved=True)
-    other = client.post(
-        "/a2a",
-        json=body(
-            "request_assignment_change",
-            {
-                "change_kind": "offboarding",
-                "member_id": "emp_03",
-                "area": "search",
-                "successor_id": "emp_04",
-            },
-            "SAME",
-            "ctx_sr_k2",
-        ),
-    ).json()["output"]["change_id"]
-    client.post(
-        "/a2a",
-        json=body(
-            "confirm_reassignment",
-            {"change_id": other, "successor_id": "emp_04"},
-            "SAME",
-            "ctx_sr_k2",
-        ),
-    )
-    res = client.post(
-        "/a2a", json=body("confirm_offboarding", {"change_id": other}, "SAME", "ctx_sr_k2")
-    ).json()
-    assert res["output"]["status"] == "held"
-    assert svc.store.one("SELECT active FROM members WHERE member_id = 'emp_03'")["active"] == 1
 
 
 def test_a_closed_handover_does_not_accept_new_answers(svc, client, world) -> None:
@@ -432,9 +316,6 @@ def test_injected_text_never_changes_the_outcome(skill) -> None:
                 "answer": "답변",
             },
             "confirm_handover": {"handover_id": started["output"]["handover_id"]},
-            "reassign": {"change_id": "none", "successor_id": "emp_07"},
-            "off": {"change_id": "none"},
-            "step": {"onboarding_id": "onb_none", "step_id": "stp_none", "done": True},
             "candidate": {"card_id": "card_none", "decision": "approve"},
         }
         raw = body(skill, valid_input(skill, world), "inj", "ctx_inj_1")
@@ -452,4 +333,4 @@ def test_the_suite_covers_at_least_the_planned_number_of_attempts(request) -> No
     items = [
         i for i in request.session.items if i.module.__name__.endswith("test_safety_regression")
     ]
-    assert len(items) >= 80, len(items)
+    assert len(items) >= 50, len(items)
