@@ -6,7 +6,7 @@
 
 데모 정렬: 분석 구간이 `seed.DEMO_ALIGN_FROM` 이후면(시연처럼 지금 시각을 물으면) 날짜 제한 없이
 같은 시간대 패턴으로 점을 만들고(7일 기준선), 장애를 [anchor, anchor + 장애 길이)에 둔다.
-anchor는 처음 정렬 요청의 분석 구간 시작이며 프로세스 안에서 기억한다(`demo_anchor`).
+anchor는 impact_analysis가 정하고 지표는 읽기만 한다(`demo_anchor`). anchor가 없으면 정상 값이다.
 """
 
 from __future__ import annotations
@@ -75,18 +75,18 @@ def _analysis_start(window_from: datetime, window_to: datetime) -> datetime:
 
 
 def demo_incident(
-    window_from: datetime, window_to: datetime, *, starts_incident: bool = True
+    window_from: datetime, window_to: datetime, *, starts_incident: bool = False
 ) -> tuple[datetime, datetime] | None:
     """데모 정렬 때의 장애 구간 [anchor, anchor + 장애 길이).
 
-    분석 구간이 `DEMO_ALIGN_FROM` 전이면 None(고정 시드 그대로)이다. anchor는 프로세스 안에서
-    기억한다(`demo_anchor`): 처음 정렬 요청의 분석 구간 시작이 anchor가 되고 이후 요청은 같은 값을
-    쓴다. `starts_incident=False`면 anchor를 만들지 않고 읽기만 하며, 없으면 장애가 없다.
+    분석 구간이 `DEMO_ALIGN_FROM` 전이면 None(고정 시드 그대로)이다. 기본은 저장된 anchor를 읽기만
+    하고, 없으면 장애가 없다(빈 구간). `starts_incident=True`면 impact_analysis와 같은 규칙으로
+    분석 구간 시작을 anchor로 정한다(지표만으로 시연·테스트할 때).
     """
     start = _analysis_start(window_from, window_to)
     if start < DEMO_ALIGN_FROM:
         return None
-    anchor = demo_anchor.anchor_for(start) if starts_incident else demo_anchor.current()
+    anchor = demo_anchor.anchor_for(start, window_to) if starts_incident else demo_anchor.current()
     if anchor is None:
         return (start, start)  # 빈 구간: 장애 없음
     return anchor, anchor + demo_anchor.incident_length()
@@ -95,11 +95,12 @@ def demo_incident(
 class MockMetricSource:
     """`MetricSource` 목 구현. 5분 간격 점을 [window_from, window_to) 범위로 돌려준다.
 
-    `starts_incident=False`(감시 루프용)면 데모 anchor를 만들거나 갱신하지 않는다. 그래서 감시만
-    켜 둔 동안에는 장애가 생기지 않고, 시연 요청이 anchor를 만들면 그 장애를 한 번 감지한다.
+    기본(`starts_incident=False`)은 데모 anchor를 만들거나 갱신하지 않고 읽기만 한다. anchor는
+    impact_analysis가 정하므로 감시 루프나 복구 확인이 장애를 새로 만들지 않는다.
+    `starts_incident=True`면 지표 요청도 anchor를 정한다(지표만으로 시연·테스트할 때).
     """
 
-    def __init__(self, *, starts_incident: bool = True) -> None:
+    def __init__(self, *, starts_incident: bool = False) -> None:
         self.starts_incident = starts_incident
 
     async def fetch(

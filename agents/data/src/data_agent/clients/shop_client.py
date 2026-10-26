@@ -23,15 +23,15 @@ class ShopClient(Protocol):
     async def list_failed_orders(self, query: ShopFailedOrdersQuery) -> ShopFailedOrdersResult: ...
 
 
-def demo_shift(window_from: datetime) -> timedelta:
+def demo_shift(window_from: datetime, window_to: datetime | None = None) -> timedelta:
     """시드 장애 시작을 데모 anchor로 옮길 거리. `DEMO_ALIGN_FROM` 전 구간은 0(고정 날짜)이다.
 
-    anchor는 프로세스 안에서 기억한다(`demo_anchor`). 처음 정렬 요청의 구간 시작이 anchor가 되고,
-    이후 요청(롤백 뒤 구간 등)은 같은 anchor를 쓴다.
+    데모 anchor는 이 경로(impact_analysis)만 정한다(`demo_anchor.anchor_for`). 저장된 장애와 겹치는
+    구간은 같은 사건이라 기존 anchor를, 장애가 끝난 뒤 시작하는 구간은 새 사건이라 새 anchor를 쓴다.
     """
     if window_from < DEMO_ALIGN_FROM:
         return timedelta(0)
-    return demo_anchor.anchor_for(window_from) - INCIDENT_FROM
+    return demo_anchor.anchor_for(window_from, window_to) - INCIDENT_FROM
 
 
 def _demo_order(order: FailedOrder, shift: timedelta) -> FailedOrder:
@@ -50,7 +50,7 @@ class MockShopClient:
     """
 
     async def list_failed_orders(self, query: ShopFailedOrdersQuery) -> ShopFailedOrdersResult:
-        shift = demo_shift(query.from_)
+        shift = demo_shift(query.from_, query.to)
         seeds = [_demo_order(o, shift) if shift else o for o in SEED_FAILED_ORDERS]
         orders = [
             o

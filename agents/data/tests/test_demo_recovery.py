@@ -144,10 +144,11 @@ def test_reset_starts_new_anchor() -> None:
 
 def test_anchor_expires_after_idle(clock: _Clock) -> None:
     _impact()
-    clock.now += timedelta(minutes=59)  # 마지막 요청 뒤 59분: 유지 (요청이 시각을 갱신)
+    # 마지막 anchor 요청 뒤 59분: 유지 (지표 읽기는 시각을 갱신하지 않는다)
+    clock.now += timedelta(minutes=59)
     _anomaly(OPENED_AT, OPENED_AT + timedelta(minutes=5))
     assert demo_anchor.current() == WINDOW_FROM
-    clock.now += timedelta(minutes=60)  # 마지막 요청 뒤 60분: 만료
+    clock.now += timedelta(minutes=60)  # 마지막 anchor 요청 뒤 60분 넘음: 만료
     assert demo_anchor.current() is None
     new_from = WINDOW_FROM + timedelta(hours=2)
     out = _impact(new_from, new_from + timedelta(minutes=30))
