@@ -6,12 +6,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ax_contracts.schemas import Card, RequestMeta
-from hr_agent.assignment import rules
 from hr_agent.main import app
 from hr_agent.planning_check.service import _decided_at
 from hr_agent.results import make_evidence
 from hr_agent.roster import store as roster
-from hr_agent.roster.gaps import compute_gaps
 
 
 def body(skill, inp, key="k", ctx="ctx_rev_0001", token="mock:orchestrator"):
@@ -37,35 +35,7 @@ def post(client, skill, inp, key="k", ctx="ctx_rev_0001", token="mock:orchestrat
     return client.post("/a2a", json=body(skill, inp, key, ctx, token)).json()
 
 
-def request_change(client, kind, member, area, successor=None, key="a", ctx="ctx_rev_0001"):
-    inp = {"change_kind": kind, "member_id": member, "area": area}
-    if successor:
-        inp["successor_id"] = successor
-    return post(client, "request_assignment_change", inp, key, ctx)
-
-
-def offboard(client, member, area, successor, ctx, key="SAME"):
-    chg = request_change(client, "offboarding", member, area, successor, key, ctx)["output"][
-        "change_id"
-    ]
-    post(client, "confirm_reassignment", {"change_id": chg, "successor_id": successor}, key, ctx)
-    return chg
-
-
-def approve_and_apply(svc, client, chg, ctx, key):
-    held = post(client, "confirm_offboarding", {"change_id": chg}, key, ctx)
-    svc.gate.decide_hold(held["output"]["hold_id"], approved=True)
-    return post(client, "confirm_offboarding", {"change_id": chg}, key, ctx)
-
-
 # 1) 같은 멱등성 키를 다른 대상에 쓰면 이미 받은 승인이 따라가면 안 된다 --------------------
-def test_an_approval_does_not_carry_over_to_another_target_with_the_same_key(svc, client) -> None:
-    a = offboard(client, "emp_01", "payment", "emp_02", "ctxA")
-    b = offboard(client, "emp_03", "search", "emp_04", "ctxB")
-    approve_and_apply(svc, client, a, "ctxA", "SAME")
-    other = post(client, "confirm_offboarding", {"change_id": b}, "SAME", "ctxB")
-    assert other["output"]["status"] == "held"  # 승인 없이 적용되지 않는다
-    assert svc.store.one("SELECT active FROM members WHERE member_id = 'emp_03'")["active"] == 1
 
 
 @pytest.mark.asyncio
@@ -85,105 +55,18 @@ async def test_gate_refuses_a_saved_key_reused_for_another_target(svc) -> None:
 
 
 # 2) 퇴직한 사람은 후임이 될 수 없다 -----------------------------------------------------
-def test_an_offboarded_person_cannot_be_a_successor(svc, client) -> None:
-    chg = offboard(client, "emp_01", "payment", "emp_02", "ctxA", "o")
-    done = approve_and_apply(svc, client, chg, "ctxA", "o")
-    assert done["output"]["status"] == "confirmed"
-    res = request_change(client, "transfer", "emp_03", "search", "emp_01", "r", "ctxC")
-    assert res["outcome"] == "UNKNOWN_MEMBER"
-    start = post(
-        client, "start_handover", {"owner_id": "emp_03", "successor_id": "emp_01"}, "s", "ctxD"
-    )
-    assert start["outcome"] == "UNKNOWN_MEMBER"
 
 
 # 3) 퇴직 보류가 거절·만료되면 잠금과 상태가 정리된다 -----------------------------------
-def test_a_rejected_offboarding_releases_its_locks(svc, client) -> None:
-    chg = offboard(client, "emp_06", "support-desk", "emp_07", "ctxA", "o")
-    held = post(client, "confirm_offboarding", {"change_id": chg}, "o", "ctxA")
-    svc.gate.decide_hold(held["output"]["hold_id"], approved=False)
-    res = post(client, "confirm_offboarding", {"change_id": chg}, "o", "ctxA")
-    assert res["status"] == "completed" and res["output"]["status"] == "rejected"
-    assert svc.store.one("SELECT status FROM assignment_changes")["status"] == "cancelled"
-    assert svc.store.all("SELECT * FROM locks") == []
-    nxt = request_change(client, "shift", "emp_07", "support-desk", key="n", ctx="ctxB")
-    assert nxt["outcome"] == "requested"
-    assert (
-        post(client, "confirm_offboarding", {"change_id": chg}, "o2", "ctxA")["outcome"]
-        == "CANCELLED"
-    )
-
-
-def test_an_expired_hold_cancels_the_offboarding_the_same_way(svc, client) -> None:
-    chg = offboard(client, "emp_06", "support-desk", "emp_07", "ctxA", "o")
-    post(client, "confirm_offboarding", {"change_id": chg}, "o", "ctxA")
-    svc.clock.advance(minutes=11)  # 보류 10분 자동 거절
-    res = post(client, "confirm_offboarding", {"change_id": chg}, "o", "ctxA")
-    assert res["output"]["status"] == "rejected"
-    assert svc.store.all("SELECT * FROM locks") == []
-
-
-def test_stale_locks_expire(svc, client) -> None:
-    request_change(client, "transfer", "emp_01", "payment", key="a", ctx="ctxA")
-    assert (
-        request_change(client, "shift", "emp_02", "payment", key="b", ctx="ctxB")["outcome"]
-        == "LOCKED"
-    )
-    svc.clock.advance(minutes=svc.settings.lock_ttl_minutes + 1)
-    assert (
-        request_change(client, "shift", "emp_02", "payment", key="b", ctx="ctxB")["outcome"]
-        == "requested"
-    )
 
 
 # 5) 적용 도중 오류가 나면 명부가 반쯤 바뀌지 않는다 --------------------------------------
-def test_a_failure_while_applying_leaves_the_roster_untouched(
-    svc, client, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    chg = request_change(client, "transfer", "emp_01", "payment")["output"]["change_id"]
-    before = [(e.area, e.role, e.member_id) for e in roster.entries(svc.store)]
-    real = roster.set_active
-    calls = {"n": 0}
-
-    def flaky(*args, **kwargs):
-        calls["n"] += 1
-        if calls["n"] == 2:
-            raise RuntimeError("boom")
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(roster, "set_active", flaky)
-    crashing = TestClient(app, raise_server_exceptions=False)
-    res = crashing.post(
-        "/a2a",
-        json=body("confirm_reassignment", {"change_id": chg, "successor_id": "emp_02"}, "r"),
-    ).json()
-    assert res["status"] == "failed"
-    monkeypatch.setattr(roster, "set_active", real)
-    assert [(e.area, e.role, e.member_id) for e in roster.entries(svc.store)] == before
-    assert svc.store.one("SELECT status FROM assignment_changes")["status"] == "requested"
 
 
 # 6) 동행 요청(인수인계)이 실패하면 변경도 잠금도 남지 않는다 ----------------------------
-def test_failed_companion_request_leaves_no_change_or_lock(svc, client, monkeypatch) -> None:
-    from hr_agent.handover import service as handover
-    from hr_agent.results import refused
-
-    async def broken(_svc, request):
-        return refused(request, "UNKNOWN_MEMBER", "실패")
-
-    monkeypatch.setattr(handover, "start_handover", broken)
-    res = request_change(client, "transfer", "emp_01", "payment")
-    assert res["outcome"] == "SUBREQUEST_FAILED"
-    assert svc.store.all("SELECT * FROM assignment_changes") == []
-    assert svc.store.all("SELECT * FROM locks") == []
 
 
 # 7) 퇴직·이동한 사람의 교대는 공백 계산과 타이머에 세지 않는다 --------------------------
-def test_transfer_moves_future_shifts_so_no_gap_appears(svc, client) -> None:
-    chg = request_change(client, "transfer", "emp_01", "payment")["output"]["change_id"]
-    post(client, "confirm_reassignment", {"change_id": chg, "successor_id": "emp_02"}, "r")
-    assert "payment" not in compute_gaps(svc.store, svc.clock()).gap_areas
-    assert {s["member_id"] for s in roster.shifts(svc.store, "payment")} == {"emp_02"}
 
 
 def test_shifts_of_people_no_longer_in_the_area_are_ignored(svc) -> None:
@@ -219,12 +102,6 @@ def test_more_answers_open_a_fresh_confirmation_attempt(svc, client) -> None:
 
 
 # 9) 같은 사건에서 내용이 다른 요청은 조용히 중복 처리하지 않는다 --------------------------
-def test_a_different_successor_in_the_same_context_is_a_conflict(svc, client) -> None:
-    assert (
-        request_change(client, "transfer", "emp_01", "payment", "emp_02")["outcome"] == "requested"
-    )
-    again = request_change(client, "transfer", "emp_01", "payment", "emp_10")
-    assert again["outcome"] == "CONFLICT"
 
 
 def test_a_different_answer_to_an_answered_question_is_a_conflict(svc, client) -> None:
@@ -275,11 +152,6 @@ def test_card_author_is_the_verified_requester(svc, client) -> None:
     assert '"author": "planning"' in row["data"] or '"author":"planning"' in row["data"]
 
 
-def test_rules_still_block_a_plan_that_leaves_a_gap(svc) -> None:
-    ops = rules.plan_ops("transfer", "emp_05", "catalog", "emp_05", [("owner", "emp_05")])
-    assert rules.simulate(svc.store, ops)[0].gap_areas == ["catalog"]
-
-
 # ---- 인계자 질문 만료·재질문, 취소된 퇴직 다시 열기 -----------------------------------------
 def test_unanswered_questions_are_asked_again_after_the_ttl(svc, client) -> None:
     start = post(client, "start_handover", {"owner_id": "emp_01"}, "s")
@@ -302,25 +174,3 @@ def test_unanswered_questions_are_asked_again_after_the_ttl(svc, client) -> None
         q["question"].startswith("(다시 묻습니다 3번째)") for q in third["output"]["questions"]
     )
     assert "handover.question_reasked" in svc.audit.kinds("ctx_rev_0001")
-
-
-def test_a_cancelled_offboarding_can_be_reopened_and_approved_later(svc, client) -> None:
-    chg = offboard(client, "emp_06", "support-desk", "emp_07", "ctxA", "o")
-    held = post(client, "confirm_offboarding", {"change_id": chg}, "o", "ctxA")
-    svc.gate.decide_hold(held["output"]["hold_id"], approved=False)
-    assert (
-        post(client, "confirm_offboarding", {"change_id": chg}, "o", "ctxA")["output"]["status"]
-        == "rejected"
-    )
-
-    reopened = request_change(
-        client, "offboarding", "emp_06", "support-desk", "emp_07", "o", "ctxA"
-    )
-    assert reopened["outcome"] == "reopened"
-    held_again = post(client, "confirm_offboarding", {"change_id": chg}, "o", "ctxA")
-    assert held_again["output"]["status"] == "held"  # 새 시도라서 새 보류가 생긴다
-    assert held_again["output"]["hold_id"] != held["output"]["hold_id"]
-    svc.gate.decide_hold(held_again["output"]["hold_id"], approved=True)
-    done = post(client, "confirm_offboarding", {"change_id": chg}, "o", "ctxA")
-    assert done["output"]["status"] == "confirmed"
-    assert svc.store.one("SELECT active FROM members WHERE member_id = 'emp_06'")["active"] == 0

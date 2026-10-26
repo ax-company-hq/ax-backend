@@ -18,6 +18,7 @@ from ax_shop_api.service import ShopError
 DEFAULT_URL = "http://127.0.0.1:8000"
 TIMEOUT_SECONDS = 5.0
 CONTEXT_ID = re.compile(r"^ctx_inc_[0-9a-f]{1,32}$")
+WINDOW_KEYS = ("window_seconds", "bucket_seconds")
 TRANSPORT: httpx.AsyncBaseTransport | None = None  # 테스트에서 바꿀 수 있다
 
 
@@ -61,6 +62,19 @@ async def incident(context_id: str) -> tuple[Any, dict[str, Any]]:
     return body["data"], _meta(body)
 
 
-def _meta(body: dict[str, Any]) -> dict[str, Any]:
+async def departments() -> tuple[Any, dict[str, Any]]:
+    """부서 카드·사용량. 총괄이 센 값을 그대로 전달한다(값을 만들거나 바꾸지 않는다)."""
+    body = await _get("/api/departments")
+    return body["data"], _meta(body, WINDOW_KEYS)
+
+
+def _meta(body: dict[str, Any], numbers: tuple[str, ...] = ()) -> dict[str, Any]:
     meta = body.get("meta")
-    return {"mock": bool(meta.get("mock"))} if isinstance(meta, dict) and "mock" in meta else {}
+    if not isinstance(meta, dict):
+        return {}
+    out: dict[str, Any] = {"mock": bool(meta["mock"])} if "mock" in meta else {}
+    for key in numbers:  # 화면이 집계 구간을 말할 때 쓰는 값만 숫자일 때 전달한다
+        value = meta.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            out[key] = value
+    return out

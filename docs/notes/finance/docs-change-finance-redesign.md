@@ -2,6 +2,8 @@
 
 담당: 태윤. 상태: **초안** (docs PR 전). 근거 설계: [2026-10-23-finance-redesign.md](2026-10-23-finance-redesign.md)
 
+- 2026-10-26: A-5·A-6(SCN-A 인수 기준)만 먼저 docs PR #393으로 열었다 (A-6의 "한도 초과"는 "기준 이상"으로 맞춤). 나머지 항목은 아직 docs PR 전.
+
 ## 목적
 
 재무 AI 재설계(쿠폰·환불 건별 재무 교차검증 `verify_amount` 삭제 → 두 액션 A 등급, 재무는 결산·대사·판매자 정산·예산·한도 정책·사후 감사 담당)는 기준 문서 `docs/requirements.md`, `docs/agent-common.md`와 다르게 동작한다.

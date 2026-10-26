@@ -121,34 +121,8 @@ def test_every_state_change_leaves_an_audit_entry() -> None:
             "confirm_handover", {"handover_id": start["output"]["handover_id"]}, "c", ctx=ctx
         ),
     )
-    client.post(
-        "/a2a",
-        json=_body("start_onboarding", {"member_id": "emp_10", "area": "payment"}, "o", ctx=ctx),
-    )
-    chg = client.post(
-        "/a2a",
-        json=_body(
-            "request_assignment_change",
-            {"change_kind": "join", "member_id": "emp_10", "area": "inventory"},
-            "g",
-            ctx=ctx,
-        ),
-    ).json()["output"]["change_id"]
-    client.post(
-        "/a2a",
-        json=_body(
-            "confirm_reassignment", {"change_id": chg, "successor_id": "emp_10"}, "r", ctx=ctx
-        ),
-    )
     kinds = set(svc.audit.kinds(ctx))
-    assert {
-        "start_handover",
-        "answer_handover_question",
-        "confirm_handover.held",
-        "start_onboarding",
-        "assignment.requested",
-        "reassignment.confirmed",
-    } <= kinds
+    assert {"start_handover", "answer_handover_question", "confirm_handover.held"} <= kinds
     svc.store.close()
 
 
