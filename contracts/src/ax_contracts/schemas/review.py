@@ -12,6 +12,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from ax_contracts.schemas.common import AxModel
+from ax_contracts.schemas.execute import HoldReason
 from ax_contracts.schemas.message import Evidence
 
 
@@ -20,8 +21,10 @@ class ActionReviewInput(AxModel):
 
     - `execution_id`: 안전 레이어의 보류 건
     - `requester`: 일을 한 에이전트
-    - `params`: `execute()`에 보낸 params 그대로
-    - `hold_reasons`: 걸린 규칙 키 (`HoldReason` 값)
+    - `params`: `execute()`에 보낸 params 그대로.
+      요청 쪽 데이터(`summary` 등)라 판정 근거로 쓰지 않는다
+    - `hold_reason`: 보류 사유 하나 (`HoldReason`)
+    - `rule_keys`: 보류 기록 `rules`에 걸린 규칙 키 (`spec_open_question`, `base_grade` 등)
     """
 
     execution_id: str
@@ -29,7 +32,8 @@ class ActionReviewInput(AxModel):
     requester: str
     params: dict[str, Any] = Field(default_factory=dict)
     evidence: Evidence = Field(default_factory=Evidence)
-    hold_reasons: list[str] = Field(default_factory=list)
+    hold_reason: HoldReason
+    rule_keys: list[str] = Field(default_factory=list)
 
 
 class ActionReviewOutput(AxModel):
