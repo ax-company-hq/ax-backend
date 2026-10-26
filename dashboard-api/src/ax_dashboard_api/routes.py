@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Query
 from ax_contracts.schemas.hr import (
     AnswerHandoverQuestionOutput,
     AuditEntry,
+    ChangeStatus,
     CheckPlanInput,
     CheckPlanOutput,
     DecideCandidateCardOutput,
@@ -49,6 +50,7 @@ from ax_dashboard_api.schemas import (
     InspectionBody,
     Kpi,
     NoteBody,
+    OnboardingStepBody,
     QueueProcessBody,
     ReviewStatusBody,
     StatusBody,
@@ -425,6 +427,31 @@ async def decide_candidate_card(card_id: str, body: CandidateDecisionBody) -> di
         "decide_candidate_card", payload, target=f"card:{card_id}:{body.decision}"
     )
     return ok(DecideCandidateCardOutput.model_validate(out))
+
+
+# ------------------- 폐기 예정: 온보딩·발령 (hr에서 기능을 뺐다, #374·#377)
+# 경로를 지우면 깨지는 변경(`contracts-compat`)이라 응답만 바꿔 두고, 프론트(인사 화면)가 쓰지
+# 않게 된 뒤 따로 지운다. hr에는 이 skill이 없으니 부르지 않는다. 쿼리·본문 모양은 그대로 둔다.
+RETIRED_MESSAGE = "온보딩·발령 기능은 인사 에이전트에서 빠졌다. 이 경로는 폐기 예정이다"
+
+
+@router.get("/onboardings")
+async def onboardings(member_id: str | None = None, area: str | None = None) -> dict:
+    return ok([], total=0)
+
+
+@router.post("/onboardings/{onboarding_id}/steps/{step_id}")
+async def update_onboarding_step(
+    onboarding_id: str, step_id: str, body: OnboardingStepBody
+) -> dict:
+    raise ApiError(410, "ENDPOINT_RETIRED", RETIRED_MESSAGE)
+
+
+@router.get("/assignment-changes")
+async def assignment_changes(
+    status: ChangeStatus | None = None, area: str | None = None, member_id: str | None = None
+) -> dict:
+    return ok([], total=0)
 
 
 @router.get("/roster")

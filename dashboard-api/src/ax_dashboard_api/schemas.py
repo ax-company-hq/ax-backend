@@ -489,3 +489,10 @@ class QueueProcessBody(BaseModel):
 
 class ReviewStatusBody(BaseModel):
     status: Literal["visible", "hidden"]
+
+
+class OnboardingStepBody(BaseModel):
+    """폐기된 온보딩 단계 경로의 요청 본문. 응답은 항상 410이라 값은 쓰지 않는다 (경로를 지우면
+    깨지는 변경이라, 프론트가 쓰지 않게 된 뒤 따로 지운다)."""
+
+    done: bool = True
