@@ -23,7 +23,6 @@ LogKind = Literal[
     "rejected",
     "memory_referenced",
     "event_published",
-    "llm_call",
 ]
 
 
