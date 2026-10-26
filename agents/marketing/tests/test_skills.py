@@ -365,3 +365,71 @@ def test_republishing_the_same_resolved_draft_keeps_one_notice() -> None:
     first = _publish(RESOLVED_INPUT)
     assert _publish(RESOLVED_INPUT) == first
     assert _status(opened) == "ended" and _status(first) == "published"
+
+
+def _active(**input) -> dict:
+    return _call("list_active_notices", input, token="mock:support")["output"]
+
+
+def _ids(listing: dict) -> list[str]:
+    return [item["notice_id"] for item in listing["items"]]
+
+
+def test_list_active_notices_returns_published_newest_first() -> None:
+    first = _publish(DRAFT_INPUT)
+    product = _publish({"kind": "product_created", "facts": {"product_id": "prd_0001"}})
+    listing = _active()
+    assert _ids(listing) == [product, first]
+    assert listing["total"] == 2 and listing["unknown_reason"] is None
+    assert listing["items"][1]["promises"][0]["amount"] == 2000  # 사실·약속도 함께 준다
+
+
+def test_list_active_notices_filters_by_component_and_channel() -> None:
+    payment = _publish(DRAFT_INPUT)
+    _publish({"kind": "product_created", "facts": {"product_id": "prd_0001"}})
+    assert _ids(_active(component="payment")) == [payment]
+    assert _active(component="db")["items"] == []
+    assert _active(channel_code="sns")["items"] == []
+
+
+def test_list_active_notices_leaves_out_ended_and_unpublished() -> None:
+    opened = _publish(DRAFT_INPUT)
+    _call("draft_notice", {"kind": "product_created", "facts": {"product_id": "prd_0002"}})
+    assert _ids(_active()) == [opened]  # 초안은 게시 전이라 보이지 않는다
+    resolved = _publish(RESOLVED_INPUT)
+    assert _ids(_active()) == [resolved]  # 장애 공지는 복구 공지로 끝났다
+
+
+def test_list_active_notices_respects_valid_period() -> None:
+    now = datetime.now(UTC)
+    upcoming = _publish({**DRAFT_INPUT, "valid_from": (now + timedelta(hours=1)).isoformat()})
+    _publish(
+        {
+            "kind": "product_created",
+            "facts": {"product_id": "prd_0003"},
+            "valid_to": (now - timedelta(hours=1)).isoformat(),
+        }
+    )
+    assert _active()["items"] == []  # 하나는 아직 시작 전, 하나는 이미 끝났다
+    later = _active(at=(now + timedelta(hours=2)).isoformat())
+    assert _ids(later) == [upcoming]
+
+
+def test_list_active_notices_empty_gives_reason_and_limit_keeps_total() -> None:
+    empty = _active()
+    assert empty["items"] == [] and empty["total"] == 0 and empty["unknown_reason"]
+    for n in range(3):
+        _publish({"kind": "product_created", "facts": {"product_id": f"prd_{n:04d}"}})
+    capped = _active(limit=2)
+    assert len(capped["items"]) == 2 and capped["total"] == 3
+
+
+def test_list_active_notices_is_read_only_and_for_listed_requesters() -> None:
+    _publish(DRAFT_INPUT)
+    before = _active()
+    assert _call("list_active_notices", {}, token="mock:hr")["outcome"] == "FORBIDDEN_SKILL"
+    assert _active() == before
+    assert load_card().skills[0].id  # 카드가 읽힌다
+    card = {skill.id: skill for skill in load_card().skills}
+    assert card["list_active_notices"].grade == "read"
+    assert card["list_active_notices"].allowed_requesters == ["support", "finance", "orchestrator"]

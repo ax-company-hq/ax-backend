@@ -128,6 +128,7 @@ def scenario_a() -> Plan:
                 "점검 공지 게시 (marketing)",
                 after=("notice",),
                 build=_publish_notice,
+                keep={"notice_id": "notice_id"},
             ),
             Step(
                 "loss",
@@ -157,6 +158,7 @@ def scenario_a() -> Plan:
                 "정상화 공지 (marketing)",
                 after=("recovered_draft",),
                 build=_recovered_notice,
+                keep={"notice_id": "recovered_notice_id"},
             ),
             Step(
                 "record",

@@ -194,6 +194,14 @@ owner = "memory"
 requesters = ["hr"]
 base_grade = "A"
 
+# ---- 변경 요청 결과 받기 (#280·#292). planning이 요청을 닫을 때 보낸 결과를 요청 부서가 자기 기록에 반영한다
+# 상태 변경은 요청 부서 쪽 기록뿐이고 돈·외부 시스템을 건드리지 않아 A. 멱등성 키 ctx_req_…:change_result:REQ-n
+[[actions]]
+action = "receive_change_result"
+owner = "support"
+requesters = ["support", "hr", "data"]
+base_grade = "A"
+
 # ---- 기획개발 (예진). 검증자 = 안전 레이어 코드 규칙(변경 크기·허용 경로, thresholds.toml)
 [[actions]]
 action = "generate_pr"
