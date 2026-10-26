@@ -147,6 +147,7 @@ def test_data_access_example() -> None:
 
 
 def test_id_prefixes() -> None:
+    assert IdPrefix.BUYER == "buy_"
     assert IdPrefix.CARD == "card_"
     assert IdPrefix.CLAIM == "clm_"
     assert {p.value for p in ContextPrefix} == {"ctx_inc_", "ctx_req_", "ctx_ntc_", "ctx_cmp_"}

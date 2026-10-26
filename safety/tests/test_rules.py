@@ -138,3 +138,38 @@ def test_paths_avoid_rule_needs_protected() -> None:
     assert rule.paths_protected(
         ["shop-web/src/lib/auth.tsx", ".github/workflows/ci.yml", "shop-web/src/pages/Home.tsx"]
     ) == ["shop-web/src/lib/auth.tsx", ".github/workflows/ci.yml"]
+
+
+def test_on_verify_reject_hold_only_on_rollback() -> None:
+    """검증자 거절 → 사람 보류는 롤백만. 쿠폰 등은 기본값(reject) 유지 (팀 결정 12)."""
+    registry = load_registry()
+    holds = {spec.action for spec in registry.actions if spec.on_verify_reject == "hold"}
+    assert holds == {"rollback_deployment"}
+    assert registry.get("issue_coupon").on_verify_reject == "reject"  # type: ignore[union-attr]
+
+
+def test_on_verify_reject_is_validated() -> None:
+    with pytest.raises(ValueError):
+        ActionSpec(
+            action="x",
+            owner="infra",
+            base_grade="B",
+            verifier="planning",
+            verify_skill="v",
+            on_verify_reject="queue",
+        )  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="에이전트 검증자"):  # 검증자 없는 액션에는 못 쓴다
+        ActionSpec(action="x", owner="infra", base_grade="A", on_verify_reject="hold")
+    with pytest.raises(ValueError, match="에이전트 검증자"):  # 코드 규칙 검증자에도 못 쓴다
+        ActionSpec(
+            action="x", owner="infra", base_grade="B", verifier="safety", on_verify_reject="hold"
+        )
+    spec = ActionSpec(
+        action="x",
+        owner="infra",
+        base_grade="B",
+        verifier="planning",
+        verify_skill="v",
+        on_verify_reject="hold",
+    )
+    assert spec.on_verify_reject == "hold"

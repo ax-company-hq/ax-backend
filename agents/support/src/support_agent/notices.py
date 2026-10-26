@@ -1,7 +1,8 @@
-"""마케팅 `get_notice`로 공지 사실을 읽어 답변 근거로 바꾼다.
+"""마케팅 공지를 읽어 답변 근거로 바꾼다.
 
-공지를 읽는 유일한 경로가 `get_notice`다. 공지 본문·사실·약속은 마케팅이 준 값 그대로 쓰고,
-찾지 못하면(`found=false`·통신 실패) 근거를 만들지 않는다 ("확인할 수 없음").
+공지 번호를 알면 `get_notice`, 모르면 `list_active_notices`(지금 게시 중인 공지 찾기)로 읽는다.
+공지 본문·사실·약속은 마케팅이 준 값 그대로 쓰고, 찾지 못하면(`found=false`·빈 목록·통신 실패)
+근거를 만들지 않는다 ("확인할 수 없음").
 """
 
 from __future__ import annotations
@@ -16,6 +17,9 @@ from support_agent.schemas import Source
 logger = logging.getLogger("ax.support.notices")
 
 SendFn = Callable[[str, AgentRequest], Awaitable[AgentResult]]
+
+INCIDENT_CONTEXT_PREFIX = "ctx_inc_"
+MAX_ACTIVE_SOURCES = 3  # 게시 중인 공지가 많아도 근거로 쓰는 것은 최근 몇 건뿐이다
 
 
 def to_source(view: dict[str, Any]) -> Source | None:
@@ -56,3 +60,41 @@ async def fetch_source(request: AgentRequest, notice_id: str, send: SendFn) -> S
     if reply.status != TaskStatus.COMPLETED:
         return None
     return to_source(reply.output)
+
+
+async def fetch_active_sources(
+    request: AgentRequest,
+    send: SendFn,
+    component: str | None = None,
+    limit: int = MAX_ACTIVE_SOURCES,
+) -> list[Source]:
+    """지금 게시 중인 공지를 `notice_id` 없이 찾아 근거로 돌려준다 (최근 게시 순, 최대 `limit`건).
+
+    없거나 마케팅에 닿지 못하면 근거 없음이다. 끝난 공지·시작 전 공지는 마케팅이 뺀다.
+    """
+    payload: dict[str, Any] = {"limit": limit}
+    if component is not None:
+        payload["component"] = component
+    notice_request = AgentRequest(
+        meta=request.meta.model_copy(update={"idempotency_key": None}),
+        skill="list_active_notices",
+        input=payload,
+    )
+    try:
+        reply = await send("marketing", notice_request)
+    except Exception:
+        logger.warning("list_active_notices 호출 실패", exc_info=True)
+        return []
+    if reply.status != TaskStatus.COMPLETED:
+        return []
+    items = reply.output.get("items")
+    if not isinstance(items, list):
+        return []
+    sources: list[Source] = []
+    for item in items:
+        source = to_source(item) if isinstance(item, dict) else None
+        if source is not None and all(source.id != known.id for known in sources):
+            sources.append(source)
+        if len(sources) >= limit:
+            break
+    return sources

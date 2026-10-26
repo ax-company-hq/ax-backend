@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from datetime import datetime, timedelta
 from typing import Any
 
 from ax_contracts.schemas import EventEnvelope, EventType
 from ax_orchestrator.engine import Engine
 from ax_orchestrator.models import Incident, Plan, iso
 
+LOOKBACK = timedelta(minutes=15)  # 사건이 열리기 직전 실패 주문·문의도 같은 사건으로 본다
 INCIDENT_EVENTS = {EventType.SHOP_DEGRADED, EventType.INFRA_ANOMALY_DETECTED}
 SEVERITY_OPENS = {"high", "critical"}
 SUPPORT_EVENTS = {EventType.SUPPORT_INQUIRY_RECEIVED, EventType.SUPPORT_INQUIRY_SURGE}
@@ -53,6 +55,28 @@ class IncidentManager:
             (i for i in self.incidents.values() if i.status == "open" and i.component == component),
             None,
         )
+
+    def find_active(self, component: str | None, occurred_at: datetime | None) -> Incident | None:
+        """문의·주문 시각에 해당하는 사건 하나를 찾는다 (`find_active_incident`, #272).
+
+        시각이 없으면 열린 사건만 본다. 시각이 있으면 사건 구간(시작 15분 전 ~ 종료)에
+        들어오는 사건을 본다. 열린 사건이 먼저이고, 그다음은 최근에 열린 순서다.
+        """
+        found = [
+            inc
+            for inc in self.incidents.values()
+            if (component is None or inc.component == component) and self._covers(inc, occurred_at)
+        ]
+        found.sort(key=lambda inc: (inc.status != "open", -inc.opened_at.timestamp()))
+        return found[0] if found else None
+
+    @staticmethod
+    def _covers(inc: Incident, occurred_at: datetime | None) -> bool:
+        if occurred_at is None:
+            return inc.status == "open"
+        if occurred_at < inc.opened_at - LOOKBACK:
+            return False
+        return inc.closed_at is None or occurred_at <= inc.closed_at
 
     async def handle(self, env: EventEnvelope) -> Incident | None:
         """이벤트 하나를 처리한다. 새로 연 사건 또는 합쳐진 사건을 돌려준다."""

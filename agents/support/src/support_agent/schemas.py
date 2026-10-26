@@ -155,6 +155,8 @@ class CreateInquiryInput(AxModel):
     order_id: EntityId | None = None
     order_no: str | None = None
     notice_id: str | None = None  # 문의가 가리키는 공지. 있으면 마케팅 get_notice로 사실을 읽는다
+    # 공지 번호를 모를 때 찾을 구성요소. 이게 있거나 사건(ctx_inc_) 요청이면 게시 중인 공지를 찾는다
+    notice_component: Literal["api", "db", "payment"] | None = None
 
 
 class AddCustomerMessageInput(AxModel):
@@ -162,6 +164,7 @@ class AddCustomerMessageInput(AxModel):
 
     inquiry_id: int
     notice_id: str | None = None
+    notice_component: Literal["api", "db", "payment"] | None = None  # CreateInquiryInput과 같다
     user_id: int | None = None  # shop-api는 필수: 이 고객의 문의에만 메시지를 덧붙일 수 있다
 
 
