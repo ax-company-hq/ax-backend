@@ -59,6 +59,7 @@ class NoticeStore:
         self._published: dict[str, tuple[str, NoticeDraft]] = {}  # notice_id → (context_id, draft)
         self._by_draft: dict[str, str] = {}
         self._ended: set[str] = set()
+        self._published_at: dict[str, datetime] = {}
         self._counter = itertools.count(1)
 
     def save_draft(self, draft: NoticeDraft) -> None:
@@ -76,6 +77,7 @@ class NoticeStore:
                 if earlier_context == context_id and earlier.kind == "incident_opened":
                     self._ended.add(earlier_id)
         self._published[notice_id] = (context_id, draft)
+        self._published_at[notice_id] = self.now()
         self._by_draft[draft.draft_id] = notice_id
         return notice_id
 
@@ -116,10 +118,12 @@ class NoticeStore:
         found = self._published.get(notice_id)
         if found is None:
             return NoticeView(found=False, unknown_reason="게시된 공지를 찾을 수 없음")
-        _, draft = found
+        context_id, draft = found
         return NoticeView(
             found=True,
             notice_id=notice_id,
+            context_id=context_id,
+            published_at=self._published_at[notice_id],
             status=self._status(notice_id, draft, at),
             channel_code=draft.channel_code,
             public_text=draft.public_text,

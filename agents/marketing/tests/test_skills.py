@@ -433,3 +433,41 @@ def test_list_active_notices_is_read_only_and_for_listed_requesters() -> None:
     card = {skill.id: skill for skill in load_card().skills}
     assert card["list_active_notices"].grade == "read"
     assert card["list_active_notices"].allowed_requesters == ["support", "finance", "orchestrator"]
+
+
+def test_notice_view_carries_its_incident_and_publish_time() -> None:
+    fixed = datetime(2026, 10, 26, 3, 0, tzinfo=UTC)
+    handlers.STATE.notices.now = lambda: fixed
+    opened = _publish(DRAFT_INPUT)
+    other = _publish(DRAFT_INPUT, context_id="ctx_inc_0002")
+    view = _call("get_notice", {"notice_id": opened}, token=SUPPORT)["output"]
+    assert view["context_id"] == CTX
+    assert datetime.fromisoformat(view["published_at"]) == fixed
+    assert _call("get_notice", {"notice_id": other}, token=SUPPORT)["output"]["context_id"] == (
+        "ctx_inc_0002"
+    )
+
+
+def test_active_listing_shows_incident_and_publish_time() -> None:
+    _publish(DRAFT_INPUT, context_id="ctx_inc_0002")
+    mine = _publish({**DRAFT_INPUT, "facts": {"component": "db"}})
+    items = _active()["items"]
+    assert [item["context_id"] for item in items] == [CTX, "ctx_inc_0002"]
+    assert all(item["published_at"] for item in items)
+    assert [item["notice_id"] for item in items if item["context_id"] == CTX] == [mine]
+
+
+def test_republishing_the_same_draft_keeps_the_first_publish_time() -> None:
+    first = datetime(2026, 10, 26, 3, 0, tzinfo=UTC)
+    handlers.STATE.notices.now = lambda: first
+    notice_id = _publish(DRAFT_INPUT)
+    handlers.STATE.notices.now = lambda: first + timedelta(hours=1)
+    assert _publish(DRAFT_INPUT) == notice_id
+    view = _call("get_notice", {"notice_id": notice_id}, token=SUPPORT)["output"]
+    assert datetime.fromisoformat(view["published_at"]) == first
+
+
+def test_unknown_notice_has_no_incident_or_publish_time() -> None:
+    missing = _call("get_notice", {"notice_id": "ntc_9999"}, token=SUPPORT)["output"]
+    assert missing["found"] is False
+    assert missing["context_id"] is None and missing["published_at"] is None
