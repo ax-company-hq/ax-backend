@@ -213,11 +213,11 @@ async def loss_aggregation(request: AgentRequest) -> AgentResult:
         ["compensation"] if comp is None else []
     )
     if comp is None:
-        coupon_line = "보상 쿠폰: 확인할 수 없음(이벤트 버스·안전 관문 실행 기록 모두 없음)"
+        coupon_line = "보상 쿠폰: 확인할 수 없음(이벤트 알림·안전 장치 실행 기록 모두 없음)"
     else:
         coupon_line = f"보상 쿠폰 {count}장 {_won(paid or 0)}"
     if impact is None:
-        impact_line = "영향 수치: 확인할 수 없음(data 영향 분석 응답 없음)"
+        impact_line = "영향 수치: 확인할 수 없음(데이터 AI 영향 분석 응답 없음)"
     else:
         impact_line = (
             f"실패 주문 {impact.failed_orders}건, 영향 고객 {impact.affected_customers}명, "

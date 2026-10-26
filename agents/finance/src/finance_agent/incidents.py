@@ -35,6 +35,13 @@ INCIDENT_PREFIX = "ctx_inc_"
 PER_CUSTOMER_KEY = "compensation_per_customer"
 PER_INCIDENT_KEY = "compensation_per_context"
 RECHECK_FAILURES = {"amount_mismatch", "invalid_params"}
+# 사람이 읽는 문장(title·detail)에 쓰는 쉬운 말. 코드는 `code`·`ledger_source`·`missing`에만 둔다.
+LEDGER_SOURCE_KO = {
+    lg.LEDGER_EVENTS: "이벤트 알림",
+    lg.LEDGER_SAFETY: "안전 장치 실행 기록",
+    lg.LEDGER_SEED: "예시 데이터",
+}
+MISSING_KO = {"damage_amount": "피해 금액", "compensation_total": "보상 합계"}
 
 
 # ---------------------------------------------------------------- 한도
@@ -172,7 +179,11 @@ async def incident_view(
     elif not executed:
         ok, detail, refs = True, "실행된 보상 쿠폰 없음", []
     elif impact is None or not impact_ids or not buyers_known:
-        ok, detail, refs = None, "data 영향 고객 목록 또는 쿠폰 수령자를 확인할 수 없음", exe_refs
+        ok, detail, refs = (
+            None,
+            "데이터 AI 영향 고객 목록 또는 쿠폰 수령자를 확인할 수 없음",
+            exe_refs,
+        )
     else:
         outside = [r for r in executed if r["buyer_id"] not in impact_ids]
         ok = not outside
@@ -183,7 +194,9 @@ async def incident_view(
             else f"영향 고객이 아닌 {names}에게 보상 쿠폰"
         )
         refs = [str(r["execution_id"]) for r in outside]
-    checks.append(_check("recipients_in_impact", ok, "보상 받은 고객 ⊂ 영향 고객", detail, refs))
+    checks.append(
+        _check("recipients_in_impact", ok, "보상 받은 고객이 모두 영향 고객인지", detail, refs)
+    )
 
     if rows is None or (executed and not buyers_known):
         ok, detail, refs = None, "쿠폰 수령자를 확인할 수 없음", []
@@ -229,14 +242,14 @@ async def incident_view(
     # 단계
     report = state().ledger.loss_reports.get(context_id)
     if rows is None:
-        step9 = ("unavailable", "이벤트 버스·안전 관문 실행 기록을 모두 읽을 수 없음")
+        step9 = ("unavailable", "이벤트 알림·안전 장치 실행 기록을 모두 읽을 수 없음")
     elif executed or (totals and totals["count_held"]):
         assert totals is not None
         step9 = (
             "done",
             f"보상 쿠폰 {totals['count_executed']}장 {fc.won(totals['total_executed'])} 기록"
             + (f", 보류 {totals['count_held']}장" if totals["count_held"] else "")
-            + f" (출처 {ledger_source})",
+            + f" (출처: {LEDGER_SOURCE_KO.get(str(ledger_source), '확인할 수 없음')})",
         )
     else:
         step9 = ("waiting", "아직 보상 쿠폰 지급 기록 없음")
@@ -245,14 +258,17 @@ async def incident_view(
     elif report is None:
         step10 = ("waiting", "총괄의 손실 리포트 요청(장애 구간) 대기")
     else:
-        step10 = ("unavailable", f"확인할 수 없음: {', '.join(loss_missing)}")
+        step10 = (
+            "unavailable",
+            "확인할 수 없음: " + ", ".join(MISSING_KO.get(k, k) for k in loss_missing),
+        )
     check_values = [c["ok"] for c in checks]
     if not executed and rows is not None:
         step17 = ("waiting", "보상 쿠폰 지급 후 점검")
     elif None in check_values:
         step17 = ("unavailable", "근거 자료가 없어 확인할 수 없는 점검이 있음")
     else:
-        failed = [c["code"] for c in checks if c["ok"] is False]
+        failed = [c["title"] for c in checks if c["ok"] is False]
         step17 = ("done", "모든 점검 통과" if not failed else f"의심: {', '.join(failed)}")
     steps = [
         {"no": no, "title": title, "status": st[0], "detail": st[1]}

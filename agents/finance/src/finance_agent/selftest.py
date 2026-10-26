@@ -300,7 +300,7 @@ async def _module_checks() -> list[Check]:
         found = {f["code"] for f in report["findings"]}
         missing = sorted(AUDIT_CODES - found)
         return not missing, (
-            "쪼개기·반복 환불·중복 쿠폰·환불률 급변·재계산 실패·관문 보류 추이를 모두 잡음"
+            "쪼개기·반복 환불·중복 쿠폰·환불률 급변·재계산 실패·안전 장치 보류 추이를 모두 잡음"
             if not missing
             else f"못 잡은 규칙: {', '.join(missing)}"
         )

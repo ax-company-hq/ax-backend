@@ -492,6 +492,13 @@ def test_incident_detail_shape_matches_spec(mock_mode) -> None:
     ]
     for s in data["steps"]:
         assert set(s) == {"no", "title", "status", "detail"}
+    # 사람이 읽는 문장에는 영어 코드 대신 쉬운 말 (코드는 code·ledger_source에만)
+    assert (
+        "출처: 예시 데이터" in data["steps"][0]["detail"]
+        and "seed" not in data["steps"][0]["detail"]
+    )
+    for c in data["checks"]:
+        assert c["code"] not in c["title"] + c["detail"] and "⊂" not in c["title"]
 
 
 def test_unknown_incident_is_404(mock_mode) -> None:
@@ -573,6 +580,7 @@ def test_no_ledger_source_makes_everything_unknown(real_mode) -> None:
     assert data["compensation"]["total_executed"] is None and data["ledger_source"] is None
     assert all(c["ok"] is None for c in data["checks"])
     assert data["steps"][0]["status"] == "unavailable"
+    assert "안전 장치" in data["steps"][0]["detail"] and "관문" not in data["steps"][0]["detail"]
     assert incidents.checks_ok(data["checks"]) is None
 
 
@@ -628,6 +636,8 @@ def test_audit_compensation_outside_impact(kit) -> None:
     [found] = [f for f in data["findings"] if f["code"] == "compensation_outside_impact"]
     assert found["severity"] == "high" and "buy_0999" in found["detail"] and CTX in found["detail"]
     assert "buy_0888" not in found["detail"]
+    assert "데이터 AI 영향 고객" in found["detail"] and "data " not in found["detail"]
+    assert "compensation_outside_impact" not in found["title"] + found["detail"]
     assert found["refs"] == ["exe_2", "cpn_2"]
     assert data["findings"][0]["severity"] == "high"
     # 영향 분석이 없거나 lookup이 없으면 의심으로 만들지 않는다

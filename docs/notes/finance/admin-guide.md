@@ -88,7 +88,7 @@
 | --- | --- | --- |
 | ⑨ 쿠폰 장부 | 보상 쿠폰을 사건별로 기록. 이벤트 버스가 없으면(실제 모드) **안전 장치 실행 기록**의 `issue_coupon`(실행·보류·거절)으로 채움. 출처는 `ledger_source`(`events`·`safety_executions`·`seed`) | `GET /api/finance/incidents` |
 | ⑩ 손실 리포트 | 피해(데이터 AI 영향 분석 숫자 그대로) + 실행된 보상 = 총 손실. 장부를 못 읽으면 보상·총 손실은 "확인할 수 없음" | `loss_aggregation`, 상세 `loss` |
-| ⑰ 사건 후 감사 | 보상 받은 고객 ⊂ 영향 고객, 고객당 쿠폰 1건, 고객당 한도(기준표 `compensation_per_customer` 5만 원), 사건당 한도(`compensation_per_context` 100만 원), 금액 다시 계산 | `GET /api/finance/incidents/{context_id}`의 `checks` |
+| ⑰ 사건 후 감사 | 보상 받은 고객이 모두 영향 고객인지, 고객당 쿠폰 1건, 고객당 한도(기준표 `compensation_per_customer` 5만 원), 사건당 한도(`compensation_per_context` 100만 원), 금액 다시 계산 | `GET /api/finance/incidents/{context_id}`의 `checks` |
 
 - 점검 결과: 통과 / 의심(빨간색) / 확인할 수 없음(근거 자료 없음, 통과로 치지 않음)
 - 실제 모드에서 영향 수치는 총괄이 `loss_aggregation`으로 장애 구간을 보낸 뒤에 나옵니다(그 전에는 "손실 리포트 대기")

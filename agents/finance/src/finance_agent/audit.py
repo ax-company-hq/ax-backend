@@ -41,6 +41,8 @@ from finance_agent.sources import Impact
 
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 RECHECK_FAILURES = {"amount_mismatch", "exceeds_paid", "invalid_params"}
+# 사람이 읽는 문장(title·detail)에는 코드 대신 쉬운 말을 쓴다. 코드는 `code`·`refs`에만 둔다.
+ACTION_KO = {"issue_coupon": "쿠폰 지급", "refund_request": "환불"}
 
 
 class _BooksSource:
@@ -260,15 +262,19 @@ async def recheck_failures(books: Books, start, end) -> list[dict]:
             )
         elif result.reason_code == "amount_mismatch":
             detail = (
-                f"{_hhmm(e['created_at'])} {action} 요청 총액이 다시 계산한 금액 {rc}과 다릅니다"
+                f"{_hhmm(e['created_at'])} {ACTION_KO.get(str(action), '처리')} 요청 총액이 "
+                f"다시 계산한 금액 {fc.won(rc.get('total_value'))}과 다릅니다"
             )
         else:
-            detail = f"{_hhmm(e['created_at'])} {action} 금액 필드가 잘못되었습니다"
+            detail = (
+                f"{_hhmm(e['created_at'])} {ACTION_KO.get(str(action), '처리')} 요청의 "
+                "금액 값이 잘못되었습니다"
+            )
         out.append(
             _finding(
                 "amount_recheck_failed",
                 "high",
-                "관문을 통과한 금액이 다시 계산하면 틀림",
+                "안전 장치를 통과한 금액이 다시 계산하면 틀림",
                 detail,
                 [str(e.get("execution_id")), order_id or ""],
             )
@@ -296,8 +302,8 @@ def gate_trend(
             _finding(
                 "gate_hold_trend",
                 "medium",
-                "실행 관문 보류·거절 증가",
-                f"최근 {days}일 관문 보류 {len(held)}건·거절 {len(rejected)}건 "
+                "안전 장치 보류·거절 증가",
+                f"최근 {days}일 안전 장치 보류 {len(held)}건·거절 {len(rejected)}건 "
                 f"(지난 {days}일 {prev_count}건)",
                 [str(e.get("execution_id")) for e in held + rejected][:10],
             )
@@ -345,7 +351,7 @@ async def outside_impact(
                 "high",
                 f"영향 고객이 아닌 구매자에게 보상 쿠폰 {len(bad)}건",
                 f"사건 {ctx}: {', '.join(buyers)}에게 보상 쿠폰 {len(bad)}건 {fc.won(total)} "
-                f"(data 영향 고객 {len(impact.affected_customer_ids)}명 목록에 없음)",
+                f"(데이터 AI 영향 고객 {len(impact.affected_customer_ids)}명 목록에 없음)",
                 [str(e.get("execution_id")) for e in bad]
                 + [str(e.get("result_ref") or "") for e in bad],
             )

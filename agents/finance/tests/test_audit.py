@@ -64,6 +64,8 @@ def test_seed_triggers_every_finding_code(fixed_now) -> None:
     assert "결제 금액을 넘습니다" in recheck["detail"] and recheck["refs"][0].startswith("exe_")
     [trend] = found["gate_hold_trend"]
     assert "보류 3건·거절 1건" in trend["detail"] and "1건)" in trend["detail"]
+    assert trend["title"] == "안전 장치 보류·거절 증가" and "관문" not in trend["detail"]
+    assert "관문" not in recheck["title"]
 
 
 def test_seed_stats(fixed_now) -> None:
@@ -249,6 +251,26 @@ def test_amount_recheck_flags_exceeding_refund(kit, fixed_now) -> None:
     assert f["refs"] == ["exe_2", "ord_1"]  # 첫 환불은 맞고, 두 번째가 결제 금액을 넘음
     assert "이미 15,000원" in f["detail"]
     # 장애 보상 쿠폰은 사후에 피해 고객 자료가 없어도 금액만 맞으면 의심하지 않는다
+
+
+def test_coupon_recheck_detail_is_plain_korean(kit, fixed_now) -> None:
+    executions = [
+        {
+            "execution_id": "exe_9",
+            "created_at": kit.at("2026-10-22"),
+            "action": "issue_coupon",
+            "requester": "marketing",
+            "context_id": "ctx_mkt_9",
+            "params": {"count": 2, "unit_value": 5000, "total_value": 12000},
+            "status": "executed",
+            "computed_amount": 12000,
+        }
+    ]
+    found = _by_code(_report(kit.books(executions=executions))[0]["findings"])
+    [f] = found["amount_recheck_failed"]
+    assert f["refs"] == ["exe_9"]
+    assert "쿠폰 지급 요청 총액" in f["detail"] and "10,000원" in f["detail"]
+    assert "issue_coupon" not in f["detail"] and "{" not in f["detail"]
 
 
 def test_gate_trend_and_missing_executions(kit, fixed_now) -> None:
