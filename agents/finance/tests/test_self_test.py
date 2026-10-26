@@ -189,3 +189,114 @@ def test_last_result_expires_after_12_hours(monkeypatch: pytest.MonkeyPatch) -> 
 @pytest.mark.parametrize("bad", [{}, {"ran_at": "어제"}, {"ran_at": None}])
 def test_strange_timestamps_count_as_old(bad: dict) -> None:
     assert selftest.is_fresh(bad) is False
+
+
+def _fake_result(result: str = "pass") -> dict[str, Any]:
+    from datetime import UTC, datetime
+
+    return {
+        "result": result,
+        "summary": "ok",
+        "checks": [],
+        "passed": 0,
+        "total": 0,
+        "duration_ms": 1,
+        "ran_at": datetime.now(UTC).isoformat(),
+    }
+
+
+def test_manual_run_is_marked_manual_and_meta_shows_auto_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_run(*args: Any, **kwargs: Any) -> dict:
+        return _fake_result()
+
+    monkeypatch.setattr("finance_agent.main.run_self_test", fake_run)
+    client = TestClient(app)
+    assert client.get("/api/finance/self-test").json()["data"]["trigger"] == "manual"
+    body = client.get("/api/finance/self-test/last").json()
+    assert body["data"]["trigger"] == "manual"
+    assert body["meta"] == {"ttl_hours": 12, "interval_seconds": 0, "next_run_at": None}
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"), [(None, 600), ("", 600), ("0", 0), ("30", 30), ("-5", 0), ("x", 600)]
+)
+def test_self_test_interval_env(monkeypatch: pytest.MonkeyPatch, raw: str | None, expected: int):
+    from finance_agent import main
+
+    if raw is None:
+        monkeypatch.delenv("FINANCE_SELF_TEST_SECONDS", raising=False)
+    else:
+        monkeypatch.setenv("FINANCE_SELF_TEST_SECONDS", raw)
+    assert main.self_test_seconds() == expected
+
+
+@pytest.mark.asyncio
+async def test_loop_runs_repeatedly_and_survives_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """한 번 실패해도 루프는 계속 돌고, 결과는 trigger=auto로 남는다 (실제 시간을 기다리지 않음)."""
+    import asyncio
+
+    from finance_agent import main
+
+    calls: list[int] = []
+    done = asyncio.Event()
+
+    async def flaky_run(*args: Any, **kwargs: Any) -> dict:
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("boom")
+        if len(calls) >= 3:
+            done.set()
+        return _fake_result()
+
+    monkeypatch.setattr(main, "run_self_test", flaky_run)
+    task = asyncio.create_task(main.self_test_loop(0, first_delay=0))
+    await asyncio.wait_for(done.wait(), timeout=2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert len(calls) >= 3
+    assert handlers.state().last_self_test["trigger"] == "auto"
+    assert main.SELF_TEST_SCHEDULE["next_run_at"] is not None
+
+
+def test_lifespan_starts_auto_test_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    import time
+    from datetime import datetime
+
+    from finance_agent import main
+
+    async def fake_run(*args: Any, **kwargs: Any) -> dict:
+        return _fake_result("warn")
+
+    monkeypatch.setattr(main, "run_self_test", fake_run)
+    monkeypatch.setattr(main, "SELF_TEST_FIRST_DELAY", 0)
+    monkeypatch.setenv("FINANCE_SELF_TEST_SECONDS", "600")
+    with TestClient(app) as client:
+        body: dict = {}
+        for _ in range(200):
+            body = client.get("/api/finance/self-test/last").json()
+            if body["data"]:
+                break
+            time.sleep(0.01)
+        assert body["data"]["result"] == "warn" and body["data"]["trigger"] == "auto"
+        assert body["meta"]["interval_seconds"] == 600
+        next_run = datetime.fromisoformat(body["meta"]["next_run_at"])
+        assert next_run.tzinfo is not None
+    assert main.SELF_TEST_SCHEDULE == {"interval_seconds": 0, "next_run_at": None}
+
+
+def test_lifespan_does_not_start_auto_test_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    from finance_agent import main
+
+    async def fake_run(*args: Any, **kwargs: Any) -> dict:
+        raise AssertionError("자동 테스트가 꺼져 있어야 한다")
+
+    monkeypatch.setattr(main, "run_self_test", fake_run)
+    monkeypatch.setattr(main, "SELF_TEST_FIRST_DELAY", 0)
+    monkeypatch.setenv("FINANCE_SELF_TEST_SECONDS", "0")
+    with TestClient(app) as client:
+        meta = client.get("/api/finance/self-test/last").json()["meta"]
+        assert (meta["interval_seconds"], meta["next_run_at"]) == (0, None)
+        assert handlers.state().last_self_test is None

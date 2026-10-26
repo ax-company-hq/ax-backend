@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -10,6 +11,9 @@ import pytest
 
 from finance_agent import finance_config as fc
 from finance_agent.books import Books
+
+# 테스트에서는 재무 AI 자동 테스트(백그라운드 루프)를 끈다. 켜 보는 테스트는 monkeypatch로 직접 켠다
+os.environ["FINANCE_SELF_TEST_SECONDS"] = "0"
 
 FIXED_NOW = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)  # 금요일. 지난주 = 2026-W42 (10-12~10-18)
 

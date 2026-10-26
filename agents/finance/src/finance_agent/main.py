@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import os
 import re
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any, Literal
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +33,12 @@ DECISION_PATHS = re.compile(
 )
 
 logger = logging.getLogger("ax.finance")
+
+# 재무 AI 테스트 자동 실행: 서버가 켜지고 잠시 뒤 한 번, 그다음 `FINANCE_SELF_TEST_SECONDS`마다
+DEFAULT_SELF_TEST_SECONDS = 600
+SELF_TEST_FIRST_DELAY = 5.0
+SELF_TEST_SCHEDULE: dict[str, Any] = {"interval_seconds": 0, "next_run_at": None}
+Trigger = Literal["auto", "manual"]
 
 
 def _card_path() -> Path:
@@ -61,6 +72,59 @@ def subscribe_events() -> bool:
         return False
     EVENTS["connected"] = True
     return True
+
+
+def self_test_seconds() -> int:
+    """`FINANCE_SELF_TEST_SECONDS` (기본 600초). 0이면 자동 테스트를 끈다. 잘못된 값은 기본값."""
+    raw = os.getenv("FINANCE_SELF_TEST_SECONDS", "").strip()
+    if not raw:
+        return DEFAULT_SELF_TEST_SECONDS
+    try:
+        return max(int(raw), 0)
+    except ValueError:
+        logger.warning("FINANCE_SELF_TEST_SECONDS=%r는 숫자가 아니라 기본 600초를 쓴다", raw)
+        return DEFAULT_SELF_TEST_SECONDS
+
+
+async def run_and_store_self_test(trigger: Trigger) -> dict[str, Any]:
+    """재무 AI 테스트를 돌리고 `/api/finance/self-test/last`가 읽는 곳에 남긴다."""
+    result = await run_self_test(recompute)
+    result["trigger"] = trigger
+    state().last_self_test = result
+    return result
+
+
+async def self_test_loop(interval: float, first_delay: float = SELF_TEST_FIRST_DELAY) -> None:
+    """`first_delay`초 뒤 한 번, 그다음 `interval`초마다 자동 테스트. 한 번 실패해도 계속 돈다."""
+    delay = first_delay
+    while True:
+        SELF_TEST_SCHEDULE["next_run_at"] = (
+            datetime.now(UTC) + timedelta(seconds=delay)
+        ).isoformat()
+        await asyncio.sleep(delay)
+        try:
+            result = await run_and_store_self_test("auto")
+            logger.info("재무 AI 자동 테스트: %s (%s)", result["result"], result["summary"])
+        except Exception:  # 다음 회차는 그대로 돈다
+            logger.exception("재무 AI 자동 테스트 중 오류")
+        delay = interval
+
+
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """서버가 도는 동안 재무 AI 테스트를 주기적으로 돌린다 (`FINANCE_SELF_TEST_SECONDS=0`: 끔)."""
+    interval = self_test_seconds()
+    SELF_TEST_SCHEDULE.update(interval_seconds=interval, next_run_at=None)
+    loop = self_test_loop(interval, SELF_TEST_FIRST_DELAY) if interval else None
+    task = asyncio.create_task(loop) if loop else None
+    try:
+        yield
+    finally:
+        if task:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        SELF_TEST_SCHEDULE.update(interval_seconds=0, next_run_at=None)
 
 
 class DashboardCORS:
@@ -107,17 +171,27 @@ def add_read_api(app: FastAPI) -> None:
     @app.get("/api/finance/self-test")
     async def self_test() -> dict:
         """재무 AI 테스트 버튼: 가짜 자료로 판단 점검, 연결 확인. 상태를 바꾸지 않는다."""
-        result = await run_self_test(recompute)
-        state().last_self_test = result
+        result = await run_and_store_self_test("manual")
         return {"data": result, "meta": {}}
 
     @app.get("/api/finance/self-test/last")
     def last_self_test() -> dict:
-        """마지막 테스트 결과. 12시간이 지나면 지운다(아침마다 새로 테스트하도록)."""
+        """마지막 테스트 결과(자동·수동). 12시간이 지나면 지운다.
+
+        `meta.interval_seconds`는 지금 도는 자동 테스트 주기(0이면 꺼짐), `meta.next_run_at`은
+        다음 자동 실행 시각(UTC ISO, 꺼져 있으면 null).
+        """
         last = state().last_self_test
         if last and not is_fresh(last):
             state().last_self_test = last = None
-        return {"data": last, "meta": {"ttl_hours": SELF_TEST_TTL_HOURS}}
+        return {
+            "data": last,
+            "meta": {
+                "ttl_hours": SELF_TEST_TTL_HOURS,
+                "interval_seconds": SELF_TEST_SCHEDULE["interval_seconds"],
+                "next_run_at": SELF_TEST_SCHEDULE["next_run_at"],
+            },
+        }
 
     @app.get("/api/finance/market-ops")
     def market_ops() -> dict:
@@ -127,6 +201,7 @@ def add_read_api(app: FastAPI) -> None:
 
 def create_app() -> FastAPI:
     app = create_agent_app(load_card(), HANDLERS)
+    app.router.lifespan_context = lifespan
     app.add_middleware(DashboardCORS, origins=cors_origins())
     add_read_api(app)
     add_finance_api(app)
