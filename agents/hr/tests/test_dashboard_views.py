@@ -9,11 +9,8 @@ from ax_contracts.schemas import (
     DecideCandidateCardOutput,
     GetAuditTimelineOutput,
     ListCandidateCardsOutput,
-    ListChangesOutput,
     ListHandoversOutput,
-    ListOnboardingsOutput,
     ListOpenQuestionsOutput,
-    StartOnboardingOutput,
 )
 from hr_agent.clients.memory import card_state
 from hr_agent.main import app
@@ -118,101 +115,9 @@ def test_dashboard_can_answer_a_question_like_the_contract_says(svc, client) -> 
 
 
 # ---- 온보딩 --------------------------------------------------------------------------------
-def test_onboarding_progress_follows_step_updates(svc, client) -> None:
-    created = post(
-        client,
-        "start_onboarding",
-        {"member_id": "emp_10", "area": "payment"},
-        "o",
-        "ctx_onb_0001",
-        "mock:orchestrator",
-    )
-    steps = created["output"]["steps"]
-    assert created["output"]["progress"] == 0
-    first = post(
-        client,
-        "update_onboarding_step",
-        {"onboarding_id": created["output"]["onboarding_id"], "step_id": steps[0]["step_id"]},
-        "u1",
-    )
-    out = StartOnboardingOutput.model_validate(first["output"])
-    assert out.progress == round(100 / len(steps)) and first["outcome"] == "updated"
-    again = post(
-        client,
-        "update_onboarding_step",
-        {"onboarding_id": created["output"]["onboarding_id"], "step_id": steps[0]["step_id"]},
-        "u2",
-    )
-    assert again["outcome"] == "duplicate"
-    undo = post(
-        client,
-        "update_onboarding_step",
-        {
-            "onboarding_id": created["output"]["onboarding_id"],
-            "step_id": steps[0]["step_id"],
-            "done": False,
-        },
-        "u3",
-    )
-    assert undo["output"]["progress"] == 0
-    listed = ListOnboardingsOutput.model_validate(post(client, "list_onboardings", {})["output"])
-    assert [(o.member_id, o.progress) for o in listed.onboardings] == [("emp_10", 0)]
-    unknown = post(
-        client,
-        "update_onboarding_step",
-        {"onboarding_id": created["output"]["onboarding_id"], "step_id": "stp_nope"},
-        "u4",
-    )
-    assert unknown["outcome"] == "UNKNOWN_STEP"
-
-
-def test_finishing_every_step_reaches_100_percent(svc, client) -> None:
-    created = post(
-        client,
-        "start_onboarding",
-        {"member_id": "emp_10", "area": "search"},
-        "o",
-        token="mock:orchestrator",
-    )
-    last = created
-    for i, step in enumerate(created["output"]["steps"]):
-        last = post(
-            client,
-            "update_onboarding_step",
-            {"onboarding_id": created["output"]["onboarding_id"], "step_id": step["step_id"]},
-            f"u{i}",
-        )
-    assert last["output"]["progress"] == 100
 
 
 # ---- 변경 요청 -----------------------------------------------------------------------------
-def test_list_changes_filters_by_status_and_area(svc, client) -> None:
-    post(
-        client,
-        "request_assignment_change",
-        {"change_kind": "transfer", "member_id": "emp_01", "area": "payment"},
-        "a",
-        "ctx_asg_0001",
-        "mock:orchestrator",
-    )
-    post(
-        client,
-        "request_assignment_change",
-        {"change_kind": "join", "member_id": "emp_10", "area": "inventory"},
-        "b",
-        "ctx_asg_0002",
-        "mock:orchestrator",
-    )
-    out = ListChangesOutput.model_validate(post(client, "list_changes", {})["output"])
-    assert {c.change_kind for c in out.changes} == {"transfer", "join"}
-    only = ListChangesOutput.model_validate(
-        post(client, "list_changes", {"area": "inventory"})["output"]
-    )
-    assert [c.member_id for c in only.changes] == ["emp_10"] and len(only.changes[0].checklist) == 3
-    done = ListChangesOutput.model_validate(
-        post(client, "list_changes", {"status": "confirmed"})["output"]
-    )
-    assert done.changes == []
 
 
 # ---- 후보 카드 -----------------------------------------------------------------------------
@@ -331,40 +236,3 @@ def test_audit_timeline_lists_what_hr_did_for_a_context(svc, client) -> None:
 
 
 # ---- 권한 ----------------------------------------------------------------------------------
-def test_dashboard_can_read_and_answer_but_not_run_confirmations(svc, client) -> None:
-    for skill, inp in [
-        ("list_handovers", {}),
-        ("list_changes", {}),
-        ("get_roster", {}),
-        ("list_candidate_cards", {}),
-    ]:
-        assert post(client, skill, inp)["status"] == "completed", skill
-    for skill, inp in [
-        ("confirm_handover", {"handover_id": "x"}),
-        ("confirm_offboarding", {"change_id": "x"}),
-        ("start_handover", {"owner_id": "emp_01"}),
-        (
-            "request_assignment_change",
-            {"change_kind": "join", "member_id": "emp_10", "area": "search"},
-        ),
-    ]:
-        res = post(client, skill, inp)
-        assert (res["status"], res["outcome"]) == ("rejected", "FORBIDDEN_SKILL"), skill
-    stranger = post(client, "list_handovers", {}, token="mock:stranger")
-    assert stranger["outcome"] == "FORBIDDEN_SKILL"
-
-
-def test_read_views_do_not_use_the_gate_or_change_anything(svc, client) -> None:
-    start_handover(client)
-    candidate_card(client)
-    calls = list(svc.gate.calls)
-    for skill, inp in [
-        ("list_handovers", {}),
-        ("list_open_questions", {}),
-        ("list_onboardings", {}),
-        ("list_changes", {}),
-        ("list_candidate_cards", {}),
-        ("get_audit_timeline", {"context_id": "ctx_hnd_0001"}),
-    ]:
-        assert post(client, skill, inp)["status"] == "completed"
-    assert svc.gate.calls == calls

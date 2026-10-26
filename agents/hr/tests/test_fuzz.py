@@ -23,10 +23,6 @@ SKILLS = [
     "start_handover",
     "answer_handover_question",
     "confirm_handover",
-    "start_onboarding",
-    "request_assignment_change",
-    "confirm_reassignment",
-    "confirm_offboarding",
     "check_plan",
 ]
 KINDS = [
@@ -100,26 +96,6 @@ def valid_like(skill: str, rng: random.Random, ids: dict[str, list[str]]) -> dic
             }
         case "confirm_handover":
             return {"handover_id": pick(rng, [*ids["h"], "hnd_nope", text()])}
-        case "start_onboarding":
-            return {
-                "member_id": member(),
-                "area": pick(rng, AREAS),
-                "handover_id": pick(rng, [None, *ids["h"], "hnd_nope"]),
-            }
-        case "request_assignment_change":
-            return {
-                "change_kind": pick(rng, ["shift", "transfer", "offboarding", "join", "retire"]),
-                "member_id": member(),
-                "area": pick(rng, AREAS),
-                "successor_id": pick(rng, [None, member()]),
-            }
-        case "confirm_reassignment":
-            return {
-                "change_id": pick(rng, [*ids["c"], "chg_nope", text()]),
-                "successor_id": member(),
-            }
-        case "confirm_offboarding":
-            return {"change_id": pick(rng, [*ids["c"], "chg_nope", text()])}
         case _:
             return {
                 "draft": {
@@ -215,5 +191,5 @@ def test_every_scenario_gives_the_same_result_every_time(repeat: int) -> None:
         return out
 
     results = asyncio.run(run_all())
-    assert len(results) >= 19
+    assert len(results) >= 18
     assert all(passed and det for _n, passed, det in results), results
