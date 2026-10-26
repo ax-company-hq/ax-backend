@@ -5,14 +5,15 @@
 난수를 쓰지 않으므로 같은 입력이면 항상 같은 값이다.
 
 데모 정렬: 분석 구간이 `seed.DEMO_ALIGN_FROM` 이후면(시연처럼 지금 시각을 물으면) 날짜 제한 없이
-같은 시간대 패턴으로 점을 만들고(7일 기준선), 장애 구간 30분을 "분석 구간 시작"에 둔다.
-상태를 기억하지 않으므로 어떤 구간을 물어도 그 시작 30분이 장애다.
+같은 시간대 패턴으로 점을 만들고(7일 기준선), 장애를 [anchor, anchor + 장애 길이)에 둔다.
+anchor는 impact_analysis가 정하고 지표는 읽기만 한다(`demo_anchor`). anchor가 없으면 정상 값이다.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from data_agent import demo_anchor
 from data_agent.metrics.anomaly import BASELINE_DAYS
 from data_agent.seed import DEMO_ALIGN_FROM, INCIDENT_FROM, INCIDENT_TO
 
@@ -66,26 +67,41 @@ def _ceil_step(ts: datetime) -> datetime:
     return ts + (STEP - offset) if offset else ts
 
 
-def _floor_step(ts: datetime) -> datetime:
-    return ts - (ts - _EPOCH) % STEP
-
-
-def demo_incident(window_from: datetime, window_to: datetime) -> tuple[datetime, datetime] | None:
-    """데모 정렬 때의 장애 구간. 분석 구간이 `DEMO_ALIGN_FROM` 전이면 None(고정 시드 그대로)이다.
-
-    기준 시각은 분석 구간 시작이다. 기준선까지 한 번에 가져오는 요청(`anomaly_detection`,
-    `monitor`의 이력 조회)은 범위가 7일보다 길어서 시작 + 7일이 분석 구간 시작이다.
-    """
+def _analysis_start(window_from: datetime, window_to: datetime) -> datetime:
+    """기준선까지 한 번에 가져오는 요청(`anomaly_detection`, `monitor`의 이력 조회)은 범위가
+    7일보다 길어서 시작 + 7일이 분석 구간 시작이다."""
     baseline = timedelta(days=BASELINE_DAYS)
-    anchor = window_from + baseline if window_to - window_from > baseline else window_from
-    if anchor < DEMO_ALIGN_FROM:
+    return window_from + baseline if window_to - window_from > baseline else window_from
+
+
+def demo_incident(
+    window_from: datetime, window_to: datetime, *, starts_incident: bool = False
+) -> tuple[datetime, datetime] | None:
+    """데모 정렬 때의 장애 구간 [anchor, anchor + 장애 길이).
+
+    분석 구간이 `DEMO_ALIGN_FROM` 전이면 None(고정 시드 그대로)이다. 기본은 저장된 anchor를 읽기만
+    하고, 없으면 장애가 없다(빈 구간). `starts_incident=True`면 impact_analysis와 같은 규칙으로
+    분석 구간 시작을 anchor로 정한다(지표만으로 시연·테스트할 때).
+    """
+    start = _analysis_start(window_from, window_to)
+    if start < DEMO_ALIGN_FROM:
         return None
-    start = _floor_step(anchor)
-    return start, start + (INCIDENT_TO - INCIDENT_FROM)
+    anchor = demo_anchor.anchor_for(start) if starts_incident else demo_anchor.current()
+    if anchor is None:
+        return (start, start)  # 빈 구간: 장애 없음
+    return anchor, anchor + demo_anchor.incident_length()
 
 
 class MockMetricSource:
-    """`MetricSource` 목 구현. 5분 간격 점을 [window_from, window_to) 범위로 돌려준다."""
+    """`MetricSource` 목 구현. 5분 간격 점을 [window_from, window_to) 범위로 돌려준다.
+
+    기본(`starts_incident=False`)은 데모 anchor를 만들거나 갱신하지 않고 읽기만 한다. anchor는
+    impact_analysis가 정하므로 감시 루프나 복구 확인이 장애를 새로 만들지 않는다.
+    `starts_incident=True`면 지표 요청도 anchor를 정한다(지표만으로 시연·테스트할 때).
+    """
+
+    def __init__(self, *, starts_incident: bool = False) -> None:
+        self.starts_incident = starts_incident
 
     async def fetch(
         self, metric: str, window_from: datetime, window_to: datetime
@@ -93,7 +109,7 @@ class MockMetricSource:
         if metric not in _BASE:
             raise ValueError(f"unknown metric: {metric}")
         window_from, window_to = window_from.astimezone(UTC), window_to.astimezone(UTC)
-        incident = demo_incident(window_from, window_to)
+        incident = demo_incident(window_from, window_to, starts_incident=self.starts_incident)
         if incident is None:  # 고정 날짜 시드
             ts = _ceil_step(max(window_from, SERIES_START))
             end = min(window_to, SERIES_END)

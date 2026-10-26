@@ -2,7 +2,8 @@
 
 실제 부서 에이전트 없이 총괄을 끝까지 돌리기 위한 가짜 부서 7곳이다. 모든 값은 지어낸
 목 데이터이며 화면에도 목으로 표시된다. 각 (부서, skill)마다 동작을 스크립트로 지정할 수 있다:
-`ok` `fail` `timeout`(마감 초과) `forbidden`(소관 아님) `hold`(C 등급 보류) `dept_input`.
+`ok` `fail` `timeout`(마감 초과) `forbidden`(소관 아님) `hold`(C 등급 보류) `dept_input`,
+그리고 갈림길용 `undetermined`(원인 미확정)·`not_recovered`(복구 확인 실패).
 스크립트는 호출 순서대로 하나씩 소비되고, 비면 `ok`다.
 """
 
@@ -28,15 +29,19 @@ CARDS: dict[str, list[tuple[str, str, str | None]]] = {
         ("rollback_deployment", "B", "planning"),
         ("verify_recovery", "read", None),
     ],
-    "data": [("anomaly_detection", "read", None), ("impact_analysis", "read", None)],
+    "data": [
+        ("anomaly_detection", "read", None),
+        ("impact_analysis", "read", None),
+        ("kpi_summary", "read", None),
+    ],
     "planning": [
         ("find_related_prs", "read", None),
         ("link_incident", "A", None),
         ("verify_rollback_target", "read", None),
     ],
     "marketing": [("draft_notice", "read", None), ("publish_notice", "A", None)],
-    "support": [("send_reply", "A", None)],
-    "finance": [("loss_aggregation", "read", None)],
+    "support": [("send_reply", "A", None), ("request_incident_compensation", "A", None)],
+    "finance": [("loss_aggregation", "read", None), ("audit_report", "read", None)],
     "hr": [("record_case", "A", None)],
 }
 OWNERS = {
@@ -79,7 +84,7 @@ def _ok(**output: Any) -> dict[str, Any]:
     return output
 
 
-IDS = [f"cus_{i:03d}" for i in range(1, 88)]
+IDS = [f"buy_{i:04d}" for i in range(1, 88)]
 DEFAULT_OUTPUTS: dict[str, Callable[[AgentRequest], dict[str, Any]]] = {
     "diagnose_incident": lambda r: _ok(
         status="suspected",
@@ -120,6 +125,53 @@ DEFAULT_OUTPUTS: dict[str, Callable[[AgentRequest], dict[str, Any]]] = {
     ),
     "verify_recovery": lambda r: _ok(recovered=True, infra_metrics_ok=True),
     "record_case": lambda r: _ok(card_id="card_mock01"),
+    # 실제 고객지원 `IncidentCompensationOutput` 모양(고객마다 한 건씩 마케팅에 요청한 결과)
+    "request_incident_compensation": lambda r: _ok(
+        reason_code=r.input.get("reason_code", "payment_failure"),
+        unit_value=2000,
+        count=r.input.get("count", 1),
+        requested=len(r.input.get("buyer_ids", [])),
+        results=[
+            {"buyer_id": b, "status": "requested", "total_value": 2000}
+            for b in r.input.get("buyer_ids", [])
+        ],
+        stopped_early=False,
+        notes=[],
+    ),
+    # 실제 재무 `AuditReportOutput` 모양(문제가 없으면 findings는 빈 목록)
+    "audit_report": lambda r: _ok(
+        window_from="2026-10-09T00:00:00Z",
+        window_to="2026-10-16T00:00:00Z",
+        stats={"refund_count": 0, "refund_amount": 0, "coupon_count": 87, "coupon_amount": 174000},
+        findings=[],
+        unavailable=[],
+    ),
+    # 실제 데이터 `KpiSummaryOutput` 모양
+    "kpi_summary": lambda r: _ok(
+        incidents=[
+            {
+                "context_id": c,
+                "detected_at": "2026-10-16T01:00:00Z",
+                "mttr_seconds": 480,
+                "used_memory": False,
+            }
+            for c in r.input.get("context_ids", [])
+        ],
+        auto_handled_rate=1.0,
+        grade_counts={},
+        blocked_counts={},
+        escalation_count=0,
+    ),
+}
+
+# 계획대로 안 될 때(갈림길)를 보이려고 (skill, 동작 이름)마다 다른 결과를 낸다
+ALT_OUTPUTS: dict[tuple[str, str], Callable[[AgentRequest], dict[str, Any]]] = {
+    ("diagnose_incident", "undetermined"): lambda r: _ok(
+        status="undetermined", suspects=[], impact_scope=["payment"]
+    ),
+    ("verify_recovery", "not_recovered"): lambda r: _ok(
+        recovered=False, infra_metrics_ok=False, business_metrics_ok=None
+    ),
 }
 
 
@@ -185,5 +237,7 @@ class FakeDepartments:
                     "question": {"skill": "impact_analysis", "input": {}},
                 },
             )
-        build = DEFAULT_OUTPUTS.get(req.skill, lambda r: {})
+        build = ALT_OUTPUTS.get((req.skill, behavior)) or DEFAULT_OUTPUTS.get(
+            req.skill, lambda r: {}
+        )
         return AgentResult(meta=meta, status=TaskStatus.COMPLETED, output=build(req))

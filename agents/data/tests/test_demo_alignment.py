@@ -17,7 +17,7 @@ from ax_agent_template import events
 from ax_agent_template.llm import MockLLMClient
 from ax_contracts.data_access.shop_failed_orders import ShopFailedOrdersQuery
 from ax_contracts.schemas.data import AnomalyDetectionInput, ImpactAnalysisInput
-from data_agent import monitor, seed
+from data_agent import demo_anchor, monitor, seed
 from data_agent.clients.shop_client import MockShopClient, demo_shift
 from data_agent.impact import aggregate_impact
 from data_agent.metrics.anomaly import BASELINE_DAYS
@@ -102,15 +102,17 @@ def test_metric_incident_is_none_before_align_time() -> None:
 def test_metric_incident_anchors_on_analysis_start() -> None:
     """기준선까지 한 번에 가져와도(7일 넘는 범위) 장애는 분석 구간 시작에 놓인다."""
     start = datetime(2026, 10, 26, 2, 55, tzinfo=UTC)
-    short = demo_incident(start, start + timedelta(minutes=30))
-    long = demo_incident(start - timedelta(days=BASELINE_DAYS), start + timedelta(minutes=30))
-    assert short == long == (start, start + timedelta(minutes=30))
+    short = demo_incident(start, start + timedelta(minutes=30), starts_incident=True)
+    long = demo_incident(
+        start - timedelta(days=BASELINE_DAYS), start + timedelta(minutes=30), starts_incident=True
+    )
+    assert short == long == (start, start + demo_anchor.incident_length())
 
 
 def test_metric_series_has_seven_day_baseline() -> None:
     start = datetime(2026, 10, 26, 2, 55, tzinfo=UTC)
     history_from = start - timedelta(days=BASELINE_DAYS)
-    source = MockMetricSource()
+    source = MockMetricSource(starts_incident=True)
     points = asyncio.run(
         source.fetch("payment_fail_rate", history_from, start + timedelta(minutes=30))
     )
@@ -123,7 +125,9 @@ def test_metric_series_has_seven_day_baseline() -> None:
 
 def test_anomaly_detection_on_demo_window() -> None:
     data = AnomalyDetectionInput(window_from=WINDOW_FROM, window_to=WINDOW_TO)
-    result = asyncio.run(detect_anomalies(data, MockMetricSource(), MockLLMClient())).output
+    result = asyncio.run(
+        detect_anomalies(data, MockMetricSource(starts_incident=True), MockLLMClient())
+    ).output
     verdicts = {v.metric: v for v in result.verdicts}
     assert result.any_anomaly is True
     assert verdicts["payment_fail_rate"].is_anomaly is True
@@ -145,6 +149,6 @@ def _bus(monkeypatch):
 @pytest.mark.usefixtures("_bus")
 def test_monitor_emits_one_anomaly_on_demo_time() -> None:
     """감시는 최근 구간과 7일 이력을 따로 가져오지만 장애 위치가 같아 이벤트 1건만 낸다."""
-    out = asyncio.run(monitor.run_once(MockMetricSource(), OPENED_AT))
+    out = asyncio.run(monitor.run_once(MockMetricSource(starts_incident=True), OPENED_AT))
     assert len(out) == 1
     assert out[0].data["metric"] == "payment_fail_rate"

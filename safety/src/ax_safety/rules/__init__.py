@@ -49,7 +49,11 @@ class AmountSpec(_Strict):
 
 
 class ActionSpec(_Strict):
-    """`requesters`가 비어 있으면 `owner`만 요청할 수 있다."""
+    """`requesters`가 비어 있으면 `owner`만 요청할 수 있다.
+
+    `on_verify_reject`: 에이전트 검증자가 거절했을 때 처리. `reject`(기본)는 바로 `rejected`,
+    `hold`는 사람 보류 큐(C, `verify_rejected`)로 보낸다. 에이전트 검증자가 있을 때만 의미가 있다.
+    """
 
     action: str
     owner: str
@@ -60,6 +64,7 @@ class ActionSpec(_Strict):
     amount: AmountSpec | None = None
     customer_field: str | None = None
     purpose_field: str | None = None
+    on_verify_reject: Literal["reject", "hold"] = "reject"
 
     @property
     def allowed_requesters(self) -> list[str]:
@@ -77,6 +82,8 @@ class ActionSpec(_Strict):
             raise ValueError(f"{self.action}: 에이전트 검증자에는 verify_skill이 필요하다")
         if self.verifier is not None and self.verifier in self.allowed_requesters:
             raise ValueError(f"{self.action}: 자기 검증 금지 (verifier가 요청자에 있다)")
+        if self.on_verify_reject == "hold" and (not self.verifier or self.rules_verified):
+            raise ValueError(f"{self.action}: on_verify_reject=hold는 에이전트 검증자에만 쓴다")
         return self
 
 

@@ -25,6 +25,21 @@ SERVICE_FAULT_CODES = frozenset({"PG_UNAVAILABLE"})
 DECLINED_CODES = frozenset({"PG_DECLINED"})
 
 
+PAYMENT_FAILURE_REASON = "payment_failure"  # 보상 사유 코드 (`compensation.UNIT_VALUE_BY_REASON`)
+
+
+def server_fault_attempts(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """주문 기록에서 결제 서버 문제 코드(`PG_UNAVAILABLE`)로 실패한 결제 시도들.
+
+    카드 거절(`PG_DECLINED`) 같은 고객 쪽 실패는 서버 장애 보상 대상이 아니라서 넣지 않는다.
+    """
+    return [
+        p
+        for p in data.get("payments", [])
+        if p.get("status") == "failed" and p.get("failure_code") in SERVICE_FAULT_CODES
+    ]
+
+
 def _attempts(data: dict[str, Any]) -> list[PaymentAttemptOut]:
     return [
         PaymentAttemptOut(

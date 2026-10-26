@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from difflib import SequenceMatcher
+from functools import wraps
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
@@ -23,17 +24,22 @@ from ax_agent_template.execute import execute
 from ax_agent_template.server import error_result
 from ax_contracts.schemas import AgentRequest, AgentResult, Evidence, TaskStatus
 from support_agent import (
+    buyer_ids,
     compensation,
     drafting,
     events,
     guard,
+    incident_context,
     notices,
+    payment_handlers,
     persistence,
     secure_transfer,
+    shop_client,
 )
 from support_agent.schemas import (
     AddCustomerMessageInput,
     CheckReplyInput,
+    Conversation,
     CreateInquiryInput,
     GetInquiryInput,
     ListInquiriesInput,
@@ -172,14 +178,38 @@ async def summarize_inquiry(request: AgentRequest) -> AgentResult:
 
 
 # ---------------------------------------------------------------- 쓰기 (execute 경유)
-async def _notice_sources(request: AgentRequest, notice_id: str | None) -> list[Source]:
-    """문의가 공지를 가리키면 마케팅 `get_notice`로 읽는다. 못 읽으면 근거 없이 진행한다."""
-    if notice_id is None:
-        return []
-    source = await notices.fetch_source(request, notice_id, SEND)
-    return [source] if source else []
+async def _notice_sources(
+    request: AgentRequest, notice_id: str | None, component: str | None = None
+) -> list[Source]:
+    """문의가 공지를 가리키면 마케팅 `get_notice`로 읽고, 가리키지 않아도 사건 요청이나
+    구성요소를 받았으면 `list_active_notices`로 지금 게시 중인 공지를 찾는다.
+    못 읽으면 근거 없이 진행한다 (평소 문의마다 마케팅을 부르거나 오래된 공지를 인용하지 않는다).
+    """
+    if notice_id is not None:
+        source = await notices.fetch_source(request, notice_id, SEND)
+        return [source] if source else []
+    if component is not None or request.meta.context_id.startswith(notices.INCIDENT_CONTEXT_PREFIX):
+        return await notices.fetch_active_sources(request, SEND, component)
+    return []
 
 
+def _caller_meta(
+    handler: Callable[[AgentRequest], Awaitable[AgentResult]],
+) -> Callable[[AgentRequest], Awaitable[AgentResult]]:
+    """처리는 문의가 이어받은 사건 번호로 하되, 응답에는 호출한 쪽이 보낸 `meta` 그대로 싣는다.
+
+    서버는 응답의 `context_id`가 요청과 같아야 받아 주기 때문이다 (`incident_context.rebind`).
+    """
+
+    @wraps(handler)
+    async def wrapped(request: AgentRequest) -> AgentResult:
+        result = await handler(request)
+        return result.model_copy(update={"meta": request.meta})
+
+    return wrapped
+
+
+@_caller_meta
 async def create_inquiry(request: AgentRequest) -> AgentResult:
     parsed = _parse(request, CreateInquiryInput)
     if isinstance(parsed, AgentResult):
@@ -190,7 +220,17 @@ async def create_inquiry(request: AgentRequest) -> AgentResult:
     if message is None:
         return _missing_text(request, "message")
 
-    extra = await _notice_sources(request, parsed.notice_id)
+    key = request.meta.idempotency_key or (
+        f"{request.meta.context_id}:create_inquiry:user:{parsed.user_id}"
+    )
+    if key not in STORE.results:  # 같은 요청의 재전송은 처음 정한 결과를 그대로 쓴다
+        incident = await incident_context.resolve_for_order(
+            request, parsed.order_id, parsed.user_id, SEND
+        )
+        if incident is not None:
+            request = incident_context.rebind(request, incident)
+
+    extra = await _notice_sources(request, parsed.notice_id, parsed.notice_component)
 
     async def apply() -> tuple[dict[str, Any], bool]:
         analysis, fallback = await drafting.analyze(message, subject, extra)
@@ -213,6 +253,7 @@ async def create_inquiry(request: AgentRequest) -> AgentResult:
     )
 
 
+@_caller_meta
 async def add_customer_message(request: AgentRequest) -> AgentResult:
     parsed = _parse(request, AddCustomerMessageInput)
     if isinstance(parsed, AgentResult):
@@ -223,8 +264,9 @@ async def add_customer_message(request: AgentRequest) -> AgentResult:
     conversation = STORE.get(parsed.inquiry_id)
     if conversation is None or _not_owned(conversation, parsed.user_id):
         return _not_found(request, parsed.inquiry_id)
+    request = incident_context.follow_inquiry(request, conversation.context_id)
 
-    extra = await _notice_sources(request, parsed.notice_id)
+    extra = await _notice_sources(request, parsed.notice_id, parsed.notice_component)
 
     async def apply() -> tuple[dict[str, Any], bool]:
         analysis, fallback = await drafting.analyze(message, conversation.subject, extra)
@@ -241,6 +283,7 @@ async def add_customer_message(request: AgentRequest) -> AgentResult:
     )
 
 
+@_caller_meta
 async def send_reply(request: AgentRequest) -> AgentResult:
     """상담원이 확정한 답변을 고객에게 보낸다. 가드를 통과하지 못하면 보내지 않는다."""
     parsed = _parse(request, SendReplyInput)
@@ -249,8 +292,10 @@ async def send_reply(request: AgentRequest) -> AgentResult:
     text = _text(request, "text")
     if text is None:
         return _missing_text(request, "text")
-    if STORE.get(parsed.inquiry_id) is None:
+    conversation = STORE.get(parsed.inquiry_id)
+    if conversation is None:
         return _not_found(request, parsed.inquiry_id)
+    request = incident_context.follow_inquiry(request, conversation.context_id)
     validation = guard.check_reply(text)
     if not validation.passed:
         return _done(
@@ -314,12 +359,15 @@ async def reject_draft(request: AgentRequest) -> AgentResult:
     )
 
 
+@_caller_meta
 async def set_inquiry_status(request: AgentRequest) -> AgentResult:
     parsed = _parse(request, SetInquiryStatusInput)
     if isinstance(parsed, AgentResult):
         return parsed
-    if STORE.get(parsed.inquiry_id) is None:
+    conversation = STORE.get(parsed.inquiry_id)
+    if conversation is None:
         return _not_found(request, parsed.inquiry_id)
+    request = incident_context.follow_inquiry(request, conversation.context_id)
 
     async def apply() -> tuple[dict[str, Any], bool]:
         conversation = STORE.set_status(parsed.inquiry_id, parsed.status)
@@ -354,13 +402,18 @@ def _sequence_consumed(reply: AgentResult) -> bool:
             return False
 
 
+@_caller_meta
 async def request_compensation(request: AgentRequest) -> AgentResult:
     """보상 단가를 판정해 마케팅 `issue_coupon(compensation)`에 요청한다 (DEP-CS-02)."""
     parsed = _parse(request, RequestCompensationInput)
     if isinstance(parsed, AgentResult):
         return parsed
-    if STORE.get(parsed.inquiry_id) is None:
+    inquiry = STORE.get(parsed.inquiry_id)
+    if inquiry is None:
         return _not_found(request, parsed.inquiry_id)
+    request = incident_context.follow_inquiry(
+        request, inquiry.context_id
+    )  # 쿠폰 요청도 사건 번호로
 
     context_id = request.meta.context_id
     key = request.meta.idempotency_key or (
@@ -385,13 +438,58 @@ async def request_compensation(request: AgentRequest) -> AgentResult:
         LEDGER.results[key] = output
         return _done(request, output, outcome="not_eligible", evidence=evidence)
 
+    if parsed.reason_code == payment_handlers.PAYMENT_FAILURE_REASON:
+        blocked = await _unverified_payment_failure(request, inquiry, parsed.buyer_id, evidence)
+        if blocked is not None:
+            if blocked.outcome == "not_eligible":  # 일시 장애는 저장 안 함
+                LEDGER.results[key] = blocked.output
+            return blocked
+
     async with LEDGER.lock(context_id):  # 같은 사건의 요청은 한 건씩 (같은 번호를 읽는 경쟁 방지)
-        return await _request_coupon(request, parsed, decision, key, evidence)
+        return await _request_coupon(request, parsed.buyer_id, decision, key, evidence)
+
+
+async def _unverified_payment_failure(
+    request: AgentRequest, inquiry: Conversation, buyer_id: str, evidence: Evidence
+) -> AgentResult | None:
+    """결제 장애 보상은 그 고객의 주문에 결제 서버 문제로 실패한 기록이 있을 때만 요청한다.
+
+    재무 감사(`compensation_outside_impact`)가 영향 고객 밖의 보상을 잡으므로, 사유 코드만 믿지
+    않고 본인 주문의 결제 기록으로 확인한다. 확인이 되면 None, 안 되면 돌려줄 결과다.
+    기록을 읽지 못한 일시 장애는 `shop_unavailable`로 알리고 저장하지 않아 다시 요청할 수 있다.
+    """
+
+    def refuse(reason: str) -> AgentResult:
+        return _done(
+            request,
+            {"eligible": False, "reason": reason},
+            outcome="not_eligible",
+            evidence=evidence,
+        )
+
+    if not inquiry.order_id or not isinstance(inquiry.order_id, str):
+        return refuse("문의에 주문이 없어 결제 실패를 확인할 수 없다")
+    if shop_client.order_source() == "seed":
+        return refuse("주문 출처가 시드라 결제 실패를 확인할 수 없다")
+    try:
+        data = await shop_client.fetch_order_facts(inquiry.order_id)
+    except shop_client.ShopError as exc:
+        return error_result(request.meta, TaskStatus.FAILED, "shop_unavailable", str(exc))
+    owner = buyer_ids.from_number(inquiry.user_id) if inquiry.user_id is not None else None
+    if data is None or owner is None or data.get("buyer_id") != owner or buyer_id != owner:
+        return refuse("주문을 확인할 수 없다")  # 남의 주문·다른 구매자 여부를 알리지 않는다
+    faults = payment_handlers.server_fault_attempts(data)
+    if not faults:
+        return refuse("결제 서버 문제로 실패한 기록이 없다 (카드 거절 등은 보상 대상이 아니다)")
+    evidence.ref_ids.extend(
+        [f"order:{data['order_id']}"] + [f"payment:{p['payment_id']}" for p in faults]
+    )
+    return None
 
 
 async def _request_coupon(
     request: AgentRequest,
-    parsed: RequestCompensationInput,
+    buyer_id: str,
     decision: compensation.CompensationDecision,
     key: str,
     evidence: Evidence,
@@ -406,7 +504,7 @@ async def _request_coupon(
         skill="issue_coupon",
         input={
             "purpose_code": "compensation",
-            "buyer_id": parsed.buyer_id,
+            "buyer_id": buyer_id,
             "count": decision.count,
             "unit_value": decision.unit_value,
             "claimed_total": decision.total_value,
