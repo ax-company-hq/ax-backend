@@ -9,6 +9,10 @@
 data `impact_analysis`의 입력·출력은 계약(`ImpactAnalysisInput`·`ImpactAnalysisOutput`)으로
 만들고 확인한다.
 장애 구간(`window_from`·`window_to`)을 모르면 data에 묻지 않는다.
+
+장애 구간은 총괄 사건 목록(`GET /api/incidents`)을 읽기 전용으로 읽어서 안다
+(계약 `data_access/orchestrator_incidents.py`, [협업] #417 제안 A, 요청 #418).
+사건 **중**에 총괄을 부르는 게 아니다 — 평상시 사후 감사·사건 조회에서만 읽는다.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ from pydantic import ValidationError
 
 from ax_agent_template import call_agent
 from ax_agent_template.config import agent_url
+from ax_contracts.data_access.orchestrator_incidents import OrchestratorIncident
 from ax_contracts.schemas import (
     AgentRequest,
     ImpactAnalysisInput,
@@ -34,6 +39,9 @@ from ax_contracts.schemas import (
 
 DATA_CALL_SECONDS = 10.0
 SHOP_CALL_SECONDS = 5.0
+ORCHESTRATOR_CALL_SECONDS = 5.0
+# 총괄 사건 행에서 재무가 읽는 필드 ([협업] #417에서 합의한 다섯 개). 나머지 키는 보지 않는다
+INCIDENT_FIELDS = ("context_id", "component", "status", "opened_at", "closed_at")
 
 
 def order_key(order_id: object) -> str | None:
@@ -81,6 +89,8 @@ class Sources(Protocol):
     async def impact(
         self, meta: RequestMeta, context_id: str, window: dict[str, Any] | None
     ) -> Impact | None: ...
+
+    async def incident_window(self, context_id: str) -> dict[str, Any] | None: ...
 
     async def paid_amount(self, meta: RequestMeta, order_id: str) -> int | None: ...
 
@@ -141,6 +151,10 @@ class MockSources:
         row = self.seed.get("impacts", {}).get(context_id)
         return _impact_from(row, f"mock:impact:{context_id}") if row else None
 
+    async def incident_window(self, context_id: str) -> dict[str, Any] | None:
+        """목 모드는 장부 시드(`seed_incidents`)로 구간을 알아서 총괄을 읽지 않는다."""
+        return None
+
     async def paid_amount(self, meta: RequestMeta, order_id: str) -> int | None:
         return _int(self.seed.get("payments", {}).get(str(order_id)))
 
@@ -185,12 +199,11 @@ class LiveSources:
     def __init__(self, http_client: httpx.AsyncClient | None = None) -> None:
         self._http = http_client  # 테스트용
 
-    async def paid_amount(self, meta: RequestMeta, order_id: str) -> int | None:
-        """shop-api 주문 조회. 주문이 없거나(404) 응답이 없으면 None(승인 근거로 쓰지 않음)."""
-        url = f"{agent_url('shop-api')}/api/shop/orders/{order_id}"
+    async def _read_json(self, url: str, timeout: float) -> Any | None:
+        """읽기 전용 GET. 응답이 없거나 200이 아니거나 JSON이 아니면 None (fail-closed)."""
         client = self._http or httpx.AsyncClient()
         try:
-            response = await client.get(url, timeout=SHOP_CALL_SECONDS)
+            response = await client.get(url, timeout=timeout)
         except httpx.HTTPError:
             return None
         finally:
@@ -199,9 +212,46 @@ class LiveSources:
         if response.status_code != 200:
             return None
         try:
-            body = response.json()
+            return response.json()
         except ValueError:
             return None
+
+    async def incident_window(self, context_id: str) -> dict[str, Any] | None:
+        """총괄 사건 목록에서 이 사건의 구간·부품을 읽는다 (읽기 전용, 상태를 바꾸지 않음).
+
+        사건 중에 부르지 않는다 — 평상시 사후 감사·사건 조회 경로에서만 읽는다
+        ([협업] #417 제안 A, 요청 #418). 계약은 `data_access/orchestrator_incidents.py`.
+        못 받거나 형식이 다르거나 그 사건이 없으면 None(확인할 수 없음)이고 추정하지 않는다.
+        아직 열린 사건은 `window_to`가 None이라 구간이 되지 않는다(그때는 data에 묻지 않는다).
+        """
+        body = await self._read_json(
+            f"{agent_url('orchestrator')}/api/incidents", ORCHESTRATOR_CALL_SECONDS
+        )
+        rows = body.get("data") if isinstance(body, dict) else None
+        if not isinstance(rows, list):
+            return None
+        for row in rows:
+            if not isinstance(row, dict) or row.get("context_id") != context_id:
+                continue
+            try:  # 합의한 다섯 키만 골라 검증한다 (총괄 응답에는 다른 키도 들어 있다)
+                found = OrchestratorIncident.model_validate(
+                    {k: row[k] for k in INCIDENT_FIELDS if k in row}
+                )
+            except ValidationError:
+                return None
+            return {
+                "component": found.component,
+                "window_from": found.opened_at,
+                "window_to": found.closed_at,
+                "category": None,  # 총괄은 분류를 주지 않는다
+            }
+        return None
+
+    async def paid_amount(self, meta: RequestMeta, order_id: str) -> int | None:
+        """shop-api 주문 조회. 주문이 없거나(404) 응답이 없으면 None(승인 근거로 쓰지 않음)."""
+        body = await self._read_json(
+            f"{agent_url('shop-api')}/api/shop/orders/{order_id}", SHOP_CALL_SECONDS
+        )
         order = body.get("data") if isinstance(body, dict) else None
         return paid_total(order) if isinstance(order, dict) else None
 

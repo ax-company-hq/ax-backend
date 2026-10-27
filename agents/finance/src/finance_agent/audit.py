@@ -60,6 +60,10 @@ class _BooksSource:
     async def fraud_score(self, meta: RequestMeta, seller_id: str) -> int | None:
         return None
 
+    async def incident_window(self, context_id: str) -> dict[str, Any] | None:
+        """사후 재계산은 사건 구간을 쓰지 않는다 (총괄을 읽지 않는다)."""
+        return None
+
 
 def _finding(code: str, severity: str, title: str, detail: str, refs: list[str]) -> dict:
     return {

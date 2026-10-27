@@ -10,7 +10,8 @@
   평상시 장부로 들어가 결산(`closing_report`)·사후 감사(`audit_report`)에서 드러난다.
   `steps`(빈 목록)와 목록의 `loss_total`(null)은 대시보드 화면이 아직 읽어서 키만 남겼다.
 - 영향(`impact`)은 data `impact_analysis` 결과 그대로다(실제 모드 A2A, 목 모드 시드).
-  다시 계산하지 않는다. 실제 모드에서는 장애 구간을 모르므로 null이다.
+  다시 계산하지 않는다. 장애 구간은 총괄 사건 목록(`GET /api/incidents`)을 읽기 전용으로
+  읽어서 안다 ([협업] #417 제안 A, 요청 #418). 못 읽으면 구간·영향 모두 null이다.
 - 한도는 기준표(`compensation_per_customer`, `compensation_per_context`)를 safety
   `GET /api/safety/thresholds`(목 모드 시드)에서 읽는다. 못 읽으면 null.
 - 점검은 코드 규칙이다. 근거 자료가 없으면 `ok: null`(확인할 수 없음)이고 통과로 치지 않는다.
@@ -30,7 +31,7 @@ from ax_contracts.schemas import RequestMeta, VerifyAmountInput
 from finance_agent import finance_config as fc
 from finance_agent import ledger as lg
 from finance_agent.audit import _BooksSource
-from finance_agent.handlers import compensation_ledger, incident_impact, incident_meta, state
+from finance_agent.handlers import compensation_ledger, incident_impact, incident_info, state
 from finance_agent.recheck import recompute
 from finance_agent.sources import Impact
 
@@ -116,8 +117,8 @@ async def incident_view(
 ) -> tuple[dict[str, Any], list[str]]:
     """사건 상세 data와 unavailable 목록."""
     unavailable: list[str] = []
-    info = incident_meta(context_id)
-    impact: Impact | None = await incident_impact(context_id)
+    info = await incident_info(context_id)  # 실제 모드 구간은 총괄 사건 목록에서 (읽기 전용)
+    impact: Impact | None = await incident_impact(context_id, info=info)
     rows, ledger_source = await compensation_ledger(context_id, feed)
     impact_ids = impact.affected_customer_ids if impact else frozenset()
 

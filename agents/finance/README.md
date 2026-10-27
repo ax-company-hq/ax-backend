@@ -61,6 +61,7 @@ safety·finance를 목 모드로 띄운 뒤 `uv run python agents/finance/demo/s
   `GET /api/finance/settlements?period=YYYY-Www`, `POST /api/finance/settlements/batch`(토큰 선택, safety 없으면 503 `safety_unavailable`),
   `GET /api/finance/policy`, `GET /api/finance/audit?days=7&context_id=`(사건 선택)
 - 사건별 API (시나리오 A, 재설계 문서 12-1, `incidents.py`): `GET /api/finance/incidents`(`meta.ledger_source`), `GET /api/finance/incidents/{context_id}`(없으면 404 `not_found`). 목 시드: `ctx_inc_scn_a_0001`(data 목과 같은 6건·4명·95,000원 + 보상 2,000원 × 4장), `ctx_inc_0100`(영향 밖 `buy_0999` 보상 → 감사 `compensation_outside_impact`)
+- 장애 구간(`window`)은 총괄 사건 목록 `GET /api/incidents`(8000)의 `opened_at`·`closed_at`을 **읽기 전용으로** 읽어서 안다 (계약 `contracts/src/ax_contracts/data_access/orchestrator_incidents.py`, [협업] #417 제안 A). 사건 **중**에 총괄을 부르는 것이 아니라 평상시 사후 감사·사건 조회에서만 읽는다. 주소는 `AX_ORCHESTRATOR_URL`(기본 `http://orchestrator:8000`). 못 읽거나 계약과 다르거나 아직 열린 사건이면 구간·영향 모두 `null`이고 data에 묻지 않는다(fail-closed). 목 모드는 장부 시드로 구간을 안다
 - 기존 조회 API: `/api/finance/ledger`(사건별 보상 지급·주문별 환불 누적), `/api/finance/market-ops`(판매자 심사·정산 보류 결과), `/api/finance/self-test`(재무 AI 테스트 버튼: 가짜 자료로 계산 규칙 점검 + 안전 장치·쇼핑몰·데이터 AI 연결 확인, 상태를 바꾸지 않음), `/api/finance/self-test/last`(마지막 결과, `data.trigger`=`auto`|`manual`, `meta.interval_seconds`·`meta.next_run_at`)
 - 재무 AI 테스트 자동 실행: 서버가 켜지고 5초 뒤 한 번, 그다음 `FINANCE_SELF_TEST_SECONDS`(기본 600초, 0이면 끔)마다 서버 안에서 돌려 `/self-test/last`에 남긴다. 테스트(`tests/conftest.py`)는 0으로 끈다
 - 사람 토큰: 안전 관문과 같은 형식 `Authorization: Bearer human:<이름>`(목 모드) 또는 `FINANCE_HUMAN_TOKENS`/`SAFETY_HUMAN_TOKENS`의 토큰 (`human.py`)
