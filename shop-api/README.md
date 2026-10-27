@@ -45,6 +45,46 @@
 - OpenAPI: `contracts/openapi/shop-api.json`은 CI가 자동 생성한다.
 ## 4. 의존
 `ax-contracts`, `ax-agent-template`. 다른 부서 폴더를 import하지 않는다.
+## 4-1. 보유기간 삭제 (retention)
+개인정보처리방침 제4조의 보유기간을 코드로 옮긴 것이다(`retention.py`). **삭제는 기본 dry-run(건수만 센다)이고, 실제 삭제(apply)는 사람이 켠다.** 5년은 방침 제4조 기준이며, 모의 거래에도 적용할지(제4조 ⑦)는 미확정이라 설정값이다. 외부에 열린 삭제 엔드포인트는 없고, 삭제 요청의 집행은 사람 승인 뒤 운영자가 CLI로만 한다.
+
+| 환경변수 | 기본값 | 뜻 |
+| --- | --- | --- |
+| `SHOP_RETENTION_TRANSACTION_DAYS` | 1825 (5년) | 주문·품목·결제·환불·반품·쿠폰의 보유 일수(기준은 각 행의 `created_at`) |
+| `SHOP_RETENTION_OUTBOX_DAYS` | 90 | **발송이 끝난**(`sent_at` 있음) outbox 이벤트의 보유 일수 |
+| `SHOP_RETENTION_BUYER_DAYS` | 90 | 구매자 행의 보유 일수(남은 주문·쿠폰이 없을 때만) |
+| `SHOP_RETENTION_ENABLED` | 1 | 하루 한 번 도는 백그라운드 작업 켜기/끄기(`0`·`false`·`off`·`no`면 끔) |
+| `SHOP_RETENTION_APPLY` | (없음) | `1`일 때만 백그라운드가 실제로 지운다. 아니면 건수만 로그 |
+
+- 일수는 양의 정수(상한 36500)만 받고, 비었거나 정수가 아니거나 0 이하면 기본값이다.
+- 만료 기준은 "기준 시각 이전 또는 같음"(`created_at <= now − N일`)이다.
+- 백그라운드 작업은 **DB가 파일일 때만**(`SHOP_DB_PATH`) 앱 시작 때 켜지고 하루에 한 번 돈다. `:memory:`면 건너뛴다. 실패해도 앱은 계속 돌고 로그에는 예외 종류만 남는다.
+
+| 대상 | 지우는 조건 | 남기는 것 |
+| --- | --- | --- |
+| `refunds`·`returns` | `created_at`이 5년 이상 지남 | 5년 안의 행 |
+| `payments` | 5년 이상 지났고 남은 환불이 없음 | 환불이 남아 있는 결제 |
+| `order_items`·`orders` | 주문이 5년 이상 지났고 남은 결제·환불·반품이 없음(품목은 주문과 함께) | 더 새로운 결제·환불·반품이 붙은 주문 |
+| `coupons` | `created_at`이 5년 이상 지남 | 5년 안의 쿠폰 |
+| `outbox_events` | 발송 완료(`sent_at` 있음) + 90일 이상 | **발송 안 된 이벤트는 몇 년이 지나도 남김** |
+| `buyers` | 90일 이상 지났고 남은 주문·쿠폰이 없음 | 5년 보관 주문·쿠폰이 있는 구매자(외래키) |
+| 시드 데모 구매자(`seed.SEED_BUYER_IDS`) | **절대 지우지 않음.** 그 구매자의 주문·쿠폰도 대상에서 제외 | 전부 |
+
+- 지우는 순서는 자식 → 부모(refunds, returns, payments, order_items, orders, coupons, outbox_events, buyers)이고 한 트랜잭션이다.
+- 지우기 전에 **일별 집계**만 `retention_daily_stats`(`stat_date`·`kind`·`rows_count`·`amount_sum`·`tenant_id`)에 더한다. 구매자·주문 번호 같은 식별 정보는 넣지 않는다. 테이블은 `CREATE TABLE IF NOT EXISTS`라 기존 DB 파일에도 시작할 때 만들어진다.
+- 보고서·로그·CLI 출력에는 건수만 있다(구매자 ID·금액 없음).
+
+CLI(`SHOP_DB_PATH`가 가리키는 파일 DB에서 실행, 기본은 dry-run):
+```
+python -m ax_shop_api.retention run [--apply]
+python -m ax_shop_api.retention purge-buyer <buyer_id> [--apply] [--include-retained]
+```
+- `run`: 만료분 정리. `--apply`가 없으면 건수만 센다.
+- `purge-buyer`: **정보주체 삭제 요청의 집행부.** AI의 1차 본인 확인과 사람의 최종 판단이 끝난 뒤에만 운영자가 쓴다.
+  - 기본: 법정 보존 대상(주문·품목·결제·환불·반품·쿠폰, 5년)을 **남기고**, 그 구매자 관련 **발송 완료 outbox 이벤트**(페이로드의 `buyer_id` 또는 그 구매자 주문 번호로 찾음)와, 남은 주문·쿠폰이 없을 때의 구매자 행만 지운다. 발송 안 된 이벤트는 남긴다.
+  - `--include-retained`: 그 구매자의 주문·품목·결제·환불·반품·쿠폰까지 지운다(프로젝트 종료 또는 법적 보존 비적용이 확정됐을 때만).
+  - 시드 구매자는 거부(종료 코드 2), 없는 구매자는 종료 코드 1.
+- 종료 코드 2: `:memory:` DB에서는 실행하지 않는다.
 ## 5. 하지 않는 것
 - 판단·분석 문장을 만들지 않는다 (이벤트에는 사실만 담는다)
 - 다른 서비스의 DB를 읽지 않는다. 판매 사이트 DB를 다른 서비스가 직접 읽게 하지 않는다 (API로만)

@@ -74,6 +74,11 @@ CREATE TABLE IF NOT EXISTS coupons (
   idempotency_key TEXT NOT NULL UNIQUE, tenant_id TEXT NOT NULL, context_id TEXT,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS retention_daily_stats (
+  stat_date TEXT NOT NULL, kind TEXT NOT NULL, rows_count INTEGER NOT NULL,
+  amount_sum INTEGER, tenant_id TEXT NOT NULL,
+  PRIMARY KEY (stat_date, kind, tenant_id)
+);
 """
 
 # 이미 만들어진 DB 파일에 뒤늦게 붙은 열(`CREATE TABLE IF NOT EXISTS`는 열을 더하지 않는다)
@@ -93,9 +98,8 @@ TENANT_ID = TENANT_ID_DEFAULT
 
 class Db:
     def __init__(self, path: str | None = None) -> None:
-        self._conn = sqlite3.connect(
-            path or os.getenv("SHOP_DB_PATH", ":memory:"), check_same_thread=False
-        )
+        self.path = path or os.getenv("SHOP_DB_PATH", ":memory:")
+        self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.executescript(SCHEMA)
@@ -106,6 +110,11 @@ class Db:
                     self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
         self._conn.commit()
         self._lock = threading.RLock()
+
+    @property
+    def is_file(self) -> bool:
+        """DB가 디스크 파일이면 True(`:memory:`·빈 경로·메모리 URI는 False)."""
+        return self.path not in ("", ":memory:") and ":memory:" not in self.path
 
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:
