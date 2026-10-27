@@ -401,11 +401,11 @@ def test_removed_endpoints(client: TestClient) -> None:
         "/api/finance/catbooks/sync",
         "/api/finance/catbooks/items",
         "/api/finance/threshold-reviews",
+        "/api/finance/loss-reports",  # 2026-10-27 장애 흐름에서 빠지며 없앰
     ):
         assert client.get(path).status_code == 404
     for path in (
         "/api/finance/ledger",
-        "/api/finance/loss-reports",
         "/api/finance/market-ops",
         "/api/finance/self-test/last",
     ):

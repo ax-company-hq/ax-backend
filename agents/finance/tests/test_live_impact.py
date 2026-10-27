@@ -18,7 +18,7 @@ from ax_contracts.schemas import (
     RequestMeta,
     TaskStatus,
 )
-from finance_agent import handlers, ledger, sources
+from finance_agent import sources
 from finance_agent.sources import LiveSources, impact_input
 
 META = RequestMeta(
@@ -81,27 +81,3 @@ async def test_data_output_outside_contract_is_unknown(
 
     monkeypatch.setattr(sources, "call_agent", wrong_output)
     assert await LiveSources().impact(META, "ctx_inc_0001", WINDOW) is None
-
-
-@pytest.mark.asyncio
-async def test_loss_report_gets_live_impact(
-    data_calls: list[AgentRequest], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    handlers.reset_state(LiveSources())
-    monkeypatch.setitem(ledger.EVENTS, "connected", False)  # 실제 모드: 이벤트 구독 미구현
-
-    async def gate_down(context_id: str | None) -> ledger.ExecutionFeed:
-        return ledger.ExecutionFeed(None, ledger.LEDGER_SAFETY)  # 네트워크 없이 안전 관문 꺼짐
-
-    handlers.state().executions_loader = gate_down
-    request = AgentRequest(
-        meta=META.model_copy(update={"token": "mock:orchestrator"}),
-        skill="loss_aggregation",
-        input={**WINDOW, "context_id": "ctx_inc_0001"},
-    )
-    result = await handlers.loss_aggregation(request)
-    assert result.status == TaskStatus.COMPLETED
-    assert result.output["failed_orders"] == 128
-    assert result.output["lost_amount"] == 5_430_000
-    assert result.output["compensation_total"] is None  # 장부 출처가 없으면 0이 아니라 모름
-    ImpactAnalysisInput.model_validate(data_calls[0].input)

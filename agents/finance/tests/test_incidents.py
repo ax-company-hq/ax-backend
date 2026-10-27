@@ -19,7 +19,6 @@ from ax_contracts.schemas import (
     AgentResult,
     EventEnvelope,
     EventType,
-    RequestMeta,
     TaskStatus,
 )
 from finance_agent import audit, handlers, incidents, sources
@@ -56,7 +55,6 @@ LIST_KEYS = {
     "compensation_total",
     "coupon_count",
     "held_count",
-    "loss_total",
     "checks_ok",
 }
 DETAIL_KEYS = {
@@ -66,9 +64,7 @@ DETAIL_KEYS = {
     "impact",
     "compensation",
     "limits",
-    "loss",
     "checks",
-    "steps",
     "ledger_source",
 }
 COUPON_KEYS = {
@@ -253,18 +249,11 @@ def fake_data(monkeypatch: pytest.MonkeyPatch) -> list[AgentRequest]:
     return calls
 
 
-def _loss_request(ctx: str = CTX) -> AgentRequest:
-    deadline = datetime.now(UTC) + timedelta(seconds=30)
-    meta = RequestMeta(context_id=ctx, token="mock:orchestrator", deadline=deadline)
-    return AgentRequest(
-        meta=meta,
-        skill="loss_aggregation",
-        input={
-            "window_from": "2026-10-23T09:00:00Z",
-            "window_to": "2026-10-23T09:30:00Z",
-            "context_id": ctx,
-        },
-    )
+def _detail(ctx: str = CTX) -> dict[str, Any]:
+    """지금 상태의 실행 기록으로 만든 사건 상세 data."""
+    feed = asyncio.run(handlers.state().executions_loader(ctx))
+    data, _ = asyncio.run(incidents.incident_view(ctx, feed, None))
+    return data
 
 
 # ---------------------------------------------------------------- ⑨ 장부 줄과 중복 방지
@@ -356,56 +345,43 @@ def test_load_executions_reads_gate_records(real_mode) -> None:
     assert asyncio.run(lg.load_thresholds(http_client=_safety(None))) is None
 
 
-# ---------------------------------------------------------------- ⑩ 손실 리포트 (실제 모드)
-def test_loss_total_in_real_mode_comes_from_gate_records(real_mode, fake_data) -> None:
+# ------------------------------------------------------------ 보상 쿠폰 장부 (실제 모드)
+def test_compensation_total_in_real_mode_comes_from_gate_records(real_mode, fake_data) -> None:
     handlers.reset_state(LiveSources())
     records = [_raw_record(_exe(f"exe_{n}", f"buy_000{n}")) for n in range(1, 5)]
     records.append(_raw_record(_exe("exe_9", "buy_0009", ctx="ctx_inc_other")))
     _use_safety(_safety(records))
-    result = asyncio.run(handlers.loss_aggregation(_loss_request()))
-    out = result.output
-    assert result.status == TaskStatus.COMPLETED and result.outcome == "reported"
-    assert (out["lost_amount"], out["compensation_coupon_count"], out["compensation_total"]) == (
-        95000,
-        4,
-        8000,
-    )
-    assert out["total_loss"] == 103000 and out["ledger_source"] == "safety_executions"
-    assert out["unavailable"] == [] and "확인할 수 없음" not in out["summary"]
-    assert any("safety:/api/safety/executions" in q for q in result.evidence.queries)
-    assert "exe_1" in result.evidence.ref_ids
+    data = _detail()
+    comp = data["compensation"]
+    # 다른 사건(ctx_inc_other)의 쿠폰은 섞이지 않는다
+    assert (comp["count_executed"], comp["total_executed"]) == (4, 8000)
+    assert data["ledger_source"] == "safety_executions"
+    assert [c["execution_id"] for c in comp["coupons"]] == ["exe_1", "exe_2", "exe_3", "exe_4"]
+    # 장애 구간을 알려 주던 loss_aggregation을 없앴다 → data에 묻지 않는다
+    assert data["impact"] is None and fake_data == []
 
 
-def test_loss_without_any_ledger_source_is_unknown(real_mode, fake_data) -> None:
+def test_compensation_without_any_ledger_source_is_unknown(real_mode, fake_data) -> None:
     handlers.reset_state(LiveSources())
     _use_safety(_safety(None))  # 안전 관문 꺼짐 + 이벤트 버스 없음
-    result = asyncio.run(handlers.loss_aggregation(_loss_request()))
-    out = result.output
-    assert result.outcome == "partial"
-    assert (out["compensation_coupon_count"], out["compensation_total"], out["total_loss"]) == (
-        None,
-        None,
-        None,
-    )
-    assert out["lost_amount"] == 95000  # 피해는 data 숫자 그대로
-    assert out["unavailable"] == ["compensation"] and out["ledger_source"] is None
-    assert "확인할 수 없음" in out["summary"]
+    data, unavailable = asyncio.run(incidents.incident_view(CTX, _feed(None), None))
+    comp = data["compensation"]
+    # 0으로 바꾸지 않고 "확인할 수 없음"(None)으로 둔다
+    assert (comp["count_executed"], comp["total_executed"]) == (None, None)
+    assert "compensation" in unavailable and data["ledger_source"] is None
+    assert all(c["ok"] is None for c in data["checks"])
 
 
-def test_loss_uses_events_when_no_gate_record_and_does_not_double_count(mock_mode) -> None:
+def test_compensation_uses_events_when_no_gate_record_and_does_not_double_count(mock_mode) -> None:
     handlers.reset_state(MockSources())
     # 시드 실행 기록이 있는 사건: 같은 쿠폰의 이벤트가 와도 더하지 않는다
     asyncio.run(handlers.on_event(_event(1, CTX, 2000, execution_id="exe_s0060")))
-    out = asyncio.run(handlers.loss_aggregation(_loss_request())).output
-    assert (out["compensation_total"], out["total_loss"], out["ledger_source"]) == (
-        8000,
-        103000,
-        "seed",
-    )
+    data = _detail()
+    assert (data["compensation"]["total_executed"], data["ledger_source"]) == (8000, "seed")
     # 실행 기록이 없는 사건은 이벤트 장부
     asyncio.run(handlers.on_event(_event(2, "ctx_inc_0001", 5000)))
-    other = asyncio.run(handlers.loss_aggregation(_loss_request("ctx_inc_0001"))).output
-    assert (other["compensation_total"], other["ledger_source"]) == (5000, "events")
+    other = _detail("ctx_inc_0001")
+    assert (other["compensation"]["total_executed"], other["ledger_source"]) == (5000, "events")
 
 
 # ---------------------------------------------------------------- 사건 API 형식 (목 모드)
@@ -425,7 +401,6 @@ def test_incident_list_shape_and_numbers(mock_mode) -> None:
         "compensation_total": 8000,
         "coupon_count": 4,
         "held_count": 0,
-        "loss_total": 103000,
         "checks_ok": True,
     }
     assert rows[OLD]["checks_ok"] is False  # 영향 고객이 아닌 buy_0999
@@ -475,28 +450,12 @@ def test_incident_detail_shape_matches_spec(mock_mode) -> None:
         "per_customer": {"limit": 50000, "max_used": 2000, "buyer_id": "buy_0001"},
         "per_incident": {"limit": 1000000, "used": 8000, "remaining": 992000},
     }
-    assert data["loss"] == {
-        "damage_amount": 95000,
-        "compensation_total": 8000,
-        "total": 103000,
-        "status": "complete",
-        "missing": [],
-    }
+    # 재무는 장애 대응 흐름의 단계가 아니다 (2026-10-27): 손실 집계·단계 표시를 뺐다
+    assert "loss" not in data and "steps" not in data
     assert [c["code"] for c in data["checks"]] == CHECK_CODES
     for c in data["checks"]:
         assert set(c) == {"code", "ok", "title", "detail", "refs"} and c["ok"] is True
-    assert [(s["no"], s["status"]) for s in data["steps"]] == [
-        ("9", "done"),
-        ("10", "done"),
-        ("17", "done"),
-    ]
-    for s in data["steps"]:
-        assert set(s) == {"no", "title", "status", "detail"}
     # 사람이 읽는 문장에는 영어 코드 대신 쉬운 말 (코드는 code·ledger_source에만)
-    assert (
-        "출처: 예시 데이터" in data["steps"][0]["detail"]
-        and "seed" not in data["steps"][0]["detail"]
-    )
     for c in data["checks"]:
         assert c["code"] not in c["title"] + c["detail"] and "⊂" not in c["title"]
 
@@ -579,15 +538,13 @@ def test_no_ledger_source_makes_everything_unknown(real_mode) -> None:
     assert {"compensation", "limits"} <= set(unavailable)
     assert data["compensation"]["total_executed"] is None and data["ledger_source"] is None
     assert all(c["ok"] is None for c in data["checks"])
-    assert data["steps"][0]["status"] == "unavailable"
-    assert "안전 장치" in data["steps"][0]["detail"] and "관문" not in data["steps"][0]["detail"]
+    assert "loss" not in data and "steps" not in data
+    assert "장부" in data["checks"][0]["detail"]  # 사람이 읽는 쉬운 말
     assert incidents.checks_ok(data["checks"]) is None
 
 
 # ---------------------------------------------------------------- 실제 모드 사건 API
-def test_real_mode_incident_uses_gate_records_and_window_from_loss_report(
-    real_mode, fake_data
-) -> None:
+def test_real_mode_incident_uses_gate_records_and_has_no_window(real_mode, fake_data) -> None:
     handlers.reset_state(LiveSources())
     records = [_raw_record(e) for e in GOOD]
     _use_safety(_safety(records))
@@ -595,19 +552,16 @@ def test_real_mode_incident_uses_gate_records_and_window_from_loss_report(
     body = client.get(f"/api/finance/incidents/{CTX}").json()
     data = body["data"]
     assert body["meta"]["mock"] is False and data["ledger_source"] == "safety_executions"
-    # 장애 구간을 아직 모른다 → data에 묻지 않고 영향은 null
+    # 장애 구간을 알려 주던 loss_aggregation을 없앴다 → 실제 모드에서는 구간·영향이 늘 null이고
+    # data에 묻지도 않는다 (재무는 장애 대응 흐름의 단계가 아니다, 요구사항 DEP-FIN-01)
+    assert data["window"] is None
     assert data["impact"] is None and "impact" in body["meta"]["unavailable"] and fake_data == []
     assert data["limits"]["per_customer"]["limit"] == 50000  # 안전 관문 기준표에서 읽음
-    assert [s["status"] for s in data["steps"]] == ["done", "waiting", "unavailable"]
-    assert data["loss"]["status"] == "partial" and data["loss"]["missing"] == ["damage_amount"]
-
-    asyncio.run(handlers.loss_aggregation(_loss_request()))  # 총괄의 손실 리포트 요청
-    data = client.get(f"/api/finance/incidents/{CTX}").json()["data"]
-    assert data["impact"]["damage_amount"] == 95000 and data["loss"]["total"] == 103000
-    assert data["window"] == {"from": "2026-10-23T09:00:00Z", "to": "2026-10-23T09:30:00Z"}
+    assert data["compensation"]["count_executed"] == 4
     listing = client.get("/api/finance/incidents").json()
     assert listing["meta"]["ledger_source"] == "safety_executions"
     assert [r["context_id"] for r in listing["data"]] == [CTX]
+    assert listing["data"][0]["damage_amount"] is None  # 영향을 모르면 피해 금액도 모른다
 
 
 # ---------------------------------------------------------------- ⑰ 감사 finding

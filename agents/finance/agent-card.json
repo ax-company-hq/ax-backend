@@ -1,7 +1,7 @@
 {
   "name": "finance",
   "owner": "태윤",
-  "description": "캣북스 재무팀 + 마켓운영 에이전트. 결산·리포트, 매출·PG 대사, 판매자 정산, 예산·한도 정책, 사후 감사, 손실 리포트, 판매자 심사, 정산 보류. 건별 금액 승인은 하지 않는다(안전 관문 코드 규칙). 숫자는 코드로 계산하고 LLM은 설명 문장만 쓴다.",
+  "description": "캣북스 재무팀 + 마켓운영 에이전트. 결산·리포트, 매출·PG 대사, 판매자 정산, 예산·한도 정책, 사후 감사, 판매자 심사, 정산 보류. 건별 금액 승인은 하지 않는다(안전 관문 코드 규칙). 숫자는 코드로 계산하고 LLM은 설명 문장만 쓴다.",
   "url": "http://finance:8105/a2a",
   "version": "0.1.0",
   "capabilities": {
@@ -9,18 +9,6 @@
     "push_notifications": false
   },
   "skills": [
-    {
-      "id": "loss_aggregation",
-      "description": "장애 구간(window_from, window_to)을 받아 data 영향 분석(실패 주문·영향 고객·피해 금액)과 같은 사건의 보상 쿠폰 지급 합계로 손실 리포트를 만든다. 영향 숫자를 다시 계산하지 않고, 못 받은 값은 확인할 수 없음(null)이다. 상태를 바꾸지 않는다.",
-      "input_schema": "agents/finance/src/finance_agent/schemas.py#LossAggregationInput",
-      "output_schema": "agents/finance/src/finance_agent/schemas.py#LossReport",
-      "grade": "read",
-      "allowed_requesters": [
-        "orchestrator"
-      ],
-      "verifier": null,
-      "priority": "required"
-    },
     {
       "id": "seller_review",
       "description": "마켓운영. 판매자 서류 확인 여부와 data 사기 위험 점수로 입점 승인을 execute(seller_review)에 요청한다. 위험 점수가 기준 이상이면 safety C 보류. 판매자 소개 문장(untrusted)은 판단에 쓰지 않는다.",

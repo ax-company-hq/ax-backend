@@ -159,19 +159,7 @@ def main() -> None:
         ),
     )
 
-    # 3) 손실 리포트 (통합 에이전트 → 재무)
-    report = ask_finance(
-        f,
-        "loss_aggregation",
-        {
-            "context_id": CTX,
-            "window_from": "2026-10-22T05:00:00Z",
-            "window_to": "2026-10-22T05:40:00Z",
-        },
-    )
-    lines.append(f"- 손실 리포트: {report['output'].get('summary')}")
-
-    # 4) 마켓운영: 판매자 심사·정산 보류 (통합 에이전트 → 재무)
+    # 3) 마켓운영: 판매자 심사·정산 보류 (통합 에이전트 → 재무)
     for seller, docs in (("sel_4", True), ("sel_5", False), ("sel_9", True)):
         out = ask_finance(
             f,

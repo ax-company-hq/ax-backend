@@ -163,11 +163,6 @@ def add_read_api(app: FastAPI) -> None:
         refunds = [{"order_id": oid, "refunded": amount} for oid, amount in book.refunds.items()]
         return {"data": {"compensation": compensation, "refunds": refunds}, "meta": {}}
 
-    @app.get("/api/finance/loss-reports")
-    def loss_reports() -> dict:
-        rows = sorted(state().ledger.loss_reports.values(), key=lambda r: r["at"], reverse=True)
-        return {"data": rows, "meta": {"count": len(rows)}}
-
     @app.get("/api/finance/self-test")
     async def self_test() -> dict:
         """재무 AI 테스트 버튼: 가짜 자료로 판단 점검, 연결 확인. 상태를 바꾸지 않는다."""

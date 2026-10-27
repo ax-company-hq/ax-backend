@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from ax_agent_template import events
 from ax_contracts.schemas import EventEnvelope, EventType, ExecuteDecision, HoldReason
 from finance_agent import handlers
-from finance_agent.main import app, load_card, subscribe_events
+from finance_agent.main import app, load_card
 from finance_agent.recheck import VerifyAmountInput, recompute
 from finance_agent.sources import MockSources
 
@@ -128,7 +128,6 @@ def test_agent_card(client: TestClient) -> None:
     card = load_card()
     skills = {s.id: s for s in card.skills}
     assert set(skills) == {
-        "loss_aggregation",
         "seller_review",
         "settlement_hold",
         "closing_report",
@@ -136,14 +135,16 @@ def test_agent_card(client: TestClient) -> None:
     }
     assert skills["closing_report"].allowed_requesters == ["orchestrator", "data"]
     assert "review_threshold_change" not in skills  # 한도는 제안만, 사람이 기준표 PR로 바꾼다
+    # 재무는 장애 대응 흐름의 단계가 아니다 (2026-10-27, 요구사항 DEP-FIN-01)
+    assert "loss_aggregation" not in skills
     assert skills["audit_report"].allowed_requesters == ["orchestrator", "data"]
-    assert (skills["audit_report"].grade, skills["loss_aggregation"].priority) == (
+    assert (skills["audit_report"].grade, skills["audit_report"].priority) == (
         "read",
-        "required",
+        "optional",
     )
     assert (skills["seller_review"].grade, skills["seller_review"].verifier) == ("B", "data")
     served = client.get("/.well-known/agent-card.json").json()
-    assert served["name"] == "finance" and len(served["skills"]) == 5
+    assert served["name"] == "finance" and len(served["skills"]) == 4
 
 
 # ------------------------------------------- 금액 다시 계산 (예전 verify_amount, recheck.py)
@@ -282,52 +283,6 @@ def test_market_ops_skills_only_from_orchestrator(client: TestClient) -> None:
         token="mock:marketing",
     )
     assert result["outcome"] == "FORBIDDEN_SKILL"
-
-
-# ---------------------------------------------------------------- loss_aggregation (DEP-FIN-01)
-WINDOW = {"window_from": "2026-10-22T05:00:00Z", "window_to": "2026-10-22T05:40:00Z"}
-
-
-@pytest.mark.asyncio
-async def test_loss_report_uses_data_impact_and_issued_coupons(client: TestClient) -> None:
-    subscribe_events()
-    for i, (purpose, count, total) in enumerate(
-        [("compensation", 2, 10_000), ("compensation", 1, 5_000), ("campaign", 9, 90_000)]
-    ):
-        await events.publish(
-            EventEnvelope(
-                event_id=f"evt_c{i}",
-                type=EventType.COUPON_ISSUED,
-                occurred_at=datetime.now(UTC),
-                context_id=CTX,
-                source="marketing",
-                idempotency_key=f"c{i}",
-                data={
-                    "coupon_id": f"cpn_{i}",
-                    "campaign_id": None,
-                    "purpose_code": purpose,
-                    "count": count,
-                    "total_value": total,
-                },
-            )
-        )
-    await events.publish(events.MOCK_PUBLISHED[0])  # 같은 event_id는 한 번만
-    result = _call(client, "loss_aggregation", WINDOW, token="mock:orchestrator")
-    out = result["output"]
-    assert result["status"] == "completed"
-    assert (out["failed_orders"], out["affected_customers"], out["lost_amount"]) == (3, 3, 87_000)
-    assert (out["compensation_coupon_count"], out["compensation_total"]) == (3, 15_000)
-    assert out["total_loss"] == 102_000
-    assert "총 손실 102,000원" in out["summary"]
-
-
-def test_loss_report_without_impact_says_unknown(client: TestClient) -> None:
-    handlers.reset_state(MockSources({"impacts": {}}))
-    result = _call(client, "loss_aggregation", WINDOW, token="mock:orchestrator")
-    out = result["output"]
-    assert result["outcome"] == "partial"
-    assert (out["lost_amount"], out["total_loss"]) == (None, None)
-    assert "확인할 수 없음" in out["summary"]
 
 
 # ---------------------------------------------------------------- 마켓운영 (DEP-FIN-03·04)
@@ -472,18 +427,6 @@ def test_dashboard_can_read_but_not_post(client: TestClient) -> None:
     assert preflight.status_code == 400
 
 
-def test_loss_reports_are_listed_for_dashboard(client: TestClient) -> None:
-    _call(
-        client,
-        "loss_aggregation",
-        WINDOW | {"context_id": "ctx_inc_0002"},
-        token="mock:orchestrator",
-    )
-    rows = client.get("/api/finance/loss-reports").json()["data"]
-    assert (rows[0]["context_id"], rows[0]["lost_amount"]) == ("ctx_inc_0002", 214_500)
-    assert rows[0]["total_loss"] == 214_500  # 보상 지급 기록이 없으면 피해 금액만
-
-
 # ---------------------------------------------------------------- 추가 테스트
 def test_campaign_coupon_skips_affected_check(client: TestClient) -> None:
     """캠페인 쿠폰은 장애 피해 고객 확인을 하지 않고 금액만 다시 계산한다."""
@@ -529,37 +472,6 @@ def test_partial_refunds_add_up(client: TestClient) -> None:
     assert (over["reason_code"], over["recomputed"]["refunded_before"]) == ("exceeds_paid", 50_000)
 
 
-@pytest.mark.asyncio
-async def test_coupons_of_other_incidents_are_not_mixed(client: TestClient) -> None:
-    for n, ctx in enumerate([CTX, "ctx_inc_0002", "ctx_inc_0002"]):
-        await handlers.on_event(
-            EventEnvelope(
-                event_id=f"evt_m{n}",
-                type=EventType.COUPON_ISSUED,
-                occurred_at=datetime.now(UTC),
-                context_id=ctx,
-                source="marketing",
-                idempotency_key=f"m{n}",
-                data={
-                    "coupon_id": f"cpn_m{n}",
-                    "campaign_id": None,
-                    "purpose_code": "compensation",
-                    "count": 1,
-                    "total_value": 5000,
-                },
-            )
-        )
-    out = _call(client, "loss_aggregation", WINDOW, token="mock:orchestrator")["output"]
-    assert (out["compensation_coupon_count"], out["compensation_total"]) == (1, 5000)
-    other = _call(
-        client,
-        "loss_aggregation",
-        WINDOW | {"context_id": "ctx_inc_0002"},
-        token="mock:orchestrator",
-    )["output"]
-    assert (other["compensation_total"], other["total_loss"]) == (10_000, 224_500)
-
-
 def test_settlement_hold_rejects_unknown_reason(client: TestClient) -> None:
     result = _call(
         client,
@@ -567,11 +479,6 @@ def test_settlement_hold_rejects_unknown_reason(client: TestClient) -> None:
         {"seller_id": "sel_3", "reason_code": "because"},
         token="mock:orchestrator",
     )
-    assert (result["status"], result["outcome"]) == ("failed", "invalid_input")
-
-
-def test_loss_report_needs_a_window(client: TestClient) -> None:
-    result = _call(client, "loss_aggregation", {}, token="mock:orchestrator")
     assert (result["status"], result["outcome"]) == ("failed", "invalid_input")
 
 
