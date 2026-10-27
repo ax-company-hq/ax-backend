@@ -16,15 +16,9 @@ from ax_contracts.schemas.message import Evidence
 
 
 class HoldReason(StrEnum):
-    """C 등급으로 보류하거나 거부한 이유.
-
-    `OVER_THRESHOLD`는 금액·건수 기준을 넘어 C가 된 건이고, `HIGH_IMPACT`는 기준과 상관없이
-    **등록된 기본 등급이 C라서** 늘 사람이 정하는 건이다 (정산 묶음 지급, 인사 결정 등).
-    둘을 나누지 않으면 금액 기준이 없는 액션도 "금액 기준을 넘음"으로 읽힌다 (요청 #180·#431).
-    """
+    """C 등급으로 보류하거나 거부한 이유."""
 
     OVER_THRESHOLD = "over_threshold"
-    HIGH_IMPACT = "high_impact"
     UNREGISTERED_ACTION = "unregistered_action"
     AMOUNT_MISMATCH = "amount_mismatch"
     VERIFY_REJECTED = "verify_rejected"

@@ -26,20 +26,33 @@ base_grade = "C"
 
 4번(승인 기한)의 답에 따라 이 줄에 설정이 더 붙을 수 있으니, 4번을 정한 뒤 함께 넣는 쪽이 낫다.
 
-## 2. 기준 금액 없는 C의 `HoldReason` → `high_impact`를 더했다 (이번 PR)
+## 2. 기준 금액 없는 C의 `HoldReason` → **`high_impact` 추가는 할 수 없다.** 보고서로 구분한다
 
-전에는 기본 등급이 C라서 보류된 건도 `over_threshold`("금액 기준을 넘음")로 나갔다. #180(hr)에서
-같은 질문이 나와 `high_impact`를 더하기로 적어 뒀는데(`issue-180-hr-actions.md` 17~18줄) 실제로
-들어가 있지 않았다. 이번에 넣었다.
+#180 메모(`issue-180-hr-actions.md` 17~18줄)는 `high_impact`를 contracts에 더하기로 적어 뒀다.
+실제로 넣어 보니 **`contracts-compat`이 막는다.**
 
-- `contracts/.../schemas/execute.py`: `HoldReason.HIGH_IMPACT = "high_impact"` 추가 (추가만)
-- `safety/.../gate.py`: 규칙에 걸려 C가 된 건은 `over_threshold`, 기본 등급이 C인 건은 `high_impact`.
-  보고서의 `rules = [{"key": "base_grade", "value": "C"}]`는 그대로 남는다
-- 영향 받는 기존 액션: `confirm_settlement`(finance), `confirm_handover_incomplete`(hr)
-- 대시보드는 이미 `report.rules`의 `base_grade`를 먼저 보고 "항상 사람이 확인"으로 적고 있고
-  모르는 사유에는 "확인 필요" 대체 문구가 있다 (`dashboard-web/.../SafetyQueue.tsx`). 깨지지 않는다
-- `agents/hr/src/hr_agent/clients/safety.py`의 목은 아직 `over_threshold`를 돌려준다.
-  hr 폴더라 건드리지 않았다 — 실제 관문과 맞추려면 hr(준하)이 바꾸면 된다
+```
+계약 호환성 깨짐 2건:
+  - ax_contracts.schemas.event.SafetyActionHeldData [response] hold_reason: 응답 enum 값 추가/확장 "high_impact"
+  - ax_contracts.schemas.execute.ExecuteDecision [response] hold_reason: 응답 enum 값 추가/확장 "high_impact"
+```
+
+맞는 판정이다. `hold_reason`은 **응답** 필드여서, 값을 더하면 옛 enum으로 검증하는 소비자가 새 값을
+거부한다. CLAUDE.md 12번의 "추가만" 규칙은 **요청** 쪽 선택 필드 추가를 말하는 것이고, 응답 enum
+확장은 깨지는 변경이다. #180 메모의 그 줄은 틀렸으므로 이 문서가 대신한다.
+
+**대신 쓰는 방법 (이미 되고 있는 것)**: 기본 등급이 C라서 보류된 건은 보류 보고서에
+`rules = [{"key": "base_grade", "value": "C"}]`가 남는다. 기준을 넘어 C가 된 건에는 그 자리에
+걸린 규칙 키가 들어간다. 그래서 **보고서만 보면 두 경우가 갈린다.**
+대시보드는 이미 그렇게 하고 있다 — `dashboard-web/.../finance/SafetyQueue.tsx`가 `report.rules`의
+`base_grade`를 먼저 보고 "항상 사람이 확인"으로 적는다. 즉 재헌이 원한 "사람이 읽는 사유 구분"은
+이미 되고 있고, `summary`까지 등록하면 더 분명해진다.
+
+이번 PR은 이 동작을 테스트로 고정했다 (`test_base_grade_c_is_told_apart_by_the_report_not_the_reason`).
+
+**에이전트까지 구분이 필요해지면**: 판정을 받는 에이전트는 보고서가 아니라 `ExecuteDecision`만
+본다. 거기서도 갈라야 하면 enum 값이 아니라 **새 선택 필드**(예: `hold_kind`, 기본값 `None`)를
+더하는 쪽으로 contracts 요청을 따로 올린다. 지금 그 필요를 적어 둔 부서는 없다.
 
 ## 3. 설명 문구 위치 → `params.summary` 그대로 맞다
 

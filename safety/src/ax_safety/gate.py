@@ -172,15 +172,16 @@ class Gate:
             grade = higher(grade, "C")
             report["rules"] = hits
         if grade == "C":
-            # 기준을 넘어 C가 된 건과, 등록된 기본 등급이 C라서 늘 사람이 정하는 건을 나눈다.
-            # 금액 기준이 없는 액션까지 "금액 기준을 넘음"으로 읽히지 않게 (요청 #180·#431)
-            reason = HoldReason.OVER_THRESHOLD if hits else HoldReason.HIGH_IMPACT
+            # 기준 금액이 없는데 기본 등급이 C인 건도 사유는 `over_threshold`로 나간다.
+            # 응답 enum에 값을 더하는 것은 하위 호환이 깨져서(contracts-compat) 사유를 쪼개지
+            # 않고, 대신 보고서 `rules`에 `base_grade` 표시를 남겨 사람이 읽는 쪽이 구분한다
+            # (요청 #180·#431, `docs/notes/safety/issue-431-data-deletion.md`)
             if not hits:
                 report["rules"] = [{"key": "base_grade", "value": "C"}]
             return await self._hold(
                 request,
                 execution_id,
-                reason,
+                HoldReason.OVER_THRESHOLD,
                 report,
                 amount=amount,
                 customer=customer,

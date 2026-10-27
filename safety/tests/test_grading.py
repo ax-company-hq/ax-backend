@@ -133,23 +133,31 @@ async def test_invalid_amount_fields_hold(gate: Gate, bad: object, coupon) -> No
 async def test_settlement_confirmation_is_always_held(gate: Gate, act) -> None:
     decision = await gate.execute(act("confirm_settlement", "finance", "k-set", draft="s1"))
     assert (decision.grade, decision.status) == ("C", "held")
-    # 금액 기준이 없는 C다 → "금액 기준을 넘음"이 아니라 "늘 사람이 정함" (요청 #180·#431)
-    assert decision.hold_reason == HoldReason.HIGH_IMPACT
+    # 금액 기준이 없는 C다. 사유는 `over_threshold`로 나가고(응답 enum을 늘리지 않는다),
+    # 보고서 `rules`의 `base_grade` 표시로 "늘 사람이 정함"을 구분한다 (요청 #180·#431)
+    assert decision.hold_reason == HoldReason.OVER_THRESHOLD
     review = gate.store.get_review(decision.review_id or "")
     assert review is not None
     assert review.report["rules"] == [{"key": "base_grade", "value": "C"}]
 
 
 @pytest.mark.asyncio
-async def test_base_grade_c_and_threshold_c_have_different_reasons(
+async def test_base_grade_c_is_told_apart_by_the_report_not_the_reason(
     gate: Gate, verifier: Any, act, coupon
 ) -> None:
-    """같은 C라도 보류 사유가 갈린다: 기준 초과는 `over_threshold`, 기본 등급 C는 `high_impact`."""
+    """같은 C·같은 사유라도 보고서로 갈린다: 기준 초과는 규칙 hit, 기본 등급 C는 `base_grade`.
+
+    사람이 읽는 쪽(대시보드)은 이 표시를 보고 "항상 사람이 확인"으로 적는다. 사유를 쪼개려면
+    응답 enum이 아니라 새 선택 필드로 더해야 한다 (`high_impact` 추가는 하위 호환이 깨진다).
+    """
     over = await gate.execute(coupon(80, 5000, purpose_code="campaign"))  # 400,000원 = 기준 초과
     always = await gate.execute(act("confirm_settlement", "finance", "k-set2", draft="s2"))
     assert (over.grade, always.grade) == ("C", "C")
-    assert over.hold_reason == HoldReason.OVER_THRESHOLD
-    assert always.hold_reason == HoldReason.HIGH_IMPACT
+    assert over.hold_reason == always.hold_reason == HoldReason.OVER_THRESHOLD
+    over_rules = gate.store.get_review(over.review_id or "").report["rules"]
+    always_rules = gate.store.get_review(always.review_id or "").report["rules"]
+    assert [h["key"] for h in always_rules] == ["base_grade"]
+    assert "base_grade" not in [h["key"] for h in over_rules]
     assert over.computed_amount == 400_000 and always.computed_amount is None
 
 

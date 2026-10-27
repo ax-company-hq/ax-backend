@@ -93,5 +93,6 @@ async def test_hr_c_actions_always_held_with_summary(gate: Gate, act, action: st
     assert review is not None
     assert review.report["summary"] == summary
     assert review.report["rules"] == [{"key": "base_grade", "value": "C"}]
-    # 인사 결정은 금액 기준이 없는 C다 (요청 #180에서 물어본 보류 사유)
-    assert decision.hold_reason == HoldReason.HIGH_IMPACT
+    # 인사 결정은 금액 기준이 없는 C인데 사유는 `over_threshold`로 나간다. 사유를 쪼개는 대신
+    # 위 `base_grade` 표시로 구분한다 (요청 #180·#431, 응답 enum은 늘리지 않는다)
+    assert decision.hold_reason == HoldReason.OVER_THRESHOLD
