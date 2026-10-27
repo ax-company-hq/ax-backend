@@ -124,6 +124,13 @@ def test_unreliable_values_are_dropped_not_repaired() -> None:
     assert [i.title for i in facts.items] == ["정상 품목"]
 
 
+def test_order_numbers_shaped_like_phone_or_card_numbers_are_dropped() -> None:
+    for risky in ("01012345678", "4111111111111111", "010-1234-5678"):
+        read = VisionReceipt(readable=True, total=1000, order_no=risky)
+        assert receipt_vision.to_facts(read).order_no is None
+    assert receipt_vision.to_facts(MATCHING).order_no == "ORD-2026-0101"
+
+
 def test_an_unreadable_photo_gives_no_facts() -> None:
     read = VisionReceipt(readable=False, total=33000, order_no="ORD-2026-0101")
     # 읽을 수 없다는 답이면 값도 쓰지 않는다

@@ -81,7 +81,9 @@ def _paid_on(value: str | None) -> date | None:
 
 def _order_no(value: str | None) -> str | None:
     text = (value or "").strip()
-    return text.upper() if _ORDER_NO.match(text) else None
+    if not _ORDER_NO.match(text) or guard.find_pii(text):
+        return None  # 전화번호·카드번호 모양의 숫자는 주문번호로 쓰지 않는다
+    return text.upper()
 
 
 def to_facts(read: VisionReceipt) -> receipts.ReceiptFacts:
