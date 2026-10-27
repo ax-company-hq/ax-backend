@@ -172,12 +172,15 @@ class Gate:
             grade = higher(grade, "C")
             report["rules"] = hits
         if grade == "C":
+            # 기준을 넘어 C가 된 건과, 등록된 기본 등급이 C라서 늘 사람이 정하는 건을 나눈다.
+            # 금액 기준이 없는 액션까지 "금액 기준을 넘음"으로 읽히지 않게 (요청 #180·#431)
+            reason = HoldReason.OVER_THRESHOLD if hits else HoldReason.HIGH_IMPACT
             if not hits:
                 report["rules"] = [{"key": "base_grade", "value": "C"}]
             return await self._hold(
                 request,
                 execution_id,
-                HoldReason.OVER_THRESHOLD,
+                reason,
                 report,
                 amount=amount,
                 customer=customer,

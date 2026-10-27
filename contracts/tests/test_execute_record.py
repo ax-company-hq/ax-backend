@@ -52,6 +52,7 @@ def test_execute_decision_held_needs_reason() -> None:
 def test_hold_reason_members() -> None:
     assert {r.value for r in HoldReason} == {
         "over_threshold",
+        "high_impact",  # 기준과 무관하게 기본 등급이 C인 건 (요청 #180·#431)
         "unregistered_action",
         "amount_mismatch",
         "verify_rejected",
@@ -59,6 +60,8 @@ def test_hold_reason_members() -> None:
         "schema_invalid",
         "review_timeout",
     }
+    # 기준을 넘은 건과 늘 사람이 정하는 건은 다른 값이다 (화면 문구가 갈린다)
+    assert HoldReason.HIGH_IMPACT != HoldReason.OVER_THRESHOLD
 
 
 def test_record_case_example_and_kinds() -> None:
