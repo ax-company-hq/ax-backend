@@ -81,6 +81,7 @@ class State:
         self.sources: Sources = sources or (MockSources() if is_mock("finance") else LiveSources())
         self.ledger = Ledger()
         self.last_self_test: dict[str, Any] | None = None  # 마지막 "재무 AI 테스트" 결과
+        self.last_daily_closing: dict[str, Any] | None = None  # 마지막 자동 결산(전날) 결과
         self.records = FinanceRecords()
         self.books_loader: Callable[[], Awaitable[Books]] = load_books  # 테스트에서 바꾼다
         # 사건별 쿠폰 장부(⑨)의 실행 기록과 기준표. 테스트에서 바꾼다
