@@ -122,13 +122,16 @@ CUSTOMER_STAGES: list[dict] = [
         "condition": "support의 A2A 호출로 마케팅 issue_coupon이 시작되고 처리된다",
     },
     {
-        "key": "finance_check",
-        "name": "쿠폰 금액 교차검증 (B, finance verify_amount)",
-        "dept": "finance",
-        "skill": "verify_amount",
-        "requester": "safety",
-        "req_ids": ["DEP-FIN-02", "SAF-04"],
-        "condition": "재무가 금액을 원천 데이터로 재계산해 승인·거절한다",
+        "key": "coupon_grade",
+        "name": "쿠폰 등급 판정 (A, 한도 안 바로 지급, 재무 호출 없음)",
+        "dept": "safety",
+        "skill": "issue_coupon",
+        "requester": "marketing",
+        "req_ids": ["SAF-03", "DEP-MKT-02"],
+        "condition": (
+            "안전 레이어 코드 규칙이 한도 안 보상 쿠폰을 A·executed로 판정하고 "
+            "재무 교차검증(verify_amount)을 부르지 않는다 (#319, 인수 기준 A-5·A-6)"
+        ),
     },
     {
         "key": "notice_reply",

@@ -149,3 +149,49 @@ def test_already_regressed_stage_is_not_a_new_regression() -> None:
     assert next(s for s in second.stages if "impact" in s.name).unit.state == "regressed"
     assert judge.regressions(second, first) == []  # 계속 실패 중: 이슈·revert 대상이 아니다
     assert judge.regressions(second) != []  # prev를 안 주면 상태만 본다
+
+
+# ---- 쿠폰 등급 (#319 재무 재설계: 쿠폰 A, 재무 verify_amount 호출 없음)
+
+
+def test_customer_coupon_stage_is_grade_a_without_finance() -> None:
+    stages = build_stage_table()
+    cust = {s.key: s for s in stages if s.path == CUSTOMER}
+    grade = cust["coupon_grade"]
+    assert grade.dept == "safety" and grade.skill == "issue_coupon"
+    assert "verify_amount" not in [s.skill for s in stages]
+    assert "finance_check" not in cust
+
+
+def test_coupon_gate_decision_is_a_executed_without_verifier() -> None:
+    got, called = asyncio.run(customer.gate_decision("ctx_ui_e2e_test01"))
+    assert got == ("A", "executed", None)
+    assert called == []  # 재무 verify_amount를 포함해 검증자를 부르지 않는다
+
+
+class _Log:
+    def __init__(self, source: str, kind: str, skill: str | None = None, **kw) -> None:
+        self.source, self.kind, self.skill = source, kind, skill
+        self.requester = kw.get("requester")
+        self.task_status = kw.get("task_status")
+        self.payload = kw.get("payload", {})
+
+
+def test_chain_coupon_grade_reads_common_log() -> None:
+    done = _Log("marketing", "result_sent", "issue_coupon", task_status="completed")
+    issued = _Log("marketing", "event_published", payload={"event_type": "coupon.issued"})
+    held = _Log(
+        "marketing",
+        "result_sent",
+        "issue_coupon",
+        task_status="input-required",
+        payload={"outcome": "held"},
+    )
+    verify = _Log("finance", "request_received", "verify_amount", requester="safety")
+    assert customer.chain_coupon_grade({}, [done]).state == "pass"
+    assert customer.chain_coupon_grade({}, [issued]).state == "pass"
+    assert customer.chain_coupon_grade({}, [held]).state == "fail"
+    assert customer.chain_coupon_grade({}, [done, verify]).state == "fail"
+    assert customer.chain_coupon_grade({}, None).state == "pending"
+    blocked = customer.chain_coupon_grade({"judge": Outcome("fail")}, [done])
+    assert blocked.state == "blocked" and blocked.blocked_by == ["judge"]

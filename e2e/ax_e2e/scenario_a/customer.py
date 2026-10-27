@@ -2,7 +2,10 @@
 
 단독: 단계마다 그 부서를 고정 입력으로 직접 호출한다.
 연결: 고객 문의 하나를 support에 넣고, 이후 단계가 support의 A2A 호출로 이어지는지 공통 로그로 본다
-     (support → marketing issue_coupon → finance verify_amount, support → marketing get_notice).
+     (support → marketing issue_coupon → 안전 레이어 코드 규칙으로 A 판정·바로 지급(재무 호출 없음),
+     support → marketing get_notice).
+쿠폰 등급 (#319 재무 재설계, 인수 기준 A-5·A-6): 쿠폰 지급은 교차검증 없이 안전 레이어 코드 규칙으로
+판정한다. 한도 안이면 A 실행, 한도 초과·금액 불일치면 C. finance `verify_amount`는 부르지 않는다.
 contextId (결정 #258 9번 = ①): 고객 문의가 진행 중 사건의 contextId(`ctx_inc_`)를 이어받는다.
 연결 판정은 "각 단계가 사건 contextId 하나로 이어지는지"다.
 support가 사건을 조회해 ctx를 붙이는 기능
@@ -28,20 +31,16 @@ UNIT_CTX = "ctx_ui_e2e_unit01"
 INQUIRY = {"user_id": 1, "customer_name": "홍길동"}
 INQUIRY_TEXT = {"subject": "결제가 안돼요", "message": "결제 오류로 주문을 못했어요"}
 COMPENSATION = {"buyer_id": "buy_0001", "reason_code": "late_delivery", "count": 1}
-VERIFY = {
-    "execution_id": "exe_e2e0001",
-    "action": "issue_coupon",
-    "requester": "marketing",
-    "params": {
-        "purpose_code": "compensation",
-        "buyer_id": "buy_0001",
-        "count": 1,
-        "unit_value": 2000,
-        "claimed_total": 2000,
-    },
-    "computed_amount": 2000,
-    "threshold_version": 0,
+# 고객지원이 마케팅에 보내는 보상 쿠폰 (한도 안: 1장 × 2,000원)
+COUPON = {
+    "purpose_code": "compensation",
+    "buyer_id": "buy_0001",
+    "count": 1,
+    "unit_value": 2000,
+    "claimed_total": 2000,
 }
+GRADE_KEY = "coupon_grade"
+EXPECTED_GRADE = ("A", "executed", None)  # (등급, 상태, 검증자): 교차검증 없이 바로 지급
 
 
 def incident_link_ready() -> bool:
@@ -53,6 +52,19 @@ def incident_link_ready() -> bool:
 
 def _stage(stages: list[Stage], key: str) -> Stage:
     return next(s for s in stages if s.path == CUSTOMER and s.key == key)
+
+
+def _absent(stage: Stage, apps: harness.Apps) -> Outcome | None:
+    """쿠폰 등급 단계는 안전 레이어가 판정하므로 카드 대신 판정 대상(마케팅 issue_coupon)을 본다."""
+    if stage.key != GRADE_KEY:
+        return absent(stage, apps)
+    from ax_e2e.scenario_a import paths
+
+    if "issue_coupon" not in paths.card_skills("marketing"):
+        return Outcome("absent", "marketing Agent Card에 issue_coupon 없음")
+    if "marketing" in apps.errors:
+        return Outcome("fail", apps.errors["marketing"])
+    return None
 
 
 async def _call(
@@ -76,13 +88,110 @@ async def _call(
     return await harness.call_dept(stage.dept, req)
 
 
+def _coupon_params() -> dict[str, Any]:
+    """마케팅 issue_coupon이 안전 관문에 보내는 params와 같은 모양 (총액은 코드로 계산)."""
+    params = {k: v for k, v in COUPON.items() if k != "claimed_total"}
+    params["total_value"] = COUPON["count"] * COUPON["unit_value"]
+    params["claimed_total"] = COUPON["claimed_total"]
+    return params
+
+
+async def gate_decision(ctx: str) -> tuple[tuple[str, str, str | None], list[str]]:
+    """안전 관문 코드 규칙으로 보상 쿠폰을 판정한다: ((등급, 상태, 검증자), 부른 검증자 skill 목록).
+
+    mock e2e는 `AX_SAFETY_URL`이 없어 마케팅 execute()가 가짜 A를 받는다. 그래서 안전 관문
+    판정기(Gate)를 프로세스 안에서 같은 요청으로 직접 부른다. 앱(create_app)은 에이전트 이름을
+    바꾸므로 쓰지 않는다.
+    검증자 호출은 가로채 기록만 한다 (재무 verify_amount가 불리면 목록에 남는다).
+    """
+    from ax_contracts.schemas import ExecuteRequest
+    from ax_safety.gate import Gate
+    from ax_safety.rules import load_registry, load_thresholds
+    from ax_safety.store import Store
+
+    called: list[str] = []
+
+    async def verifier(task):  # noqa: ANN001 (safety VerifyTask)
+        called.append(f"{task.verifier}.{task.skill}")
+        raise RuntimeError("e2e: 쿠폰 판정에 검증자를 부르면 안 된다")
+
+    async def publisher(*_: Any) -> None:
+        return None
+
+    gate = Gate(load_registry(), load_thresholds(), Store(), verifier, publisher)
+    decision = await gate.execute(
+        ExecuteRequest(
+            action="issue_coupon",
+            requester="marketing",
+            context_id=ctx,
+            idempotency_key=f"{ctx}:issue_coupon:{COUPON['buyer_id']}",
+            params=_coupon_params(),
+        )
+    )
+    return (decision.grade, decision.status, decision.verifier), called
+
+
+async def _real_gate_decision(
+    ctx: str, execution_id: str | None
+) -> tuple[str, str, str | None] | None:
+    """real 모드: 실서버 안전 관문의 실행 기록에서 이 쿠폰의 판정을 읽는다 (GET만)."""
+    import httpx
+
+    from ax_agent_template.config import agent_url
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{agent_url('safety')}/api/safety/executions",
+            params={"context_id": ctx},
+            timeout=10,
+        )
+    if resp.status_code != 200:
+        return None
+    for rec in resp.json().get("data") or []:
+        req, dec = rec.get("request") or {}, rec.get("decision") or {}
+        if req.get("action") == "issue_coupon" and (
+            execution_id is None or rec.get("execution_id") == execution_id
+        ):
+            return dec.get("grade"), dec.get("status"), dec.get("verifier")
+    return None
+
+
+async def _unit_coupon_grade(coupon: Outcome | None, body: dict | None, ctx: str) -> Outcome:
+    """issue_coupon 단독 결과가 안전 관문 A·실행(executed)으로 끝났는지 본다."""
+    if coupon is None or coupon.state != "pass" or not body:
+        return Outcome("blocked", "쿠폰 지급 단독 호출이 completed가 아님", ["issue_coupon"])
+    if body.get("outcome"):  # held·verifying·rejected_by_review 등은 실행이 아니다
+        return Outcome("fail", f"쿠폰이 바로 지급되지 않음: outcome={body.get('outcome')}")
+    output = body.get("output") or {}
+    if not output.get("coupon_id"):
+        return Outcome("fail", "issue_coupon 결과에 coupon_id 없음 (실행되지 않음)")
+    refs = (body.get("evidence") or {}).get("ref_ids") or []
+    execution_id = refs[1] if len(refs) > 1 else None  # 마케팅: [coupon_id, execution_id]
+    try:
+        if harness.e2e_mode() == "real" and harness.real_host():
+            got = await _real_gate_decision(ctx, execution_id)
+            called: list[str] = []
+            if got is None:
+                return Outcome("fail", "안전 관문 실행 기록에서 이 쿠폰 판정을 찾지 못함")
+        else:
+            got, called = await gate_decision(ctx)
+    except Exception as exc:  # 안전 관문 코드가 깨져도 다른 단계 점수는 낸다
+        return Outcome("fail", f"안전 관문 판정 실패: {type(exc).__name__}: {exc}"[:300])
+    if called:
+        return Outcome("fail", f"쿠폰 판정에 검증자 호출이 있음: {', '.join(called)}")
+    if got != EXPECTED_GRADE:
+        return Outcome("fail", f"안전 관문 판정 {got} (기대: A·executed·검증자 없음)")
+    return Outcome("pass", checks={"grade": "A", "status": "executed", "verifier": "none"})
+
+
 async def run_unit(
     stages: list[Stage], apps: harness.Apps, notice_id: str | None
 ) -> dict[str, Outcome]:
     out: dict[str, Outcome] = {}
     inquiry_id: int | None = None
+    coupon_body: dict | None = None
     for stage in (s for s in stages if s.path == CUSTOMER):
-        skip = absent(stage, apps)
+        skip = _absent(stage, apps)
         if skip:
             out[stage.key] = skip
             continue
@@ -98,16 +207,11 @@ async def run_unit(
                 stage, {"inquiry_id": inquiry_id, **COMPENSATION}, ctx, key=f"{ctx}:comp"
             )
         elif stage.key == "issue_coupon":
-            data = {
-                "purpose_code": "compensation",
-                "buyer_id": "buy_0001",
-                "count": 1,
-                "unit_value": 2000,
-                "claimed_total": 2000,
-            }
-            body = await _call(stage, data, ctx, sequence=1, key=f"{ctx}:coupon")
-        elif stage.key == "finance_check":
-            body = await _call(stage, VERIFY, ctx)
+            body = await _call(stage, dict(COUPON), ctx, sequence=1, key=f"{ctx}:coupon")
+            coupon_body = body
+        elif stage.key == GRADE_KEY:
+            out[stage.key] = await _unit_coupon_grade(out.get("issue_coupon"), coupon_body, ctx)
+            continue
         else:  # notice_reply: get_notice
             if not notice_id:
                 out[stage.key] = Outcome(
@@ -133,6 +237,51 @@ def _has(records: list | None, dept: str, skill: str, requester: str, kind: str)
     )
 
 
+def coupon_done(records: list | None) -> bool:
+    """마케팅 issue_coupon이 바로 지급까지 끝났는지: 처리 완료(result_sent completed, 보류·거절
+    outcome 없음) 또는 coupon.issued 발행 기록."""
+    for r in records or []:
+        if r.source != "marketing":
+            continue
+        payload = r.payload or {}
+        if (
+            r.kind == "result_sent"
+            and r.skill == "issue_coupon"
+            and r.task_status == "completed"
+            and payload.get("outcome") in (None, "linked_duplicate")
+        ):
+            return True
+        if r.kind == "event_published" and payload.get("event_type") == "coupon.issued":
+            return True
+    return False
+
+
+def finance_verified(records: list | None) -> bool:
+    """재무 verify_amount 호출(요청 받음·결과·실패 기록 무엇이든)이 있는지."""
+    return any(r.skill == "verify_amount" for r in records or [])
+
+
+def chain_coupon_grade(out: dict[str, Outcome], records: list | None) -> Outcome:
+    """연결: 같은 사건 공통 로그에 쿠폰 지급 완료가 있고 재무 verify_amount 요청은 없는지."""
+    if out.get("judge") and out["judge"].state != "pass":
+        return Outcome("blocked", "보상 판정 실패", ["judge"])
+    if records is None:
+        return Outcome("pending", "공통 로그 기록기 없음")
+    if finance_verified(records):
+        return Outcome(
+            "fail",
+            "재무 verify_amount 호출이 공통 로그에 있음 (쿠폰은 A, 교차검증 없음 #319)",
+            checks={"common_log": "fail"},
+        )
+    if not coupon_done(records):
+        return Outcome(
+            "fail",
+            "마케팅 issue_coupon 처리 완료(또는 coupon.issued)가 공통 로그에 없음",
+            checks={"common_log": "fail"},
+        )
+    return Outcome("pass", checks={"common_log": "pass"})
+
+
 async def run_chain(
     stages: list[Stage], apps: harness.Apps, notice_id: str | None, incident_ctx: str | None = None
 ) -> dict[str, Outcome]:
@@ -143,7 +292,7 @@ async def run_chain(
     out: dict[str, Outcome] = {}
     cs = {s.key: s for s in stages if s.path == CUSTOMER}
     for key, stage in cs.items():
-        skip = absent(stage, apps)
+        skip = _absent(stage, apps)
         if skip:
             out[key] = skip
     sup = cs["inquiry"]
@@ -190,14 +339,6 @@ async def run_chain(
             "support의 issue_coupon 요청이 공통 로그에 없음",
         ),
         (
-            "finance_check",
-            "finance",
-            "verify_amount",
-            "safety",
-            "request_received",
-            "재무 교차검증(verify_amount) 호출이 공통 로그에 없음 (B 등급 검증이 이어지지 않음)",
-        ),
-        (
             "notice_reply",
             "marketing",
             "get_notice",
@@ -218,4 +359,6 @@ async def run_chain(
             out[key] = Outcome("pass", checks={"common_log": "pass"})
         else:
             out[key] = Outcome("fail", why, checks={"common_log": "fail"})
+    if GRADE_KEY not in out:
+        out[GRADE_KEY] = chain_coupon_grade(out, records)
     return out
