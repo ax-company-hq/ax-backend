@@ -278,7 +278,7 @@ async def test_claim_refund_is_grade_a_without_finance_check(
     assert verifier.tasks == []
 
 
-# ---- 롤백 숫자 기준 (SCN-A). 실제 기준표 추가는 사람 PR이라 여기서는 테스트 전용 표로 확인한다
+# ---- 롤백 숫자 기준 (SCN-A). 실제 기준표(thresholds.toml)의 규칙으로 확인한다
 _ROLLBACK_RULES = [
     {"key": "rollback_multiple_suspects", "field": "suspect_count", "op": ">", "value": 1},
     {"key": "rollback_low_confidence", "field": "low_confidence", "op": ">", "value": 0},
@@ -295,16 +295,24 @@ _ROLLBACK_OK = {
 
 @pytest.fixture
 def rollback_gate(verifier: Any, sent: Any, clock: Any) -> Gate:
-    from ax_safety.rules import Rule, load_registry, load_thresholds
+    """실제 레지스트리·기준표 그대로. 테스트 전용 규칙을 덧붙이지 않는다."""
+    from ax_safety.rules import load_registry, load_thresholds
     from ax_safety.store import Store
 
-    table = load_thresholds()
-    extra = [
-        Rule(action="rollback_deployment", metric="param", **rule)  # type: ignore[arg-type]
-        for rule in _ROLLBACK_RULES
-    ]
-    table = table.model_copy(update={"rules": [*table.rules, *extra]})
-    return Gate(load_registry(), table, Store(), verifier, sent, now=clock)
+    return Gate(load_registry(), load_thresholds(), Store(), verifier, sent, now=clock)
+
+
+def test_thresholds_toml_has_rollback_rules() -> None:
+    """기준표 파일이 스키마대로 읽히고 롤백 규칙 4개가 합의값 그대로 들어 있다."""
+    from ax_safety.rules import load_thresholds
+
+    rules = load_thresholds().rules_for("rollback_deployment")
+    assert [
+        {"key": r.key, "field": r.field, "op": r.op, "value": r.value}
+        for r in rules
+        if r.metric == "param"
+    ] == _ROLLBACK_RULES
+    assert all(r.when == {} for r in rules)
 
 
 @pytest.mark.parametrize(
@@ -369,3 +377,40 @@ async def test_rollback_all_clear_goes_to_b_verification(
     assert [(t.verifier, t.skill) for t in verifier.tasks] == [
         ("planning", "verify_rollback_target")
     ]
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"suspect_count": 0, "low_confidence": 0, "irreversible_count": 0, "prior_rollbacks": 0},
+        {"suspect_count": 1, "low_confidence": 0, "irreversible_count": 0, "prior_rollbacks": 0},
+    ],
+)
+@pytest.mark.asyncio
+async def test_rollback_at_or_below_threshold_stays_b(
+    rollback_gate: Gate, verifier: Any, act, params: dict[str, int]
+) -> None:
+    """경계값: 후보 1개 이하·나머지 0이면 규칙에 안 걸리고 B 교차검증으로 간다."""
+    key = f"rb-edge-{params['suspect_count']}"
+    decision = await rollback_gate.execute(act("rollback_deployment", "infra", key, **params))
+    assert (decision.grade, decision.status) == ("B", "executed")
+    assert decision.hold_reason is None
+    assert [(t.verifier, t.skill) for t in verifier.tasks] == [
+        ("planning", "verify_rollback_target")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_rollback_multiple_rules_all_reported(rollback_gate: Gate, act) -> None:
+    """여러 규칙에 동시에 걸리면 보류 보고서에 걸린 규칙이 전부 남는다."""
+    params = {
+        "suspect_count": 3,
+        "low_confidence": 1,
+        "irreversible_count": 2,
+        "prior_rollbacks": 1,
+    }
+    decision = await rollback_gate.execute(act("rollback_deployment", "infra", "rb-all", **params))
+    assert (decision.grade, decision.status) == ("C", "held")
+    review = rollback_gate.store.get_review(decision.review_id or "")
+    assert review is not None
+    assert [hit["key"] for hit in review.report["rules"]] == [r["key"] for r in _ROLLBACK_RULES]
