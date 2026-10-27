@@ -16,8 +16,8 @@ A_ACTIONS = [
 ]
 
 # hr에서 뺀 액션 (#374, #375). 등록하지 않으니 무엇을 보내도 미등록이라 C(사람 승인)다.
-# (`confirm_reassignment`는 thresholds.toml 규칙이 가리켜서 사람 PR이 규칙과 함께 뺄 때까지 남긴다)
 REMOVED_ACTIONS = [
+    "confirm_reassignment",  # thresholds.toml의 reassignment_* 규칙과 함께 뺐다(#375)
     "request_assignment_change",
     "start_onboarding",
     "update_onboarding_step",
@@ -65,23 +65,22 @@ async def test_confirm_handover_below_threshold_or_missing_is_held(
 
 @pytest.mark.asyncio
 async def test_confirm_reassignment_rules(gate: Gate, verifier: Any, act) -> None:
-    ok = await gate.execute(
-        act("confirm_reassignment", "hr", "re-ok", unassigned_count=0, duplicate_count=0)
-    )
-    assert (ok.grade, ok.status, ok.verifier) == ("B", "executed", "safety")
-    assert verifier.tasks == []
+    """담당 변경 확정은 hr에서 빠졌다(#375). 등록·기준표 규칙이 함께 없어지고, 무엇을 보내도 C다."""
+    from ax_safety.rules import load_registry, load_thresholds
 
-    for key, bad in {
-        "reassignment_gap": {"unassigned_count": 1, "duplicate_count": 0},
-        "reassignment_duplicate": {"unassigned_count": 0, "duplicate_count": 2},
+    assert load_registry().get("confirm_reassignment") is None
+    assert load_thresholds().rules_for("confirm_reassignment") == []
+    assert gate.registry.get("confirm_reassignment") is None
+
+    # 예전에 B로 실행되던 값(공백·중복 0)도, 규칙에 걸리던 값도 이제 모두 미등록 C다
+    for key, params in {
+        "re-ok": {"unassigned_count": 0, "duplicate_count": 0},
+        "re-gap": {"unassigned_count": 1, "duplicate_count": 0},
     }.items():
-        decision = await gate.execute(act("confirm_reassignment", "hr", f"re-{key}", **bad))
-        assert decision.status == "held"
-        review = gate.store.get_review(decision.review_id or "")
-        assert [hit["key"] for hit in review.report["rules"]] == [key]  # type: ignore[union-attr]
-
-    missing = await gate.execute(act("confirm_reassignment", "hr", "re-none"))
-    assert missing.status == "held"
+        decision = await gate.execute(act("confirm_reassignment", "hr", key, **params))
+        assert (decision.grade, decision.status) == ("C", "held")
+        assert decision.hold_reason == HoldReason.UNREGISTERED_ACTION
+    assert verifier.tasks == []  # C는 검증자에게 보내지 않는다
 
 
 @pytest.mark.asyncio
