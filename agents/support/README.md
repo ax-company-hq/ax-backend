@@ -64,8 +64,8 @@
 둘 다 **읽기 skill**(요청 가능: dashboard-api, orchestrator)이라 상태를 바꾸지 않고, 접수·지급은 하지 않는다.
 - `analyze_receipt`: 영수증 글(`untrusted.receipt_text`)과 사진(`untrusted.images`, 최대 4장)에서 금액·날짜·주문번호·배송비·품목을 **코드(정규식)가 뽑아** 문의에 붙은 주문(shop-api)과 대조한다. 총 결제금액은 "총 결제·결제금액" 줄을 우선하고, 후보가 서로 다르면 고르지 않는다(`ambiguous_total`). 금액은 실결제 현금 또는 포인트 전 총액과 같으면 맞다고 본다. 날짜는 하루 차이까지 허용한다. 결과는 `consistent`·`mismatch`·`insufficient`와 불일치 코드(`RECEIPT_AMOUNT_MISMATCH`·`RECEIPT_DATE_MISMATCH`·`RECEIPT_ORDER_NO_MISMATCH`·`RECEIPT_SHIPPING_MISMATCH`·`RECEIPT_ITEM_UNKNOWN`·`RECEIPT_ITEM_AMOUNT_MISMATCH`)뿐이다. **환불 판정은 하지 않는다.**
   - 개인정보(카드번호·전화번호·계좌 등)는 가린 뒤에 읽고, 결과에는 뽑은 사실과 가린 종류만 담는다. 영수증 원문과 사진은 어디에도 저장하지 않는다.
-  - 사진은 `receipts.set_vision_extractor(함수)`로 이미지 분석기를 꽂았을 때만 읽는다. 꽂지 않았으면 `images_status: unavailable`로 읽지 못했다고 알리고 아무것도 지어내지 않는다. 글과 사진 값이 다르면 글 값을 쓰고 알린다. 개수·크기·형식(jpeg·png·webp)을 넘으면 읽지 않는다(`skipped`).
-  - **이미지 분석기는 아직 연결되지 않았다.** agent-template의 LLM 래퍼가 이미지 입력을 지원하면 `VisionExtractor`(이미지 목록 → `ReceiptFacts`)를 구현해 꽂는다. 사진 저장 위치와 보관 정책은 사람이 정한다.
+  - 사진은 이미지 분석기가 꽂혀 있을 때만 읽는다. 꽂혀 있지 않으면 `images_status: unavailable`로 읽지 못했다고 알리고 아무것도 지어내지 않는다. 글과 사진 값이 다르면 글 값을 쓰고 알린다. 개수·크기·형식(jpeg·png·webp)을 넘으면 읽지 않는다(`skipped`).
+  - **이미지 분석기(`receipt_vision.py`)**: 서버 시작 때 `SUPPORT_LLM_MODEL`·`SUPPORT_LLM_BASE_URL`(또는 `LLM_*`)이 있고 목 모드가 아니면 자동으로 꽂는다. `SUPPORT_VISION=off`면 끈다. 이미지를 읽을 수 있는 모델이어야 한다. LLM은 인쇄된 글자를 옮겨 적기만 하고, 금액·날짜·주문번호 형식은 코드가 다시 검사해 틀린 값은 버린다. 사진은 메모리에서만 쓰고 저장하지 않으며 로그에는 금액·품목을 남기지 않는다. 사진 저장 위치와 보관 정책은 사람이 정한다.
 - `analyze_claim_request`: 문의의 마지막 고객 메시지(개인정보를 가린 뒤)를 환불·교환·취소·이벤트 문의로 분류한다. **LLM은 분류만** 하고(요청 종류, 사유, 말한 품목, 이벤트 단어), LLM을 쓸 수 없으면 단어 규칙으로 대신하며 `source: rules`로 표시한다. 그다음은 코드가 한다: 말한 품목을 주문 품목과 맞추고(말하지 않았으면 전체), 클레임 유형을 정하고(환불은 배송 전이면 `cancel`, 배송 뒤면 `return`), 접수했다면 어떻게 판정될지 `claim_rules.decide`로 **환불 범위를 미리 계산**(`preview`)하며, 담당자가 확인해 `create_claim`에 보낼 입력(`suggested_claim`)을 돌려준다. 이벤트·쿠폰 문의는 `event_related`와 키워드, 근거 문서(`policy_sources`)만 돌려주고 미리 계산은 없다.
   - 고객 문장은 금액에 영향을 줄 수 없다 (금액은 주문 사실과 규칙에서만 나온다). 사유를 모르면 `other`로 계산하고 알린다.
 
