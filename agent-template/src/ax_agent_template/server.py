@@ -24,7 +24,8 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
@@ -32,6 +33,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from ax_agent_template import events
 from ax_agent_template.config import MAX_PATH_LENGTH, agent_name_scope, is_mock, set_agent_name
 from ax_agent_template.logging import log_event
 from ax_contracts.schemas import (
@@ -133,7 +135,17 @@ def create_agent_app(card: AgentCard, handlers: Mapping[str, Handler]) -> FastAP
         raise ValueError(f"카드와 핸들러가 다르다: 핸들러 없음={missing}, 카드에 없음={extra}")
 
     set_agent_name(card.name)
-    app = FastAPI(title=f"ax-agent-{card.name}")
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        # 실제 모드에서 구독이 있으면 이벤트 소비를 시작한다(목 모드·구독 없음이면 아무 일도 안 함)
+        events.start_consumer()
+        try:
+            yield
+        finally:
+            await events.stop_consumer()
+
+    app = FastAPI(title=f"ax-agent-{card.name}", lifespan=lifespan)
 
     @app.get("/health")
     def health() -> dict:

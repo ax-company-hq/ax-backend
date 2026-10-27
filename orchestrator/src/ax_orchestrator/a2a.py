@@ -74,6 +74,7 @@ def find_active_incident(get_manager: GetManager) -> Handler:
                 status=inc.status,  # type: ignore[arg-type]
                 opened_at=inc.opened_at,
                 closed_at=inc.closed_at,
+                notice_id=inc.shared.get("notice_id"),  # 점검 공지가 게시됐을 때만, 지어내지 않는다
             )
             summary = f"{inc.component} 사건 {inc.status}"
         return AgentResult(

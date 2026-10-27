@@ -60,6 +60,14 @@ CORS 허용 출처는 `DASHBOARD_CORS_ORIGINS`(쉼표 구분, 기본 `http://loc
 | POST `/claims/{id}/approve`, `/reject` | `decide_claim` (메모는 `untrusted.note`) |
 | POST `/claims/{id}/receive`, `/inspection` | `receive_return`, `inspect_return` |
 | POST `/queue-entries/process` | `process_claim_queue` (`refund_request`로 지급, 재무 교차검증) |
+| GET `/customers/at-risk?min_level&limit` | `list_at_risk_customers` (고객관리 탭. `data`는 `items`, `meta.total`은 자르기 전 전체 수) |
+| GET `/customers/{buyer_id}/signals` | `customer_signals` (위험 신호·이유별 점수·권장 조치) |
+| GET `/conversations/{id}/compensation-suggestion` | `suggest_compensation` (읽기. 승인은 사람이 하고 요청은 따로 보낸다) |
+| GET `/conversations/{id}/payment-diagnosis` | `diagnose_payment` (읽기) |
+| GET `/inquiry-surge` | `detect_inquiry_surge` |
+| GET `/change-requests?inquiry_id&status` | `list_change_requests` (`items`) |
+
+고객관리 탭의 위 경로는 모두 읽기라 사람 토큰이 필요 없고, 응답은 support 출력을 그대로 둔다 (위험 단계·보상 후보는 코드가 사실에서 낸 값이다). 목 모드 값은 `mock_customers.py`에 있다.
 
 support 출력은 `claim_mapping.py`에서 화면 모델로 바꾼다 (값을 지어내지 않고, support에 없는 값은 비우거나 0).
 - 상태: support의 `approved`(승인됐고 지급 대기)는 화면에 없어서 `return_received`("입고 완료·처리 대기")로 보낸다. 상태 필터는 변환 뒤에 건다.
@@ -81,9 +89,9 @@ support 출력은 `claim_mapping.py`에서 화면 모델로 바꾼다 (값을 �
 | POST `/handover-questions/{question_id}/answer` | `answer_handover_question` | 본문 `HandoverAnswerRequest`(`question_id`, `answer`, `idempotency_key`) → `AnswerHandoverQuestionOutput` |
 | GET `/candidate-cards?area` | `list_candidate_cards` | 후보 `Card[]` (`candidate: true`, `confidence` low·mid·high) |
 | POST `/candidate-cards/{card_id}/decision` | `decide_candidate_card` | 본문 `{decision: approve|reject, note?}` → `{card_id, status: active|retired}` |
-| GET `/onboardings?member_id&area` | `list_onboardings` | `OnboardingView[]` (단계·진행률) |
-| POST `/onboardings/{onboarding_id}/steps/{step_id}` | `update_onboarding_step` | 본문 `{done: true|false}`(기본 true) → `StartOnboardingOutput` (진행률은 다시 센 값) |
-| GET `/assignment-changes?status&area&member_id` | `list_changes` | `ChangeView[]` (교대·발령·퇴직·입사 요청, 확인 목록) |
+| GET `/onboardings?member_id&area` | **폐기 예정** — 항상 빈 목록 (hr에서 기능을 뺐다, #374). hr을 부르지 않는다 |
+| POST `/onboardings/{onboarding_id}/steps/{step_id}` | **폐기 예정** — 항상 410 `ENDPOINT_RETIRED` (본문 `{done}`은 받지만 쓰지 않는다) |
+| GET `/assignment-changes?status&area&member_id` | **폐기 예정** — 항상 빈 목록 |
 | GET `/roster?area` | `get_roster` | `GetRosterOutput` 한 개 (`entries`, `gap_areas`, `collected_at`). 개인 정보 없음 |
 | GET `/hr-activity/{context_id}` | `get_audit_timeline` | `AuditEntry[]` (hr이 한 일, 시간순) |
 | POST `/plan-checks` | `check_plan` | 본문 `{draft: {title, summary, area, kind}}` → `CheckPlanOutput` (읽기, 저장 안 함) |
@@ -94,8 +102,8 @@ support 출력은 `claim_mapping.py`에서 화면 모델로 바꾼다 (값을 �
 - 목과 실제는 같은 모양이다. 예전 목의 `StartHandoverOutput`(`gap_count`, `questions`)은 hr 화면 계약의 `HandoverView`(`open_questions`)로 바뀌었다. 화면 타입을 다시 만들어야 한다.
 - 완성도·진행률 같은 숫자는 hr이 계산한 값이다 (목은 코드가 계산: 완성도 = (항목 수 - 빈 자리) / 항목 수).
 - 답변 문장은 사람이 쓴 내부 입력이라 계약대로 `input`으로 보낸다. 화면은 텍스트로만 표시해야 한다.
-- 온보딩 단계 완료는 이미 그 상태면 그대로 성공하고(`duplicate`), 없는 온보딩·단계는 404다. 변경(`assignment-changes`)의 시작·확정·퇴직 확정은 통합 에이전트만 부르고 화면은 조회만 한다 (hr Agent Card가 dashboard-api를 허용하지 않음). 계획 비교의 `draft`는 화면에서 사람이 쓴 요약이라 `input`으로 보낸다 (`untrusted` 비움).
-- 목 모드 데이터는 `mock_handover.py`(인수인계·후보 카드)와 `mock_hr.py`(온보딩·변경·명부·감사·계획 비교)에 있다. 목의 진행률은 hr과 같은 규칙(완료한 단계 / 전체 단계)으로 코드가 센다.
+- 계획 비교의 `draft`는 화면에서 사람이 쓴 요약이라 `input`으로 보낸다 (`untrusted` 비움). 온보딩·발령 세 경로는 hr에서 기능을 빼면서 폐기 예정이 되었다(#374, #377). 경로를 지우면 깨지는 변경(`contracts-compat`)이라 응답만 바꿔 두었고(빈 목록·410), 프론트(인사 화면)가 쓰지 않게 된 뒤 따로 지운다.
+- 목 모드 데이터는 `mock_handover.py`(인수인계·후보 카드)와 `mock_hr.py`(명부·감사·계획 비교)에 있다. 목의 진행률은 hr과 같은 규칙(완료한 단계 / 전체 단계)으로 코드가 센다.
 
 ### 소통 탭: 부서 간 A2A 대화
 | 경로 (`/api/dashboard` 아래) | 응답 `data` |
@@ -127,3 +135,13 @@ ax-contracts, ax-agent-template
 ## 5. 하지 않는 것
 - 다른 서비스 DB를 직접 읽지 않는다. 판매 사이트 환불·쿠폰 API를 직접 호출하지 않는다.
 - LLM을 직접 호출하지 않는다 (답변 초안·가드·요약은 support 에이전트).
+
+## 쓰기 API 사람 토큰 (#295)
+
+상태를 바꾸는 요청(GET·HEAD·OPTIONS 외)은 `Authorization: Bearer <사람 토큰>`이 있어야 한다. 읽기와 `POST /plan-checks`(저장 없는 판정)는 토큰 없이 열려 있다.
+
+- 토큰: `DASHBOARD_HUMAN_TOKENS="이름:토큰,이름:토큰"` (없으면 `SAFETY_HUMAN_TOKENS`). 화면은 안전 관문과 같은 `VITE_SAFETY_HUMAN_TOKEN`을 보내면 된다.
+- 목 모드에서는 `human:<이름>`도 받는다. 에이전트 토큰(`mock:`)은 항상 거부한다.
+- 실패는 `{error: {code, message}}`: 토큰 없음 401 `AUTH_REQUIRED`, 에이전트 토큰 403 `HUMAN_TOKEN_REQUIRED`, 모르는 토큰 403 `HUMAN_TOKEN_INVALID`.
+- 토큰이 설정되지 않았고 목 모드도 아니면 쓰기는 모두 거부된다 (fail-closed).
+- 확인한 사람 이름은 요청마다 `request.state.human`에 담긴다 (A2A 요청자는 여전히 서비스 토큰).

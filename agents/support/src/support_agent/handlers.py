@@ -223,14 +223,22 @@ async def create_inquiry(request: AgentRequest) -> AgentResult:
     key = request.meta.idempotency_key or (
         f"{request.meta.context_id}:create_inquiry:user:{parsed.user_id}"
     )
+    incident = None
     if key not in STORE.results:  # 같은 요청의 재전송은 처음 정한 결과를 그대로 쓴다
         incident = await incident_context.resolve_for_order(
             request, parsed.order_id, parsed.user_id, SEND
         )
         if incident is not None:
-            request = incident_context.rebind(request, incident)
+            request = incident_context.rebind(request, incident.context_id)
 
-    extra = await _notice_sources(request, parsed.notice_id, parsed.notice_component)
+    # 호출한 쪽이 준 공지가 먼저이고, 없으면 사건에 보관된 점검 공지를 바로 읽는다.
+    incident_notice = incident.notice_id if incident is not None else None
+    extra = await _notice_sources(
+        request, parsed.notice_id or incident_notice, parsed.notice_component
+    )
+    if not extra and parsed.notice_id is None and incident_notice is not None:
+        # 사건의 공지를 읽지 못했으면 지금 게시 중인 공지를 찾아 본다 (사건 요청이라 자동)
+        extra = await _notice_sources(request, None, parsed.notice_component)
 
     async def apply() -> tuple[dict[str, Any], bool]:
         analysis, fallback = await drafting.analyze(message, subject, extra)
@@ -371,6 +379,12 @@ async def set_inquiry_status(request: AgentRequest) -> AgentResult:
 
     async def apply() -> tuple[dict[str, Any], bool]:
         conversation = STORE.set_status(parsed.inquiry_id, parsed.status)
+        # 클레임 저장소는 claim_handlers가 만든다 (그쪽이 이 모듈을 import하므로 늦게 가져온다)
+        from support_agent import claim_handlers
+
+        linked = [c for c in claim_handlers.CLAIMS.list() if c.conversation_id == conversation.id]
+        claim = max(linked, key=lambda c: c.id, default=None)
+        await events.emit_inquiry_resolved(request, conversation, claim)
         return conversation.model_dump(mode="json"), False
 
     return await _write(
@@ -387,7 +401,7 @@ def _sequence_consumed(reply: AgentResult) -> bool:
 
     소비한 경우: 지급·재무 거절(`completed`), 보류(`input_required`), 실행 실패·거부(`failed`,
     `execute_*`), 검증 시간 초과(`canceled`, 실행 정보가 output에 있음).
-    소비하지 않은 경우: 재무 검증 중(`working`), 번호 오류·입력 오류(`rejected`·그 밖의 `failed`),
+    소비하지 않은 경우: 검증·처리 중(`working`), 번호 오류·입력 오류(`rejected`·그 밖의 `failed`),
     우리 쪽 타임아웃·연결 실패(output 없음). 이때는 같은 번호로 다시 보낸다.
     """
     outcome = str(reply.outcome or "")

@@ -1,7 +1,6 @@
-"""대시보드 인사 화면이 보여 줄 현황 조회 skill 6개(모두 읽기 전용, 관문을 거치지 않는다).
+"""대시보드 인사 화면이 보여 줄 현황 조회 skill 4개(모두 읽기 전용, 관문을 거치지 않는다).
 
-- `list_handovers` · `list_open_questions` · `list_onboardings` · `list_changes`
-- `list_candidate_cards` · `get_audit_timeline`
+- `list_handovers` · `list_open_questions` · `list_candidate_cards` · `get_audit_timeline`
 값은 저장된 그대로 돌려주고 새로 계산하거나 지어내지 않는다(진행률·완성도는 저장·계산된 값).
 """
 
@@ -16,28 +15,19 @@ from ax_contracts.schemas import (
     AgentRequest,
     AgentResult,
     AuditEntry,
-    ChangeView,
-    ChecklistItem,
     GetAuditTimelineInput,
     GetAuditTimelineOutput,
     HandoverView,
     ListCandidateCardsInput,
     ListCandidateCardsOutput,
-    ListChangesInput,
-    ListChangesOutput,
     ListHandoversInput,
     ListHandoversOutput,
-    ListOnboardingsInput,
-    ListOnboardingsOutput,
     ListOpenQuestionsInput,
     ListOpenQuestionsOutput,
-    OnboardingView,
 )
 from hr_agent.handover import store as hstore
-from hr_agent.onboarding.service import progress_of, steps_of
 from hr_agent.results import completed, invalid_input, make_evidence
 from hr_agent.services import Services
-from hr_agent.util import loads
 
 
 def _parse_input[T: BaseModel](model: type[T], request: AgentRequest) -> T | AgentResult:
@@ -117,71 +107,6 @@ async def list_open_questions(svc: Services, request: AgentRequest) -> AgentResu
         output,
         f"답을 기다리는 질문 {len(questions)}건",
         [q.question_id for q in questions],
-    )
-
-
-async def list_onboardings(svc: Services, request: AgentRequest) -> AgentResult:
-    params = _parse_input(ListOnboardingsInput, request)
-    if isinstance(params, AgentResult):
-        return params
-    rows = svc.store.all("SELECT * FROM onboardings ORDER BY created_at DESC, onboarding_id")
-    views = []
-    for r in rows:
-        if params.member_id and r["member_id"] != params.member_id:
-            continue
-        if params.area and r["area"] != params.area:
-            continue
-        steps = steps_of(svc, r["onboarding_id"])
-        views.append(
-            OnboardingView(
-                onboarding_id=r["onboarding_id"],
-                context_id=r["context_id"],
-                member_id=r["member_id"],
-                area=r["area"],
-                handover_id=r["handover_id"],
-                steps=steps,
-                progress=progress_of(steps),
-                created_at=datetime.fromisoformat(r["created_at"]),
-            )
-        )
-    output = ListOnboardingsOutput(onboardings=views, collected_at=svc.clock())
-    return _done(
-        svc, request, output, f"온보딩 {len(views)}건 조회", [v.onboarding_id for v in views]
-    )
-
-
-async def list_changes(svc: Services, request: AgentRequest) -> AgentResult:
-    params = _parse_input(ListChangesInput, request)
-    if isinstance(params, AgentResult):
-        return params
-    rows = svc.store.all("SELECT * FROM assignment_changes ORDER BY updated_at DESC, change_id")
-    views = []
-    for r in rows:
-        if params.status and r["status"] != params.status:
-            continue
-        if params.area and r["area"] != params.area:
-            continue
-        if params.member_id and r["member_id"] != params.member_id:
-            continue
-        views.append(
-            ChangeView(
-                change_id=r["change_id"],
-                context_id=r["context_id"],
-                change_kind=r["kind"],
-                member_id=r["member_id"],
-                area=r["area"],
-                successor_id=r["successor_id"],
-                status=r["status"],
-                handover_id=r["handover_id"],
-                onboarding_id=r["onboarding_id"],
-                checklist=[ChecklistItem(**c) for c in loads(r["checklist"], [])],
-                created_at=datetime.fromisoformat(r["created_at"]),
-                updated_at=datetime.fromisoformat(r["updated_at"]),
-            )
-        )
-    output = ListChangesOutput(changes=views, collected_at=svc.clock())
-    return _done(
-        svc, request, output, f"변경 요청 {len(views)}건 조회", [v.change_id for v in views]
     )
 
 

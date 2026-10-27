@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import os
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -16,16 +18,18 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
+from ax_agent_template import events
 from ax_agent_template.config import set_agent_name
 from ax_contracts.schemas import EventEnvelope, EventType
 from ax_orchestrator.a2a import build_a2a_app
 from ax_orchestrator.engine import Engine
 from ax_orchestrator.hybrid import HybridDepartments, real_depts_from_env
-from ax_orchestrator.manager import IncidentManager
+from ax_orchestrator.manager import SUBSCRIBED, IncidentManager
 from ax_orchestrator.mock.fake_departments import FakeDepartments
-from ax_orchestrator.models import Incident
+from ax_orchestrator.models import Incident, now
 from ax_orchestrator.plans.scenario_a import scenario_a
 from ax_orchestrator.registry import Registry
+from ax_orchestrator.usage import BUCKET_SECONDS, WINDOW_SECONDS, RecordingCaller, UsageRecorder
 
 STATIC = Path(__file__).parent / "static"
 DEPTS = ["infra", "data", "planning", "marketing", "support", "finance", "hr"]
@@ -56,6 +60,7 @@ class AppState:
         self.manager: IncidentManager | None = None
         self.published: list[dict[str, Any]] = []
         self.modes: dict[str, str] = {}
+        self.usage = UsageRecorder()  # 사건·옵션이 바뀌어도 부서별 사용량은 이어서 쌓는다
 
     async def build(self, demo: DemoRequest | None = None) -> IncidentManager:
         demo = demo or DemoRequest()
@@ -80,7 +85,7 @@ class AppState:
         await self.registry.load(DEPTS, caller.fetch_card)
         engine = Engine(
             self.registry,
-            caller,
+            RecordingCaller(caller, self.usage),
             publish=self._publish,
             hold_timeout=self.hold_timeout,
             retry_delay=0.2,
@@ -97,7 +102,37 @@ class AppState:
 
 
 state = AppState()
-app = FastAPI(title="ax-orchestrator")
+
+
+async def start_event_bus() -> bool:
+    """이벤트 버스(Redis Streams)를 구독해 `manager.process`로 넘긴다 (ORC-02).
+
+    목 모드이거나 `REDIS_URL`이 없으면 구독하지 않는다(그때는 개발용 `POST /api/events`만 쓴다).
+    판정 규칙은 입구와 상관없이 같은 `manager.process`다. 같은 `event_id`는 한 번만 처리된다.
+    """
+    if state.mock or not events.redis_configured():
+        return False
+    set_agent_name("orchestrator")
+    manager = state.manager or await state.build()
+
+    async def on_event(env: EventEnvelope) -> None:
+        await manager.process(env)
+
+    events.subscribe(SUBSCRIBED, on_event)
+    events.start_consumer()
+    return True
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    await start_event_bus()
+    try:
+        yield
+    finally:
+        await events.stop_consumer()
+
+
+app = FastAPI(title="ax-orchestrator", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -129,6 +164,59 @@ async def registry() -> dict:
     for dept in view["depts"]:
         dept["mode"] = state.modes.get(dept["name"], "mock")
     return {"data": view, "meta": {"mock": True, "modes": state.modes}}
+
+
+@app.get("/api/departments")
+async def departments() -> dict:
+    """부서별 카드·skill·사용량(총괄이 부른 호출을 센 실측)과 최근 호출. 화면의 부서 카드가 쓴다."""
+    _require_mock()
+    if state.manager is None:
+        await state.build()
+    view = state.registry.view()
+    current = now()
+    items: list[dict[str, Any]] = []
+    for dept in view["depts"]:
+        name = dept["name"]
+        skills = []
+        for skill in dept["skills"]:
+            per_skill = state.usage.summary(name, current, skill["id"])
+            skills.append(
+                {
+                    **skill,
+                    **{k: per_skill[k] for k in ("calls", "errors", "success_rate", "avg_ms")},
+                    "retries": per_skill["retries"],
+                    "series": state.usage.series(name, current, skill["id"]),
+                }
+            )
+        items.append(_dept_item(name, dept["owner"], True, None, skills, current))
+    for name, reason in view["unavailable"].items():
+        items.append(_dept_item(name, None, False, reason, [], current))
+    items.sort(key=lambda d: DEPTS.index(d["name"]) if d["name"] in DEPTS else len(DEPTS))
+    return {
+        "data": items,
+        "meta": {"mock": True, "window_seconds": WINDOW_SECONDS, "bucket_seconds": BUCKET_SECONDS},
+    }
+
+
+def _dept_item(
+    name: str,
+    owner: str | None,
+    available: bool,
+    reason: str | None,
+    skills: list[dict[str, Any]],
+    current: Any,
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "owner": owner,
+        "mode": state.modes.get(name, "mock"),
+        "available": available,
+        "unavailable_reason": reason,
+        "skills": skills,
+        "usage": state.usage.summary(name, current),
+        "series": state.usage.series(name, current),
+        "recent": state.usage.recent(name),
+    }
 
 
 @app.get("/api/registry/real")
@@ -178,7 +266,7 @@ async def inject(req: DemoRequest | None = None) -> dict:
 async def receive_event(env: EventEnvelope) -> dict:
     """다른 부서가 이벤트를 보내 볼 수 있는 개발용 입구(목·혼합 모드).
 
-    실제 전달은 Redis Streams(agent-template TODO)로 바뀌며, 그때도 판단은 같은 `manager.process`다.
+    실제 전달은 Redis Streams 구독(`start_event_bus`)이고, 그때도 판단은 같은 `manager.process`다.
     """
     _require_mock()
     manager = state.manager or await state.build()

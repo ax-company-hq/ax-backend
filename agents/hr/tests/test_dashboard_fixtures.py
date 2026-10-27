@@ -9,14 +9,11 @@ import pytest
 from ax_contracts.schemas import (
     AuditEntry,
     Card,
-    ChangeView,
     CheckPlanOutput,
     DecideCandidateCardOutput,
     GetRosterOutput,
     HandoverQuestion,
     HandoverView,
-    OnboardingView,
-    StartOnboardingOutput,
 )
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -26,12 +23,9 @@ SCRIPT = ROOT / "agents" / "hr" / "scripts" / "make_dashboard_fixtures.py"
 MODELS = {
     "GET_handovers": ("list", HandoverView),
     "GET_handover-questions": ("list", HandoverQuestion),
-    "GET_onboardings": ("list", OnboardingView),
-    "GET_assignment-changes": ("list", ChangeView),
     "GET_candidate-cards": ("list", Card),
     "GET_hr-activity": ("list", AuditEntry),
     "GET_roster": ("one", GetRosterOutput),
-    "POST_onboardings_step": ("one", StartOnboardingOutput),
     "POST_candidate-cards_decision": ("one", DecideCandidateCardOutput),
     "POST_plan-checks": ("one", CheckPlanOutput),
 }

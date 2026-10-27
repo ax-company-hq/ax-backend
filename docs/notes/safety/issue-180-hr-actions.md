@@ -25,3 +25,10 @@
    safety가 사람 거절·검증 거절을 알리는 것은 `hold_reason`이 `verify_rejected`·`review_timeout`일 때뿐이다. 사유 없는 `rejected`는 safety가 판정한 것이 아니다.
    (감사 로그 실패 시 safety 자신도 사유 없는 `rejected`를 돌려준다. 이때도 실행하지 않는다.)
 6. 보류 기한: 맞다. hr은 따로 기한을 두지 않고 `review_timeout`을 따른다. 현재 `review_timeout_seconds`는 600초이며, 24시간 변경은 #99 몫이라 여기서 바꾸지 않았다.
+
+## 정리 (#375, 2026-10-26)
+hr에서 온보딩·발령·퇴직 기능을 뺐다(#374). 그래서 위 9개 중 아래를 정리한다.
+- `registry.toml`에서 뺀 것(4개): `request_assignment_change`, `start_onboarding`, `update_onboarding_step`, `confirm_offboarding`. 미등록은 항상 C(사람 승인, `unregistered_action`)다. 다시 쓰려면 그때 새로 등록한다.
+- 남은 hr 등록(5개): A `start_handover`·`answer_handover_question`·`decide_candidate_card`, B `confirm_handover`·`confirm_reassignment`, C `confirm_handover_incomplete`. (`record_case`는 위와 별도로 A다.)
+- **남긴 것: `confirm_reassignment`.** `thresholds.toml`의 `reassignment_gap`·`reassignment_duplicate` 규칙이 이 액션을 가리키는데, 게이트가 시작할 때 "기준표 규칙의 액션이 레지스트리에 있는지"를 확인해서 항목만 지우면 서비스가 뜨지 않는다. `thresholds.toml`은 사람 승인 파일이라, 사람 PR이 두 규칙과 `registry.toml`의 `confirm_reassignment`와 그 테스트(`test_confirm_reassignment_rules`)를 함께 지운다.
+- 테스트: 뺀 4개는 `test_removed_hr_actions_are_unregistered_and_held`로 미등록 C 보류를 확인한다. `test_hr_c_actions_always_held_with_summary`는 `confirm_handover_incomplete`만 남기고 설명 문구를 인수인계로 바꿨다.

@@ -150,6 +150,7 @@ C 등급 보류는 Task 상태가 아니라 안전 레이어의 실행 결과(`s
 | `order.delivered`, `shipment.delayed`, `payment.refunded`, `return.received` | shop-api | 배송 완료 시각, 지연 분, 환불 금액, 반품 입고 시각 | support, finance | 2차 (불량·반품 흐름) |
 | `seller.registered`, `product.created` | shop-api | 판매자·상품 ID, 카테고리, 가격 (소개·설명은 untrusted) | finance, marketing | 2차 |
 | `support.inquiry_received` | support (문의 위젯) | inquiry\_id, buyer\_id, order\_id, channel\_code (원문은 untrusted) | orchestrator | 1차 |
+| `support.inquiry_resolved` | support | inquiry\_id, order\_id, status(resolved·escalated), resolution(answered·claim\_decided·compensated·escalated), claim\_id, claim\_decision, coupon\_id, refund\_amount (원문·판단 문장 없음) | orchestrator | 1차 |
 | `support.inquiry_surge` | support | topic\_code, count, window (근거는 Task 쪽, 샘플 문의는 untrusted) | orchestrator → marketing | 2차 |
 | `metric.anomaly` | data | metric, window, observed, baseline, severity | orchestrator | 1차 |
 | `infra.anomaly_detected` | infra | component, metric\_code, value, threshold, detected\_at, source\_ref (원인 판단은 넣지 않고 `diagnose_incident`로) | orchestrator | 1차 |

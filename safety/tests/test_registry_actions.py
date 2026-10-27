@@ -258,8 +258,10 @@ async def test_support_claim_records_are_grade_a(gate: Gate, act, action: str) -
 
 
 @pytest.mark.asyncio
-async def test_claim_refund_still_needs_finance_check(gate: Gate, verifier: Any, act) -> None:
-    """클레임 환불 지급은 refund_request(B)로 재무가 검증한다."""
+async def test_claim_refund_is_grade_a_without_finance_check(
+    gate: Gate, verifier: Any, act
+) -> None:
+    """클레임 환불 지급은 refund_request(A). 한도 안이면 바로 실행되고 재무에 묻지 않는다."""
     decision = await gate.execute(
         act(
             "refund_request",
@@ -271,8 +273,9 @@ async def test_claim_refund_still_needs_finance_check(gate: Gate, verifier: Any,
             refund_amount=20_000,
         )
     )
-    assert (decision.grade, decision.status, decision.verifier) == ("B", "executed", "finance")
-    assert verifier.tasks[-1].input["params"]["claim_id"] == 1
+    assert (decision.grade, decision.status, decision.verifier) == ("A", "executed", None)
+    assert decision.computed_amount == 20_000
+    assert verifier.tasks == []
 
 
 # ---- 롤백 숫자 기준 (SCN-A). 실제 기준표 추가는 사람 PR이라 여기서는 테스트 전용 표로 확인한다

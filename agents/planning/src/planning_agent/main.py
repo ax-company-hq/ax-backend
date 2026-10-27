@@ -19,7 +19,11 @@ from planning_agent.api import create_api_router
 from planning_agent.handlers import HANDLERS
 from planning_agent.runtime import get_service
 
-DEFAULT_CORS_ORIGINS = "http://localhost:3002,http://localhost:5173,http://127.0.0.1:5173"
+# 화면: 업무 시스템 dashboard-web 「기획개발 AI」 탭(3001), 옛 planning-web(3002·5173)
+DEFAULT_CORS_ORIGINS = (
+    "http://localhost:3001,http://127.0.0.1:3001,"
+    "http://localhost:3002,http://localhost:5173,http://127.0.0.1:5173"
+)
 
 
 def _card_path() -> Path:

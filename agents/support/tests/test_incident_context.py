@@ -57,6 +57,8 @@ class World:
         self.asked: list[AgentRequest] = []
         self.coupons: list[AgentRequest] = []
         self.notice_lookups: list[AgentRequest] = []
+        self.notice_gets: list[AgentRequest] = []
+        self.notice_views: dict[str, dict[str, Any]] = {}  # get_notice가 아는 공지
         self.executed_contexts: list[str] = []
 
 
@@ -90,9 +92,11 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
                 return state.orchestrator_reply
             return AgentResult(meta=req.meta, status=TaskStatus.COMPLETED, output=state.found)
         assert target == "marketing"
-        if (
-            req.skill == "list_active_notices"
-        ):  # 사건 번호로 들어온 문의는 게시 중인 공지도 찾는다 (#341)
+        if req.skill == "get_notice":  # 총괄이 사건에 보관한 공지 번호로 바로 읽는다
+            state.notice_gets.append(req)
+            view = state.notice_views.get(req.input["notice_id"], {"found": False})
+            return AgentResult(meta=req.meta, status=TaskStatus.COMPLETED, output=view)
+        if req.skill == "list_active_notices":  # 사건 번호로 들어온 문의는 게시 중인 공지도 찾는다
             state.notice_lookups.append(req)
             return AgentResult(
                 meta=req.meta, status=TaskStatus.COMPLETED, output={"items": [], "total": 0}
@@ -313,7 +317,7 @@ def test_follow_up_messages_replies_and_status_use_the_pinned_incident(world: Wo
     call("send_reply", {"inquiry_id": inquiry_id}, untrusted={"text": "확인 중입니다"}, key="k-3")
     call("set_inquiry_status", {"inquiry_id": inquiry_id, "status": "resolved"}, key="k-4")
     assert world.executed_contexts == [INCIDENT] * 3
-    assert published_contexts() == [INCIDENT]  # 후속 메시지 접수 이벤트
+    assert published_contexts() == [INCIDENT] * 2  # 후속 메시지 접수 이벤트 + 해결 이벤트 (#327)
     assert len(world.asked) == 1  # 후속 요청은 다시 묻지 않는다
 
 
@@ -378,3 +382,69 @@ def test_provable_occurrence_is_a_pure_function_of_the_order() -> None:
         )
         is None
     )
+
+
+def notice_view(notice_id: str, text: str = "결제가 원활하지 않습니다. 복구 중입니다.") -> dict:
+    return {
+        "found": True,
+        "notice_id": notice_id,
+        "status": "published",
+        "channel_code": "banner",
+        "public_text": text,
+        "promises": [],
+    }
+
+
+def notice_sources(result: dict[str, Any]) -> list[str]:
+    analysis = result["output"]["messages"][0]["analysis"]
+    return [s["id"] for s in analysis["sources"] if s["doc_id"] == "notice"]
+
+
+def test_the_notice_the_orchestrator_kept_for_the_incident_is_read_directly(world: World) -> None:
+    world.found = {**world.found, "notice_id": "ntc_0042"}
+    world.notice_views["ntc_0042"] = notice_view("ntc_0042")
+    result = create()
+    assert [g.input for g in world.notice_gets] == [{"notice_id": "ntc_0042"}]
+    assert world.notice_lookups == []  # 번호를 알면 게시 중인 공지를 찾지 않는다
+    assert notice_sources(result) == ["notice:ntc_0042"]
+    assert world.notice_gets[0].meta.context_id == INCIDENT
+    drafts = result["output"]["messages"][0]["analysis"]["drafts"]
+    assert "notice:ntc_0042" in drafts[0]["source_ids"]
+
+
+def test_without_a_kept_notice_the_published_notices_are_looked_up(world: World) -> None:
+    create()  # 총괄이 notice_id를 안 주면 지금까지처럼 게시 중인 공지를 찾는다
+    assert world.notice_gets == [] and len(world.notice_lookups) == 1
+
+
+def test_a_caller_given_notice_id_wins_over_the_incident_one(world: World) -> None:
+    world.found = {**world.found, "notice_id": "ntc_0042"}
+    world.notice_views["ntc_0001"] = notice_view("ntc_0001", "호출한 쪽이 준 공지")
+    result = call(
+        "create_inquiry",
+        {"user_id": 1, "customer_name": "김하늘", "order_id": "ord_0001", "notice_id": "ntc_0001"},
+        untrusted={"subject": "결제", "message": "안 돼요"},
+    )
+    assert [g.input for g in world.notice_gets] == [{"notice_id": "ntc_0001"}]
+    assert notice_sources(result) == ["notice:ntc_0001"] and world.notice_lookups == []
+
+
+def test_if_the_kept_notice_cannot_be_read_the_published_ones_are_tried(world: World) -> None:
+    world.found = {**world.found, "notice_id": "ntc_0042"}  # get_notice는 이 번호를 모른다
+    result = create()
+    assert len(world.notice_gets) == 1 and len(world.notice_lookups) == 1
+    assert result["status"] == "completed" and notice_sources(result) == []
+
+
+def test_a_kept_notice_that_is_not_a_notice_number_is_never_used(world: World) -> None:
+    world.found = {**world.found, "notice_id": "ntc_1; drop table"}
+    create()
+    assert world.notice_gets == [] and len(world.notice_lookups) == 1  # 모양이 틀려 무시한다
+
+
+def test_a_replayed_create_does_not_read_the_notice_again(world: World) -> None:
+    world.found = {**world.found, "notice_id": "ntc_0042"}
+    world.notice_views["ntc_0042"] = notice_view("ntc_0042")
+    create(key="same")
+    create(key="same")
+    assert len(world.asked) == 1 and len(world.notice_gets) == 1

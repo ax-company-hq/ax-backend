@@ -52,6 +52,7 @@ from ax_contracts.schemas.event import (
     ShipmentDelayedData,
     ShopDegradedData,
     SupportInquiryReceivedData,
+    SupportInquiryResolvedData,
 )
 from ax_contracts.schemas.execute import ExecuteDecision, ExecuteRequest, HoldReason
 from ax_contracts.schemas.finance import (
@@ -165,10 +166,13 @@ from ax_contracts.schemas.record import (
     RecordCase,
     RecordKind,
 )
+from ax_contracts.schemas.review import ActionReviewInput, ActionReviewOutput
 
 __all__ = [
     "EVENT_DATA_MODELS",
     "TENANT_ID_DEFAULT",
+    "ActionReviewInput",
+    "ActionReviewOutput",
     "AgentCard",
     "AgentRequest",
     "AgentResult",
@@ -255,6 +259,7 @@ __all__ = [
     "StartOnboardingInput",
     "StartOnboardingOutput",
     "SupportInquiryReceivedData",
+    "SupportInquiryResolvedData",
     "TaskStatus",
     "UtcDatetime",
     "DiagnoseIncidentInput",

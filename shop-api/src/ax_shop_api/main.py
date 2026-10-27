@@ -24,7 +24,7 @@ from ax_agent_template.config import set_agent_name
 from ax_agent_template.server import verify_token
 from ax_contracts.data_access.shop_failed_orders import ShopFailedOrdersQuery
 from ax_contracts.data_access.shop_metric_series import ShopMetricSeriesQuery
-from ax_shop_api import outbox, support_client
+from ax_shop_api import orchestrator_relay, outbox, support_client
 from ax_shop_api.db import Db
 from ax_shop_api.lookups import Lookups
 from ax_shop_api.promotions import Promotions
@@ -151,6 +151,8 @@ COUPON_READERS = {"marketing", "support", "finance", "orchestrator"}
 REFUND_ALLOWED = {"support"}
 # 데이터 조회(읽기 전용)는 분석을 하는 data와 관리자만
 DATA_READERS = {"data", "admin"}
+# 총괄 사건 읽기 중계는 관리자만. 사람 로그인(소유자·공동소유자·분야 관리자)은 사람 인증 뒤에 붙인다
+ORCHESTRATOR_VIEWERS = {"admin"}
 
 
 def _caller(allowed: set[str]) -> Callable[..., str]:
@@ -309,6 +311,24 @@ def create_app(db: Db | None = None, seed_data: bool = True) -> FastAPI:
         state = shop.release_fault()
         await outbox.flush(database)
         return _ok(state)
+
+    # --- 총괄 읽기 중계: 관리자 화면(shop-web)이 shop-api만 부르게 한다. GET만 ----------
+    @app.get("/api/shop/admin/orchestrator/incidents")
+    async def orchestrator_incidents(_: str = Depends(_caller(ORCHESTRATOR_VIEWERS))) -> dict:
+        data, meta = await orchestrator_relay.incidents()
+        return _ok(data, **meta)
+
+    @app.get("/api/shop/admin/orchestrator/incidents/{context_id}")
+    async def orchestrator_incident(
+        context_id: str, _: str = Depends(_caller(ORCHESTRATOR_VIEWERS))
+    ) -> dict:
+        data, meta = await orchestrator_relay.incident(context_id)
+        return _ok(data, **meta)
+
+    @app.get("/api/shop/admin/orchestrator/departments")
+    async def orchestrator_departments(_: str = Depends(_caller(ORCHESTRATOR_VIEWERS))) -> dict:
+        data, meta = await orchestrator_relay.departments()
+        return _ok(data, **meta)
 
     # --- 공지 배너(SHOP-08): 고객 화면이 읽고, 마케팅 관문 토큰만 게시·해제한다 ---------
     @app.get("/api/shop/banners")

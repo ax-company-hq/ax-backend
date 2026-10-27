@@ -13,8 +13,14 @@ from ax_contracts.schemas import (
     ExecuteDecision,
     RequestMeta,
 )
-from ax_contracts.schemas.event import EVENT_DATA_MODELS, SupportInquiryReceivedData
-from support_agent import events, handlers
+from ax_contracts.schemas.event import (
+    EVENT_DATA_MODELS,
+    SupportInquiryReceivedData,
+    SupportInquiryResolvedData,
+)
+from support_agent import claim_handlers, events, handlers
+from support_agent.claim_schemas import Claim, ClaimAudit
+from support_agent.claims import ClaimStore
 from support_agent.main import app
 from support_agent.schemas import Analysis
 from support_agent.store import InquiryStore
@@ -226,3 +232,154 @@ def test_numeric_order_ids_are_read_as_strings(client: TestClient) -> None:
     stored = {k: v for k, v in result["output"].items() if k != "execution_id"}
     legacy = Conversation.model_validate({**stored, "order_id": 7})
     assert legacy.order_id == "7"
+
+
+def resolved() -> list[EventEnvelope]:
+    return [e for e in bus.MOCK_PUBLISHED if e.type == EventType.SUPPORT_INQUIRY_RESOLVED]
+
+
+def set_status(client: TestClient, inquiry_id: int, status: str, key: str) -> dict[str, Any]:
+    return call(client, "set_inquiry_status", {"inquiry_id": inquiry_id, "status": status}, {}, key)
+
+
+def test_closing_an_inquiry_publishes_one_resolved_event_with_facts_only(
+    client: TestClient,
+) -> None:
+    inquiry_id = create(client)["output"]["id"]
+    assert resolved() == []  # 접수만으로는 나가지 않는다
+    set_status(client, inquiry_id, "resolved", "s-1")
+    (event,) = resolved()
+    assert event.data == {
+        "inquiry_id": inquiry_id,
+        "order_id": None,
+        "status": "resolved",
+        "resolution": "answered",
+        "claim_id": None,
+        "claim_decision": None,
+        "coupon_id": None,
+        "refund_amount": None,
+    }
+    assert event.idempotency_key == f"ctx_req_0001:support.inquiry_resolved:{inquiry_id}"
+    assert not event.untrusted  # 고객 원문은 싣지 않는다
+
+
+def test_an_escalated_inquiry_is_published_as_escalated(client: TestClient) -> None:
+    inquiry_id = create(client)["output"]["id"]
+    set_status(client, inquiry_id, "escalated", "s-1")
+    (event,) = resolved()
+    assert (event.data["status"], event.data["resolution"]) == ("escalated", "escalated")
+
+
+def test_reopening_publishes_nothing(client: TestClient) -> None:
+    inquiry_id = create(client)["output"]["id"]
+    set_status(client, inquiry_id, "open", "s-1")
+    assert resolved() == []
+
+
+def test_closing_twice_leaves_one_event_id(client: TestClient) -> None:
+    inquiry_id = create(client)["output"]["id"]
+    set_status(client, inquiry_id, "resolved", "s-1")
+    set_status(client, inquiry_id, "open", "s-2")
+    set_status(client, inquiry_id, "resolved", "s-3")
+    assert (
+        len({e.event_id for e in resolved()}) == 1
+    )  # 같은 문의는 같은 event_id라 한 번만 전달된다
+
+
+def test_resolved_event_is_registered_with_its_data_model() -> None:
+    assert EVENT_DATA_MODELS[EventType.SUPPORT_INQUIRY_RESOLVED] is SupportInquiryResolvedData
+
+
+# ---------------------------------------------------------------- 문의에 붙은 클레임 (#327)
+@pytest.fixture
+def claims(monkeypatch: pytest.MonkeyPatch) -> ClaimStore:
+    store = ClaimStore()
+    monkeypatch.setattr(claim_handlers, "CLAIMS", store)
+    return store
+
+
+def add_claim(
+    store: ClaimStore,
+    inquiry_id: int | None,
+    *,
+    status: str = "needs_review",
+    actions: tuple[str, ...] = (),
+    refund: int = 0,
+) -> Claim:
+    claim = Claim(
+        id=len(store.list()) + 1,
+        context_id="ctx_req_0002",
+        order_id="ord_0001",
+        order_no="ord_0001",
+        buyer_id="buy_0001",
+        customer="김하늘",
+        type="return",
+        reason="defect",
+        status=status,  # type: ignore[arg-type]
+        created_at="2026-10-26T00:00:00Z",
+        updated_at="2026-10-26T00:00:00Z",
+        outcome="needs_review",
+        resolution="환불",
+        requires_return=False,
+        expected_refund=refund,
+        conversation_id=inquiry_id,
+        audit=[
+            ClaimAudit(actor="agent_console", action=a, at="2026-10-26T00:00:00Z") for a in actions
+        ],
+    )
+    store._claims[claim.id] = claim
+    return claim
+
+
+def test_a_decided_and_refunded_claim_fills_the_claim_fields(
+    client: TestClient, claims: ClaimStore
+) -> None:
+    inquiry_id = create(client)["output"]["id"]
+    claim = add_claim(claims, inquiry_id, status="completed", actions=("approve",), refund=15000)
+    set_status(client, inquiry_id, "resolved", "s-1")
+    (event,) = resolved()
+    assert event.data["claim_id"] == claim.id and event.data["claim_decision"] == "approve"
+    assert event.data["resolution"] == "claim_decided" and event.data["refund_amount"] == 15000
+    assert event.data["coupon_id"] is None  # 쿠폰은 아직 문의와 이어지지 않는다
+
+
+def test_a_rejected_claim_has_no_refund(client: TestClient, claims: ClaimStore) -> None:
+    inquiry_id = create(client)["output"]["id"]
+    add_claim(claims, inquiry_id, status="rejected", actions=("reject",), refund=15000)
+    set_status(client, inquiry_id, "resolved", "s-1")
+    (event,) = resolved()
+    assert event.data["claim_decision"] == "reject" and event.data["refund_amount"] is None
+    assert event.data["resolution"] == "claim_decided"
+
+
+def test_an_undecided_claim_is_linked_but_the_inquiry_is_just_answered(
+    client: TestClient, claims: ClaimStore
+) -> None:
+    inquiry_id = create(client)["output"]["id"]
+    claim = add_claim(claims, inquiry_id, status="needs_review")
+    set_status(client, inquiry_id, "resolved", "s-1")
+    (event,) = resolved()
+    assert event.data["claim_id"] == claim.id and event.data["claim_decision"] is None
+    assert event.data["resolution"] == "answered" and event.data["refund_amount"] is None
+
+
+def test_the_latest_claim_of_the_inquiry_wins_and_other_inquiries_are_ignored(
+    client: TestClient, claims: ClaimStore
+) -> None:
+    inquiry_id = create(client)["output"]["id"]
+    add_claim(claims, inquiry_id, status="rejected", actions=("reject",))
+    add_claim(claims, inquiry_id + 100, status="completed", actions=("approve",), refund=9000)
+    latest = add_claim(claims, inquiry_id, status="completed", actions=("approve",), refund=5000)
+    set_status(client, inquiry_id, "resolved", "s-1")
+    (event,) = resolved()
+    assert event.data["claim_id"] == latest.id and event.data["refund_amount"] == 5000
+
+
+def test_an_escalated_inquiry_keeps_its_resolution_even_with_a_claim(
+    client: TestClient, claims: ClaimStore
+) -> None:
+    inquiry_id = create(client)["output"]["id"]
+    claim = add_claim(claims, inquiry_id, status="completed", actions=("approve",), refund=1000)
+    set_status(client, inquiry_id, "escalated", "s-1")
+    (event,) = resolved()
+    assert event.data["resolution"] == "escalated" and event.data["claim_id"] == claim.id

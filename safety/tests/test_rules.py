@@ -30,10 +30,22 @@ def test_rule_files_load_and_match_agreed_values() -> None:
         "refund_single": 100_000,
     }
     issue = registry.get("issue_coupon")
-    assert issue is not None and (issue.base_grade, issue.verifier) == ("B", "finance")
+    assert issue is not None and (issue.base_grade, issue.verifier) == ("A", None)
+    refund = registry.get("refund_request")
+    assert refund is not None and (refund.base_grade, refund.verifier) == ("A", None)
+    assert issue.amount is not None and refund.amount is not None  # 금액 규칙은 그대로
     assert registry.get("confirm_settlement").base_grade == "C"  # type: ignore[union-attr]
     for spec in registry.actions:  # 자기 검증 금지
         assert spec.verifier != spec.owner
+
+
+def test_no_action_is_routed_to_finance_verify_amount() -> None:
+    """재무 재설계: verify_amount skill은 없어졌으니 레지스트리에서 부르는 액션도 없어야 한다."""
+    registry = load_registry()
+    assert [s.action for s in registry.actions if s.verify_skill == "verify_amount"] == []
+    assert [s.action for s in registry.actions if s.verifier == "finance"] == []
+    settle = registry.get("confirm_settlement")
+    assert settle is not None and (settle.owner, settle.base_grade) == ("finance", "C")
 
 
 def test_review_timeout_env_overrides_table(monkeypatch: pytest.MonkeyPatch) -> None:
