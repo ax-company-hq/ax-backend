@@ -74,5 +74,5 @@ async def test_unreachable_real_dept_is_unavailable_and_incident_continues() -> 
     assert "finance" in registry.unavailable
     inc = new_incident()
     await Engine(registry, hybrid, hold_timeout=0.2).run(inc, scenario_a())
-    assert inc.steps["loss"].status == "skipped"
-    assert inc.status == "degraded"
+    assert "loss" not in inc.steps  # 재무는 사건 중에 부르지 않는다
+    assert inc.status == "resolved"

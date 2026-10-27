@@ -40,10 +40,10 @@ async def test_all_affected_customers_are_sent_to_support_in_one_request(
 
 
 @pytest.mark.asyncio
-async def test_loss_report_waits_for_compensation(harness) -> None:
+async def test_record_waits_for_compensation(harness) -> None:
     await run(harness)
     order = [r.skill for _, r in harness.fakes.calls]
-    assert order.index("loss_aggregation") > order.index("request_incident_compensation")
+    assert order.index("record_case") > order.index("request_incident_compensation")
 
 
 @pytest.mark.asyncio
@@ -68,7 +68,7 @@ async def test_compensation_failure_does_not_break_the_incident(harness) -> None
     inc = await run(harness)
     assert inc.steps["compensation"].status == "failed"
     assert inc.status == "resolved"  # 일괄 보상은 필수 단계가 아니다
-    assert inc.steps["loss"].status == "completed"  # 재무 손실 리포트는 끝나면 계속 진행
+    assert inc.steps["record"].status == "completed"  # 사건 기록은 끝나면 계속 진행
 
 
 def _many_customers(monkeypatch, count: int) -> list[str]:
@@ -115,28 +115,25 @@ async def test_a_failed_batch_stops_the_rest_and_keeps_the_incident_going(
     step = inc.steps["compensation"]
     assert step.status == "failed" and "2/3번째 묶음" in step.note
     assert inc.outputs["compensation"]["requested"] == 50  # 보낸 만큼만 남긴다
-    assert inc.steps["loss"].status == "completed"  # 일괄 보상은 필수 단계가 아니다
+    assert inc.steps["record"].status == "completed"  # 일괄 보상은 필수 단계가 아니다
 
 
 # ---------------------------------------------------------------- 사건 후 단계
 @pytest.mark.asyncio
-async def test_post_incident_audit_and_kpi_are_requested_for_this_incident(harness) -> None:
+async def test_post_incident_kpi_is_requested_for_this_incident(harness) -> None:
     inc = await run(harness)
-    audit = called(harness, "audit_report")
     kpi = called(harness, "kpi_summary")
-    assert audit[0].input == {"context_id": inc.context_id}
     assert kpi[0].input == {"context_ids": [inc.context_id]}
     order = [r.skill for _, r in harness.fakes.calls]
-    assert order.index("audit_report") > order.index("request_incident_compensation")
     assert order.index("kpi_summary") > order.index("publish_notice")
     assert order[-1] == "record_case"  # 사건 기록은 모든 단계가 끝난 뒤 한 번
 
 
 @pytest.mark.asyncio
-async def test_audit_failure_is_visible_but_not_fatal(harness) -> None:
-    harness.fakes.script("finance", "audit_report", "fail", "fail", "fail")
+async def test_kpi_failure_is_visible_but_not_fatal(harness) -> None:
+    harness.fakes.script("data", "kpi_summary", "fail", "fail", "fail")
     inc = await run(harness)
-    assert inc.steps["audit"].status == "failed"
+    assert inc.steps["kpi"].status == "failed"
     assert inc.status == "resolved"
 
 
@@ -148,8 +145,8 @@ async def test_undetermined_cause_skips_rollback_and_queues_for_a_human(harness)
     rollback = inc.steps["rollback"]
     assert rollback.status == "transfer_queued" and rollback.reason_code == "no_rollback_target"
     assert called(harness, "rollback_deployment") == []  # 원인을 모르면 되돌리지 않는다
-    # 공지·영향 분석·보상·손실 리포트는 계속 진행한다
-    for step_id in ("notice", "publish_notice", "impact", "compensation", "loss"):
+    # 공지·영향 분석·보상은 계속 진행한다
+    for step_id in ("notice", "publish_notice", "impact", "compensation"):
         assert inc.steps[step_id].status == "completed", step_id
     # 롤백이 없으니 복구 확인과 정상화 공지는 건너뛴다
     assert inc.steps["recovery"].status == "skipped"
