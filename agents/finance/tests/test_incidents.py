@@ -484,7 +484,8 @@ def test_incident_detail_shape_matches_spec(mock_mode) -> None:
     }
     # 재무는 장애 대응 흐름의 단계가 아니다 (2026-10-27): 손실 집계·사건 단계를 뺐다.
     # 화면 호환으로 남겨 뒀던 두 키도 화면 정리(ax-frontend#61) 뒤에 지웠다
-    assert "loss" not in data and "steps" not in data
+    assert "loss" not in data
+    assert "steps" not in data
     assert [c["code"] for c in data["checks"]] == CHECK_CODES
     for c in data["checks"]:
         assert set(c) == {"code", "ok", "title", "detail", "refs"} and c["ok"] is True
