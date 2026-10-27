@@ -10,3 +10,6 @@ services:
         required: false
       - path: ./.env
         required: false
+    environment:
+      # 컨테이너 안에서 127.0.0.1은 shop-api 자신이라 총괄 서비스 이름으로 가리킨다
+      SHOP_ORCHESTRATOR_URL: http://orchestrator:8000
