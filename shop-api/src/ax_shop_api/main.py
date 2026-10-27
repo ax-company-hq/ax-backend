@@ -24,7 +24,7 @@ from ax_agent_template.config import set_agent_name
 from ax_agent_template.server import verify_token
 from ax_contracts.data_access.shop_failed_orders import ShopFailedOrdersQuery
 from ax_contracts.data_access.shop_metric_series import ShopMetricSeriesQuery
-from ax_shop_api import inquiries, orchestrator_relay, outbox, support_client
+from ax_shop_api import inquiries, orchestrator_relay, outbox, retention, support_client
 from ax_shop_api.db import Db
 from ax_shop_api.lookups import Lookups
 from ax_shop_api.promotions import Promotions
@@ -231,11 +231,14 @@ def create_app(db: Db | None = None, seed_data: bool = True) -> FastAPI:
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         task = asyncio.create_task(_monitor_loop()) if interval > 0 else None
+        retention_task = retention.start_background(database)  # 파일 DB일 때만, 기본 dry-run
         try:
             yield
         finally:
             if task:
                 task.cancel()
+            if retention_task:
+                retention_task.cancel()
 
     app = FastAPI(title="ax-shop-api", lifespan=lifespan)
     app.add_middleware(

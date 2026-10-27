@@ -29,6 +29,14 @@ PRODUCTS = [
 BUYER_COUNT = 30
 
 
+def seed_buyer_id(number: int) -> str:
+    return f"{IdPrefix.BUYER}{number:04d}"
+
+
+# 고정 데모 계정(`buy_0001`~). 보유기간 삭제·삭제 집행은 이 ID를 건드리지 않는다.
+SEED_BUYER_IDS = frozenset(seed_buyer_id(number) for number in range(1, BUYER_COUNT + 1))
+
+
 def seed(db: Db) -> bool:
     """비어 있을 때만 넣고 넣었으면 True를 돌려준다."""
     now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -50,6 +58,6 @@ def seed(db: Db) -> bool:
         for number in range(1, BUYER_COUNT + 1):
             conn.execute(
                 "INSERT INTO buyers VALUES (?, ?, NULL, ?)",
-                (f"{IdPrefix.BUYER}{number:04d}", TENANT_ID, now),
+                (seed_buyer_id(number), TENANT_ID, now),
             )
     return True
