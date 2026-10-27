@@ -23,6 +23,7 @@ from ax_contracts.schemas import (
     TaskStatus,
 )
 from finance_agent import audit, handlers, incidents, sources
+from finance_agent import books as bk
 from finance_agent import finance_config as fc
 from finance_agent import ledger as lg
 from finance_agent.main import app
@@ -270,6 +271,16 @@ def _orchestrator(rows: list[dict[str, Any]] | None) -> httpx.AsyncClient:
         return httpx.Response(404)
 
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+def _use_books() -> None:
+    """장부를 시드로 꽂는다. 실제 모드 라우트는 `state().books()`로 shop-api를 부른다 —
+    테스트는 네트워크를 타지 않는다 (CLAUDE.md "테스트가 네트워크에 기대지 않게 쓴다")."""
+
+    async def seeded() -> bk.Books:
+        return bk.seed_books()
+
+    handlers.state().books_loader = seeded
 
 
 @pytest.fixture
@@ -589,6 +600,7 @@ def test_real_mode_incident_uses_gate_records_and_has_no_window(real_mode, fake_
     handlers.reset_state(LiveSources(_orchestrator(None)))  # 총괄을 못 읽으면 구간도 모른다
     records = [_raw_record(e) for e in GOOD]
     _use_safety(_safety(records))
+    _use_books()
     client = TestClient(app)
     body = client.get(f"/api/finance/incidents/{CTX}").json()
     data = body["data"]
@@ -610,6 +622,7 @@ def test_real_mode_window_comes_from_orchestrator_incidents(real_mode, fake_data
     """총괄 사건 목록의 `opened_at`·`closed_at`이 재무의 장애 구간이 된다 (읽기 전용)."""
     handlers.reset_state(LiveSources(_orchestrator([{"context_id": "ctx_inc_other"}, ORC_ROW])))
     _use_safety(_safety([_raw_record(e) for e in GOOD]))
+    _use_books()
     body = TestClient(app).get(f"/api/finance/incidents/{CTX}").json()
     data = body["data"]
     assert data["window"] == {"from": "2026-10-22T05:00:00Z", "to": "2026-10-22T05:30:00Z"}
