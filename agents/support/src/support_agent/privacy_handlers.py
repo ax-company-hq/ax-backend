@@ -42,6 +42,8 @@ def _customer_text(inquiry: Any) -> str:
 def _recent_distinct_orders(user_id: int | None, now: datetime) -> set[str]:
     """같은 구매자의 최근 문의들이 가리킨 서로 다른 주문 번호들 (저장소만 본다, 호출 없음)."""
     orders: set[str] = set()
+    if user_id is None:  # 구매자를 모르는 문의들을 한 사람으로 묶지 않는다
+        return orders
     for other in h.STORE.all():
         if other.user_id != user_id or not other.order_id:
             continue
@@ -99,14 +101,17 @@ def assess(
             add("order_found", False, "연결된 주문을 주문 기록에서 찾을 수 없다")
         else:
             add("order_found", True, "연결된 주문을 주문 기록에서 찾았다")
-            buyer_matches = order.get("buyer_id") == requester_buyer_id
-            add(
-                "buyer_matches_order",
-                buyer_matches,
-                "주문의 구매자와 문의를 낸 구매자가 같다"
-                if buyer_matches
-                else "주문의 구매자와 문의를 낸 구매자가 다르다",
-            )
+            if requester_buyer_id is None:  # 문의를 낸 구매자를 모르면 같다고 볼 수 없다
+                add("buyer_matches_order", None, "문의를 낸 구매자를 알 수 없어 대조하지 못했다")
+            else:
+                buyer_matches = order.get("buyer_id") == requester_buyer_id
+                add(
+                    "buyer_matches_order",
+                    buyer_matches,
+                    "주문의 구매자와 문의를 낸 구매자가 같다"
+                    if buyer_matches
+                    else "주문의 구매자와 문의를 낸 구매자가 다르다",
+                )
     elif order_id:
         add("order_found", None, "주문 출처를 확인할 수 없어 주문 기록과 대조하지 못했다")
 

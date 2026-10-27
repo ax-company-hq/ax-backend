@@ -274,3 +274,56 @@ async def test_a_normal_inquiry_keeps_the_llm_category() -> None:
     analysis, _ = await drafting.analyze("환불해 주세요", "환불")
     assert analysis.classification is not None
     assert analysis.classification.category == "refund"
+
+
+# ---------------------------------- 한국어 조사가 붙은 주문 번호 (예진 님 리뷰)
+@pytest.mark.parametrize("josa", ["의", "를", "은", "도", "과"])
+def test_an_order_number_followed_by_a_korean_particle_is_still_found(josa: str) -> None:
+    assert privacy_rules.mentioned_order_ids(f"ord_0099{josa} 개인정보 삭제") == {"ord_0099"}
+    assert privacy_rules.mentioned_order_ids("ord_A1b2를 삭제") == {"ord_A1b2"}
+    assert privacy_rules.mentioned_order_ids("pre_ord_0099x") == set()  # 다른 단어의 일부는 아니다
+
+
+def test_another_order_number_with_a_particle_is_a_mismatch() -> None:
+    use_shop(shop_order())
+    text = "주문 ord_0099의 개인정보를 지워 주세요"
+    out = call(add_inquiry(text))["output"]
+    assert (out["verdict"], out["confidence"]) == ("mismatch", "medium")
+    assert kinds(out)["order_id_in_request"] is False
+
+
+def test_the_same_order_number_with_a_particle_is_consistent_with_high_confidence() -> None:
+    use_shop(shop_order())
+    out = call(add_inquiry("주문 ord_0001의 개인정보를 지워 주세요"))["output"]
+    assert (out["verdict"], out["confidence"]) == ("consistent", "high")
+    assert kinds(out)["order_id_in_request"] is True
+
+
+# ---------------------------------- 구매자를 알 수 없는 문의 (참고 사항)
+def test_an_unknown_requester_never_matches_an_order_with_a_missing_buyer() -> None:
+    from support_agent import privacy_handlers
+
+    result = privacy_handlers.assess(
+        text=REQUEST,
+        order_id="ord_0001",
+        requester_buyer_id=None,
+        order={"order_id": "ord_0001", "buyer_id": None, "items": []},
+        order_checked=True,
+        recent_orders=set(),
+        inquiry_id=1,
+    )
+    matched = {e.kind: e.matched for e in result.evidence}
+    assert matched["buyer_matches_order"] is None
+    assert (result.verdict, result.confidence, result.recommendation) == (
+        "insufficient",
+        "low",
+        "reject_recommended",
+    )
+
+
+def test_inquiries_without_a_buyer_are_not_grouped_as_one_person() -> None:
+    from support_agent import privacy_handlers
+
+    for number in (1, 2, 3):
+        add_inquiry(NO_ORDER_ID, order_id=f"ord_000{number}", user_id=None)  # type: ignore[arg-type]
+    assert privacy_handlers._recent_distinct_orders(None, datetime.now(UTC)) == set()

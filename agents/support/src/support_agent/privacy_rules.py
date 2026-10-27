@@ -24,7 +24,9 @@ _ACTION = (
     "削除", "消去", "删除", "清除",
 )  # fmt: skip
 # 상품·주문 번호를 글에서 찾는다 (shop-api 주문 ID)
-ORDER_ID_PATTERN = re.compile(r"\bord_[0-9A-Za-z]+\b")
+# 한국어 조사가 바로 붙어도(`ord_0099의`) 찾도록 ASCII 모드로 앞쪽 경계만 두고,
+# 뒤쪽은 `+`가 영숫자에서 멈추게 한다 (`\b`는 유니코드 모드라 한글도 단어로 봐서 못 찾는다).
+ORDER_ID_PATTERN = re.compile(r"(?<![0-9A-Za-z_])ord_[0-9A-Za-z]+", re.ASCII)
 
 
 def is_deletion_request(text: str) -> bool:
