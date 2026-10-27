@@ -28,7 +28,7 @@
 
 없앤 것: `verify_amount`(B 쿠폰·환불 교차검증), `review_hold`(C 보류 건 AI 1차 판단), `/api/finance/verifications`, `/api/finance/ai-reviews`.
 장애 흐름에서 빠지며 없앤 것(2026-10-27): `loss_aggregation`(손실 집계 skill), `/api/finance/loss-reports`, 사건 상세의 `loss`와 사건 단계(9·10·17) 계산. 재무는 장애 대응 흐름의 단계가 아니고(요구사항 DEP-FIN-01, 공통 구성안 결정 22) 장애 비용은 평상시 장부 → `closing_report`·`audit_report`에서 드러난다.
-화면 호환으로 한 단계 남긴 키: 사건 상세 `steps`(늘 빈 목록), 목록 `loss_total`(늘 null). dashboard-web이 아직 두 값을 바로 읽어서 키가 사라지면 재무 사건 화면이 멈춘다. 화면을 고치는 프론트 PR(ax-frontend) 뒤에 키도 지운다.
+화면 호환으로 한 단계 남겨 뒀던 키(사건 상세 `steps`, 목록 `loss_total`)도 지웠다 — 화면 정리(ax-company-hq/ax-frontend#61)가 끝나 읽는 쪽이 없다.
 재무 일이 아니라 없앤 것(2026-10-26): 캣북스 클레임 연동(`catbooks.py`, 환불·교환 신청을 건별로 다시 확인 → 건별 검사는 안전 관문의 일, `/api/finance/catbooks/*`, `FINANCE_CATBOOKS_*`),
 `review_threshold_change`(AI가 기준 변경을 판단 → 재무는 제안만 하고 사람이 기준표 PR로 바꾼다, `/api/finance/threshold-reviews`).
 `ai_review_policy.toml`(사람 전용)은 이제 코드가 읽지 않는다. 사람이 지우는 PR을 올린다.

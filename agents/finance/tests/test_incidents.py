@@ -57,7 +57,6 @@ LIST_KEYS = {
     "compensation_total",
     "coupon_count",
     "held_count",
-    "loss_total",  # 화면 호환으로 남긴 키 (늘 null)
     "checks_ok",
 }
 DETAIL_KEYS = {
@@ -68,7 +67,6 @@ DETAIL_KEYS = {
     "compensation",
     "limits",
     "checks",
-    "steps",  # 화면 호환으로 남긴 키 (늘 빈 목록)
     "ledger_source",
 }
 COUPON_KEYS = {
@@ -435,7 +433,6 @@ def test_incident_list_shape_and_numbers(mock_mode) -> None:
         "compensation_total": 8000,
         "coupon_count": 4,
         "held_count": 0,
-        "loss_total": None,
         "checks_ok": True,
     }
     assert rows[OLD]["checks_ok"] is False  # 영향 고객이 아닌 buy_0999
@@ -485,11 +482,9 @@ def test_incident_detail_shape_matches_spec(mock_mode) -> None:
         "per_customer": {"limit": 50000, "max_used": 2000, "buyer_id": "buy_0001"},
         "per_incident": {"limit": 1000000, "used": 8000, "remaining": 992000},
     }
-    # 재무는 장애 대응 흐름의 단계가 아니다 (2026-10-27): 손실 집계를 뺐다
-    assert "loss" not in data
-    # 단계는 없어졌지만 키는 빈 목록으로 남는다: dashboard-web이 `d.steps.length`를 바로 읽어
-    # 키가 사라지면 재무 사건 화면이 멈춘다. 프론트 PR 뒤에 키도 지운다
-    assert data["steps"] == []
+    # 재무는 장애 대응 흐름의 단계가 아니다 (2026-10-27): 손실 집계·사건 단계를 뺐다.
+    # 화면 호환으로 남겨 뒀던 두 키도 화면 정리(ax-frontend#61) 뒤에 지웠다
+    assert "loss" not in data and "steps" not in data
     assert [c["code"] for c in data["checks"]] == CHECK_CODES
     for c in data["checks"]:
         assert set(c) == {"code", "ok", "title", "detail", "refs"} and c["ok"] is True
@@ -576,7 +571,7 @@ def test_no_ledger_source_makes_everything_unknown(real_mode) -> None:
     assert {"compensation", "limits"} <= set(unavailable)
     assert data["compensation"]["total_executed"] is None and data["ledger_source"] is None
     assert all(c["ok"] is None for c in data["checks"])
-    assert "loss" not in data and data["steps"] == []  # 손실 집계 없음, 단계 키만 화면 호환
+    assert "loss" not in data and "steps" not in data  # 손실 집계·사건 단계 없음
     assert "장부" in data["checks"][0]["detail"]  # 사람이 읽는 쉬운 말
     assert incidents.checks_ok(data["checks"]) is None
 
