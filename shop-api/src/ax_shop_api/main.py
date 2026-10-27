@@ -24,7 +24,7 @@ from ax_agent_template.config import set_agent_name
 from ax_agent_template.server import verify_token
 from ax_contracts.data_access.shop_failed_orders import ShopFailedOrdersQuery
 from ax_contracts.data_access.shop_metric_series import ShopMetricSeriesQuery
-from ax_shop_api import orchestrator_relay, outbox, support_client
+from ax_shop_api import inquiries, orchestrator_relay, outbox, support_client
 from ax_shop_api.db import Db
 from ax_shop_api.lookups import Lookups
 from ax_shop_api.promotions import Promotions
@@ -125,6 +125,17 @@ class ClaimIn(BaseModel):
     unsealed: bool = False
     evidence_count: int = Field(default=0, ge=0)
     description: str = Field(default="", max_length=2000)  # 고객이 쓴 문장. untrusted로만 넘긴다
+
+
+class InquiryIn(BaseModel):
+    """고객 문의 접수. 주문 선택이 필수다(결정 1). 제목·본문 길이는 서버가 확인한다."""
+
+    model_config = {"extra": "forbid"}
+
+    buyer_id: str
+    order_id: str
+    subject: str | None = None
+    body: str
 
 
 class ReturnReceivedIn(BaseModel):
@@ -241,6 +252,8 @@ def create_app(db: Db | None = None, seed_data: bool = True) -> FastAPI:
     app.state.promotions = promotions
     app.state.lookups = lookups
     app.state.refunds = refunds
+    inquiry_limiter = inquiries.InquiryRateLimiter()
+    app.state.inquiry_limiter = inquiry_limiter
 
     @app.exception_handler(ShopError)
     async def _shop_error(_: Request, error: ShopError) -> JSONResponse:
@@ -431,6 +444,37 @@ def create_app(db: Db | None = None, seed_data: bool = True) -> FastAPI:
         if "id" not in claim:  # 클레임이 아닌 응답은 성공으로 내보내지 않는다
             raise ShopError("UPSTREAM_ERROR", "고객지원 응답이 클레임 형식이 아니다", 502)
         return _ok(claim, context_id=context_id)
+
+    # --- 고객 문의 접수 (#385 B안): 쇼핑몰 → 고객지원 `create_inquiry` ---------------------
+    @app.post("/api/shop/inquiries", status_code=201)
+    async def create_inquiry(body: InquiryIn) -> dict:
+        user_id = inquiries.buyer_number(body.buyer_id)
+        inquiries.check_order_id(body.order_id)
+        subject, message = inquiries.clean_text(body.subject, body.body, body.order_id)
+        order = shop.get_order(body.order_id)  # 읽기만 한다. 없으면 404
+        if order["buyer_id"] != body.buyer_id:  # 남의 주문도 같은 404로 답한다
+            raise ShopError("ORDER_NOT_FOUND", "주문을 찾을 수 없다", 404)
+        inquiry_limiter.hit(body.buyer_id)
+        digest = inquiries.digest(body.buyer_id, body.order_id, subject, message)
+        context_id = (
+            f"{support_client.CLAIM_CONTEXT_PREFIX}{digest[:12]}"  # 같은 접수는 같은 사건·키
+        )
+        inquiry = await support_client.call(
+            "create_inquiry",
+            context_id,
+            {
+                "user_id": user_id,
+                "customer_name": storefront.get_user(body.buyer_id)["display_name"],
+                "order_id": body.order_id,
+            },
+            {"subject": subject, "message": message},
+            target=f"user:{user_id}:{digest}",
+        )
+        if "id" not in inquiry:  # 문의가 아닌 응답은 성공으로 내보내지 않는다
+            raise ShopError("UPSTREAM_ERROR", "고객지원 응답이 문의 형식이 아니다", 502)
+        # 응답은 가공하지 않고 접수 결과만 돌려준다
+        receipt = {k: inquiry.get(k) for k in ("id", "status", "order_id", "updated_at")}
+        return _ok(receipt, context_id=context_id)
 
     @app.post("/api/shop/admin/claims/{claim_id}/return-received")
     async def return_received(
