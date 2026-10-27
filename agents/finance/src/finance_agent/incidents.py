@@ -8,6 +8,7 @@
 - 재무는 장애 대응 흐름의 단계가 아니다 (요구사항 DEP-FIN-01, 공통 구성안 결정 22).
   2026-10-27에 손실 집계(`loss`)와 사건 단계 표시(`steps` 9·10·17)를 뺐다. 장애 비용은
   평상시 장부로 들어가 결산(`closing_report`)·사후 감사(`audit_report`)에서 드러난다.
+  `steps`(빈 목록)와 목록의 `loss_total`(null)은 대시보드 화면이 아직 읽어서 키만 남겼다.
 - 영향(`impact`)은 data `impact_analysis` 결과 그대로다(실제 모드 A2A, 목 모드 시드).
   다시 계산하지 않는다. 실제 모드에서는 장애 구간을 모르므로 null이다.
 - 한도는 기준표(`compensation_per_customer`, `compensation_per_context`)를 safety
@@ -37,6 +38,11 @@ INCIDENT_PREFIX = "ctx_inc_"
 PER_CUSTOMER_KEY = "compensation_per_customer"
 PER_INCIDENT_KEY = "compensation_per_context"
 RECHECK_FAILURES = {"amount_mismatch", "invalid_params"}
+# 재무 단계는 없어졌지만 `steps`·`loss_total` 키는 한 번 더 남긴다. dashboard-web이 아직
+# `d.steps.length`·`s.loss_total`을 바로 읽어서 키가 사라지면 재무 사건 화면이 멈춘다
+# (ax-frontend `dashboard-web/src/components/finance/Incident.tsx`). 화면을 고치는 프론트 PR
+# 뒤에 이 두 키를 지운다 (CLAUDE.md 12번의 추가 → 이전 → 삭제).
+STEPS_GONE: list[dict[str, Any]] = []
 
 
 # ---------------------------------------------------------------- 한도
@@ -245,6 +251,8 @@ async def incident_view(
         "compensation": {"coupons": coupons, **(totals or dict.fromkeys(_TOTAL_KEYS))},
         "limits": limits,
         "checks": checks,
+        # 화면 호환: dashboard-web이 아직 `steps`를 바로 읽는다 (아래 STEPS_GONE)
+        "steps": STEPS_GONE,
         "ledger_source": ledger_source,
     }
     return data, unavailable
@@ -300,6 +308,8 @@ def summary_row(detail: dict[str, Any], feed: lg.ExecutionFeed) -> dict[str, Any
         "compensation_total": comp["total_executed"],
         "coupon_count": comp["count_executed"],
         "held_count": comp["count_held"],
+        # 화면 호환: dashboard-web 요약 줄이 아직 `loss_total`을 읽는다 (아래 STEPS_GONE)
+        "loss_total": None,
         "checks_ok": checks_ok(detail["checks"]),
     }
 
