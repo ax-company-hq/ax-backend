@@ -132,9 +132,7 @@ def daily_closing_seconds() -> int:
     try:
         return max(int(raw), 0)
     except ValueError:
-        logger.warning(
-            "FINANCE_DAILY_CLOSING_SECONDS=%r는 숫자가 아니라 기본 86400초를 쓴다", raw
-        )
+        logger.warning("FINANCE_DAILY_CLOSING_SECONDS=%r는 숫자가 아니라 기본 86400초를 쓴다", raw)
         return DEFAULT_DAILY_CLOSING_SECONDS
 
 
