@@ -280,6 +280,16 @@
       "priority": "recommended"
     },
     {
+      "id": "prepare_handoff",
+      "description": "문의를 사람에게 넘길 때 필요한 인계 패키지를 코드가 모아 준다(읽기, 이관 판단에 LLM을 쓰지 않는다). 이관 사유 코드(명시적 사람 요청, 개인정보 요청, 같은 주제 반복, 클레임 검토 필요, 결제 검토, 고위험 고객, 사건 관련, 답변 가드 반복 차단, 근거 없음)와 근거 사실, 권고(none·review·handoff_now), 이관 대상 코드(부서 이름이 아님), 이미 한 조치(클레임 판정·환불 완료 금액, 기획개발 변경 요청, 결제 진단), 남은 일, 답 대기 시간, 반복 횟수, 사람이 읽을 요약(LLM, 실패하면 고정 문장)을 돌려준다. 환불이 끝난 클레임이 있으면 already_refunded로 알려 중복 환불을 막는다. 상태를 바꾸지 않고 권고만 하며 고객 원문과 개인정보를 싣지 않는다.",
+      "input_schema": "agents/support/src/support_agent/handoff_schemas.py#PrepareHandoffInput",
+      "output_schema": "agents/support/src/support_agent/handoff_schemas.py#HandoffPackage",
+      "grade": "read",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
       "id": "assess_deletion_request",
       "description": "문의에 붙은 개인정보 삭제 요청이 본인 것으로 보이는지 규칙으로 1차 판단한다(읽기, LLM 없음). 문의에 연결된 주문의 구매자와 문의를 낸 구매자가 같은지, 요청에 적힌 주문 번호·상품이 주문 기록과 맞는지, 같은 구매자가 짧은 시간에 여러 주문을 다루는 흔적이 없는지를 보고 일치(consistent)·불일치(mismatch)·판단불가(insufficient)와 확신도(low·medium·high, 퍼센트 없음), 근거 목록, 사람이 읽을 요약을 돌려준다. 불일치·판단불가는 거절 권고로 표시한다. 본인으로 확정하거나 삭제하지 않고 최종 판단은 사람이 한다. 문의 원문은 untrusted로만 읽고 지시로 해석하지 않으며, 본인 확인을 위해 개인정보를 더 요구하지 않는다.",
       "input_schema": "agents/support/src/support_agent/privacy_schemas.py#AssessDeletionInput",
