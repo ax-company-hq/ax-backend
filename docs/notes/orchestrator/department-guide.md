@@ -89,15 +89,10 @@ curl -X POST localhost:<포트>/api/events -H 'Content-Type: application/json' -
 
 ## finance
 
-| skill | 등급 | 단계 | 선행 단계 | 필수 | 입력 예시 |
-|---|---|---|---|---|---|
-| `loss_aggregation` | read | 손실 리포트 (finance) | impact, publish_notice(끝나면), compensation(끝나면) | 예 | `{"context_id": "ctx_inc_guide", "window_from": "2026-10-16T00:45:00Z", "window_to": "2026-10-16T01:15:00Z"}` |
-| `audit_report` | read | 사후 감사 (finance) | compensation(끝나면), loss(끝나면) | 아니오 | `{"context_id": "ctx_inc_guide"}` |
-
-> 재무는 영향 숫자를 data에서 직접 조회하고 보상액은 자기 장부에서 센다. 총괄은 구간과 `context_id`만 준다. `audit_report`는 이 사건의 쿠폰·실행 기록 점검을 사건 끝 무렵에 요청한다. `verify_amount`는 총괄이 부르지 않는다(요청 가능 부서가 safety뿐).
+> 재무는 사건 중에 총괄이 부르지 않는다(멘토 피드백). 장애 때 나간 쿠폰·환불은 이벤트로 재무 장부에 기록되고, 비용은 평상시 결산·사후 감사에서 다룬다. `verify_amount`는 폐지됐다.
 
 ## hr
 
 | skill | 등급 | 단계 | 선행 단계 | 필수 | 입력 예시 |
 |---|---|---|---|---|---|
-| `record_case` | A | 사건 기록 (hr) | recovered_notice(끝나면), link_incident(끝나면), loss(끝나면), compensation(끝나면), audit(끝나면), kpi(끝나면) | 예 | `{"alternatives_considered": [], "area": "infra", "author": "orchestrator", "context_id": "ctx_inc_guide", "decision_reason": "scenario_a plan 실행 결과 — 완료: diagnose_incident, impact_analysis, rollback_deployment, find_related_prs, link_incident, draft_notice, pu` |
+| `record_case` | A | 사건 기록 (hr) | recovered_notice(끝나면), link_incident(끝나면), compensation(끝나면), kpi(끝나면) | 예 | `{"alternatives_considered": [], "area": "infra", "author": "orchestrator", "context_id": "ctx_inc_guide", "decision_reason": "scenario_a plan 실행 결과 — 완료: diagnose_incident, impact_analysis, rollback_deployment, find_related_prs, link_incident, draft_notice, pu` |

@@ -5,7 +5,9 @@
   문의를 낸 고객의 보상은 고객지원이 직통으로 처리한다(#228).
 - 갈림길: 원인 미확정이면 롤백하지 않고 이관 큐로, 복구 확인이 실패하면
   정상화 공지 없이 이관 큐로 돌린다.
-- 사건 후: 재무 감사(`audit_report`)와 데이터 처리 시간 요약(`kpi_summary`)을 요청한다.
+- 사건 후: 데이터 처리 시간 요약(`kpi_summary`)을 요청한다.
+- 재무는 사건 중에 부르지 않는다(멘토 피드백, SCN-A). 장애 때 나간 쿠폰·환불은 이벤트로 재무 장부에
+  기록되고, 비용은 평상시 결산·사후 감사에서 다룬다.
 """
 
 from __future__ import annotations
@@ -67,11 +69,6 @@ def _notice(inc: Incident) -> dict[str, Any]:
 
 def _publish_notice(inc: Incident) -> dict[str, Any]:
     return {"draft_id": _out(inc, "notice").get("draft_id")}
-
-
-def _loss(inc: Incident) -> dict[str, Any]:
-    # 재무는 영향 숫자를 data에서 직접 조회하고 보상액은 자기 장부에서 센다. 총괄은 구간만 준다.
-    return {**_window(inc), "context_id": inc.context_id}
 
 
 def _recovery(inc: Incident) -> dict[str, Any]:
@@ -143,10 +140,6 @@ def _compensation_gate(inc: Incident) -> tuple[str, str, str] | None:
     return ("skipped", "no_affected_customers", "영향 고객 목록이 없어 보상 요청 없음")
 
 
-def _audit(inc: Incident) -> dict[str, Any]:
-    return {"context_id": inc.context_id}  # 이 사건의 쿠폰·실행 기록만 점검한다
-
-
 def _kpi(inc: Incident) -> dict[str, Any]:
     return {"context_ids": [inc.context_id]}
 
@@ -208,14 +201,6 @@ def scenario_a() -> Plan:
                 required=False,
             ),
             Step(
-                "loss",
-                "loss_aggregation",
-                "손실 리포트 (finance)",
-                after=("impact",),
-                also_after=("publish_notice", "compensation"),
-                build=_loss,
-            ),
-            Step(
                 "recovery",
                 "verify_recovery",
                 "복구 검증 (infra)",
@@ -240,14 +225,6 @@ def scenario_a() -> Plan:
                 keep={"notice_id": "recovered_notice_id"},
             ),
             Step(
-                "audit",
-                "audit_report",
-                "사후 감사 (finance)",
-                also_after=("compensation", "loss"),
-                build=_audit,
-                required=False,
-            ),
-            Step(
                 "kpi",
                 "kpi_summary",
                 "처리 시간 요약 (data)",
@@ -262,9 +239,7 @@ def scenario_a() -> Plan:
                 also_after=(
                     "recovered_notice",
                     "link_incident",
-                    "loss",
                     "compensation",
-                    "audit",
                     "kpi",
                 ),
                 kind="record",

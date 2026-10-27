@@ -28,7 +28,7 @@ async def test_scenario_a_completes(harness) -> None:
     assert inc.status == "resolved"
     assert all(s.status == "completed" for s in inc.steps.values())
     assert harness.events == ["incident.opened", "incident.resolved"]
-    assert inc.metrics["steps_total"] == 15
+    assert inc.metrics["steps_total"] == 13
 
 
 @pytest.mark.asyncio
@@ -74,7 +74,7 @@ async def test_failed_after_retries_degrades_and_skips_dependents(harness) -> No
     inc = await run(harness)
     assert inc.status == "degraded"
     assert inc.steps["publish_notice"].status == "failed"
-    assert inc.steps["loss"].status == "completed"  # 공지 실패와 무관하게 손실 리포트는 진행
+    assert inc.steps["compensation"].status == "completed"  # 공지 실패와 무관하게 보상은 진행
     assert inc.steps["record"].status == "completed"  # 기록은 남긴다
     assert inc.steps["rollback"].status == "completed"  # 다른 갈래는 계속
 
@@ -167,7 +167,7 @@ async def test_hold_timeout_auto_rejects(harness) -> None:
     assert "시간 초과" in inc.steps["rollback"].note
     assert inc.status == "degraded"
     assert inc.steps["recovery"].status == "skipped"  # 롤백이 선행
-    assert inc.steps["loss"].status == "completed"
+    assert inc.steps["compensation"].status == "completed"
 
 
 @pytest.mark.asyncio
@@ -232,11 +232,11 @@ async def test_serial_group_gets_increasing_sequence(harness) -> None:
 
 
 @pytest.mark.asyncio
-async def test_loss_aggregation_gets_window_and_context_only(harness) -> None:
-    inc = await run(harness)
-    req = next(r for _, r in harness.fakes.calls if r.skill == "loss_aggregation")
-    assert set(req.input) == {"window_from", "window_to", "context_id"}
-    assert req.input["context_id"] == inc.context_id
+async def test_finance_is_not_called_during_an_incident(harness) -> None:
+    await run(harness)  # 재무는 사건 중에 불리지 않는다(멘토 피드백): 손실 집계·사후 감사 단계 없음
+    assert [
+        r.skill for _, r in harness.fakes.calls if r.skill in ("loss_aggregation", "audit_report")
+    ] == []
 
 
 @pytest.mark.asyncio
