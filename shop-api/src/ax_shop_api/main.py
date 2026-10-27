@@ -148,8 +148,11 @@ class CouponIn(BaseModel):
     context_id: str | None = None  # 사후 추적용 사건 번호(선택). 멱등 비교에는 쓰지 않는다
 
 
-# 브라우저(shop-web)가 직접 부르므로 허용할 출처만 연다. `SHOP_CORS_ORIGINS`(쉼표로 구분)로 바꾼다.
-DEFAULT_CORS_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000"
+# 브라우저(shop-web 3000, dashboard-web 3001)가 직접 부르므로 허용할 출처만 연다.
+# `SHOP_CORS_ORIGINS`(쉼표로 구분)로 바꾼다.
+DEFAULT_CORS_ORIGINS = (
+    "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
+)
 
 # 관리 API 허용 요청자. 장애 해제는 infra 롤백이 관문을 거쳐 부른다(후속 결정 15)
 INJECT_ALLOWED = {"admin"}

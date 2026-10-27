@@ -37,6 +37,16 @@ def test_shop_web_origin_may_call_the_api_from_the_browser() -> None:
     assert simple.headers["access-control-allow-origin"] == "http://localhost:3000"
 
 
+def test_dashboard_web_origin_may_call_the_relay_from_the_browser() -> None:
+    client = TestClient(create_app(Db(":memory:")))
+    for origin in ("http://localhost:3001", "http://127.0.0.1:3001"):
+        response = _preflight(client, origin)
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == origin
+    # 허용 목록에 없는 포트는 여전히 거부된다
+    assert _preflight(client, "http://localhost:3002").status_code == 400
+
+
 def test_other_origins_get_no_cors_headers() -> None:
     client = TestClient(create_app(Db(":memory:")))
     response = _preflight(client, "https://evil.example")
