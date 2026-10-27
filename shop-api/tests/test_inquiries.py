@@ -235,3 +235,23 @@ def test_같은_접수는_같은_멱등_키이고_키에_원문이_없다(
     assert keys[0] == keys[1] != keys[2]
     assert SECRET not in keys[0] and "전화" not in keys[0]
     assert support.calls[0][1].input["customer_name"] == "데모 구매자 0001"
+
+
+def test_멱등_키는_시간_구간이_같을_때만_같다(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SHOP_INQUIRY_DEDUP_WINDOW_SEC", raising=False)
+    args = ("buy_0001", "ord_0001", "제목", SECRET)
+    same_a = inquiries.digest(*args, now=lambda: 1200.0)
+    same_b = inquiries.digest(*args, now=lambda: 1799.0)
+    later = inquiries.digest(*args, now=lambda: 1800.0)
+    other = inquiries.digest("buy_0001", "ord_0001", "제목", "다른 내용", now=lambda: 1200.0)
+    assert same_a == same_b
+    assert later != same_a
+    assert other != same_a
+
+
+@pytest.mark.parametrize("value", ["0", "-5", "abc", ""])
+def test_잘못된_창_값은_기본값(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("SHOP_INQUIRY_DEDUP_WINDOW_SEC", value)
+    assert inquiries.dedup_window() == 600
+    monkeypatch.setenv("SHOP_INQUIRY_DEDUP_WINDOW_SEC", "30")
+    assert inquiries.dedup_window() == 30

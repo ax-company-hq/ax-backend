@@ -6,6 +6,7 @@
 - 문의 원문(제목·본문)은 로그·오류 메시지에 싣지 않는다. 가공 없이 `untrusted`로만 넘긴다.
 - 속도 제한은 프로세스 메모리의 1분 창이다(재시작하면 비워진다). 구매자별과 전체 두 가지:
   `SHOP_INQUIRY_RATE_PER_BUYER`(기본 5/분), `SHOP_INQUIRY_RATE_GLOBAL`(기본 60/분).
+  중복 접수 창은 `SHOP_INQUIRY_DEDUP_WINDOW_SEC`(기본 600초).
   본문 상한은 `SHOP_INQUIRY_MAX_BODY`(기본 2000자), 제목은 `SHOP_INQUIRY_MAX_SUBJECT`(기본 100자).
 """
 
@@ -41,9 +42,25 @@ def buyer_number(buyer_id: str) -> int:
     return int(found.group(1))
 
 
-def digest(buyer_id: str, order_id: str, subject: str, message: str) -> str:
-    """같은 접수(구매자·주문·제목·본문)는 같은 값이다. 멱등 키에 원문 대신 이 해시를 쓴다."""
-    joined = "".join((buyer_id, order_id, subject, message))
+def dedup_window() -> int:
+    """연타·재시도를 같은 접수로 묶는 창(초). 0 이하·잘못된 값은 기본 600초."""
+    return _int_env("SHOP_INQUIRY_DEDUP_WINDOW_SEC", 600)
+
+
+def digest(
+    buyer_id: str,
+    order_id: str,
+    subject: str,
+    message: str,
+    now: Callable[[], float] = time.time,
+) -> str:
+    """같은 구간의 같은 접수(구매자·주문·제목·본문)는 같은 값이다.
+
+    멱등 키에 원문 대신 이 해시를 쓴다. 구간 번호(`floor(epoch / 창)`)가 들어 있어 며칠 뒤 같은
+    문장은 새 문의가 된다. 한계: 구간 경계에서 연타하면 키가 둘로 갈릴 수 있다(수용).
+    """
+    bucket = int(now() // dedup_window())
+    joined = "".join((buyer_id, order_id, subject, message, str(bucket)))
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 
