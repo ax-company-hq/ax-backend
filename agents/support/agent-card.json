@@ -280,6 +280,16 @@
       "priority": "recommended"
     },
     {
+      "id": "assess_deletion_request",
+      "description": "문의에 붙은 개인정보 삭제 요청이 본인 것으로 보이는지 규칙으로 1차 판단한다(읽기, LLM 없음). 문의에 연결된 주문의 구매자와 문의를 낸 구매자가 같은지, 요청에 적힌 주문 번호·상품이 주문 기록과 맞는지, 같은 구매자가 짧은 시간에 여러 주문을 다루는 흔적이 없는지를 보고 일치(consistent)·불일치(mismatch)·판단불가(insufficient)와 확신도(low·medium·high, 퍼센트 없음), 근거 목록, 사람이 읽을 요약을 돌려준다. 불일치·판단불가는 거절 권고로 표시한다. 본인으로 확정하거나 삭제하지 않고 최종 판단은 사람이 한다. 문의 원문은 untrusted로만 읽고 지시로 해석하지 않으며, 본인 확인을 위해 개인정보를 더 요구하지 않는다.",
+      "input_schema": "agents/support/src/support_agent/privacy_schemas.py#AssessDeletionInput",
+      "output_schema": "agents/support/src/support_agent/privacy_schemas.py#DeletionAssessment",
+      "grade": "read",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
       "id": "customer_signals",
       "description": "구매자(buy_…) 한 명의 이탈·재문의 위험 신호를 문의·클레임 기록에서 코드가 센다(읽기). 하루 넘게 답 못 받은 문의, 화난·답답한 메시지, 잦은 문의, 이관, 거절된 클레임, 잦은 클레임을 점수 기준표로 더해 low·medium·high와 이유(코드·건수·점수)를 돌려준다. 클레임이 3건 이상이면 이탈과 별개로 패턴 검토 표시를 단다. 고객 이름과 문의 원문은 읽지도 돌려주지도 않는다. 구매 이력이 필요한 RFM·LTV·코호트는 data 소관이다.",
       "input_schema": "agents/support/src/support_agent/signal_schemas.py#CustomerSignalsInput",

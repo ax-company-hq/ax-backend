@@ -15,7 +15,7 @@ from typing import Any
 
 from ax_agent_template.config import is_mock
 from ax_agent_template.llm import LLMClient, MockLLMClient
-from support_agent import guard, kb, languages
+from support_agent import guard, kb, languages, privacy_rules
 from support_agent.schemas import (
     STYLES,
     Analysis,
@@ -147,6 +147,8 @@ def keyword_classification(text: str) -> LLMClassification:
         for name, words in _CATEGORY_KEYWORDS.items()
     }
     category = next((name for name, found in hits.items() if found), "general")
+    if privacy_rules.is_deletion_request(text):  # 개인정보 삭제 요청은 규칙이 먼저 가른다 (#430)
+        category = privacy_rules.CATEGORY
     korean = languages.detect(text) == "ko"
     return LLMClassification(
         intent_ko="문의",
@@ -213,6 +215,8 @@ async def analyze(
         fallback = True
 
     classified_data = classified.model_dump()
+    if privacy_rules.is_deletion_request(masked):  # LLM이 틀려도 코드가 바로잡는다 (#430)
+        classified_data["category"] = privacy_rules.CATEGORY
     keywords = clean_keywords(classified_data.pop("keywords", []))
     if not keywords:  # LLM이 키워드를 못 줬으면 규칙으로 찾은 것을 쓴다
         keywords = keyword_classification(masked).keywords
