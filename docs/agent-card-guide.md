@@ -21,7 +21,7 @@
 | --- | --- | --- |
 | `read` | 조회만, 상태 변경 없음 | 영향 분석, 손실 집계, 배포 이력 조회 |
 | `A` | 바로 실행해도 되는 상태 변경 | 공지 게시, 티켓 생성, 사건 기록 |
-| `B` | 다른 에이전트 교차검증 후 실행 | 롤백, 쿠폰 지급, 정산 보류 |
+| `B` | 다른 에이전트 교차검증 후 실행 | 롤백, 정산 보류 |
 | `C` | 사람 승인 대기열로 | 판매자 영구 정지, 기준 금액 이상 보상 |
 
 `read`가 아닌 skill은 실행할 때 반드시 `execute()`를 거친다. 실제 등급은 안전 레이어가 금액·누적 한도로 올릴 수 있으니, 여기엔 **기본 등급**을 적는다.
@@ -69,7 +69,6 @@ allowedRequesters는 시작 제안값이다. 각자 판단해서 조정한다.
 | hr | `incident_record` | 사건 기록 | A | orchestrator |
 | hr | `handover_doc` | 인수인계 문서 | A | orchestrator |
 | finance | `loss_aggregation` | 손실 집계 | read | orchestrator |
-| finance | `compensation_approval` | 보상 승인 | read | orchestrator, support |
 | finance | `seller_review` | 판매자 심사 | B | orchestrator |
 | finance | `settlement_hold` | 정산 보류 | B | orchestrator |
 | data | `anomaly_detection` | 이상 탐지 | read | orchestrator, infra-dejafix |

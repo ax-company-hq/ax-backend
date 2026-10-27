@@ -121,19 +121,19 @@ Oct 21, 2026 · @재현
 | DEP-CS-02 | 고객지원 | 보상 요청 | 보상 단가·대상을 판정해 마케팅 issue\_coupon(compensation)에 직렬 요청(compensation\_request, sequence 포함). 지급은 마케팅, 고객지원 자신의 상태 변경 없음 | A | 병환 | 필수 |
 | DEP-CS-03 | 고객지원 | 판매자 안내 | 입점 심사 결과를 판매자에게 안내 | A | 병환 | 권장 |
 | DEP-MKT-01 | 마케팅 | 공지 게시 | 점검·정상화 공지 문구 생성 후 공지 배너 API 호출 | A | 재헌 | 필수 |
-| DEP-MKT-02 | 마케팅 | 쿠폰 지급 | issue\_coupon(purpose\_code campaign·compensation): 사건 보상과 고객지원 보상 요청 처리, 보상은 직렬 + sequence, 검증자 재무(안전 레이어 라우팅), 기준 이상 C | B | 재헌 | 필수 |
+| DEP-MKT-02 | 마케팅 | 쿠폰 지급 | issue\_coupon(purpose\_code campaign·compensation): 사건 보상과 고객지원 보상 요청 처리, 보상은 직렬 + sequence. 검증자 없음: 안전 레이어가 총액을 코드로 계산(건수 × 단가)하고 기준표 기준 이상(건별·단가·일일·사건당·고객당 누적)이거나 요청 총액과 계산값이 다르면 C(safety 보류 큐 하나), 아니면 바로 실행. 재무는 지급된 쿠폰을 장부에 기록만 함(coupon.issued). 보상 단가·건수 상한은 고객지원 정책표, 금액 기준은 사람만 바꾸는 기준표(thresholds.toml) | A | 재헌 | 필수 |
 | DEP-MKT-03 | 마케팅 | 상품 관리 | 장애 영향 상품 판매 일시중지·재개 | B | 재헌 | 선택 |
 | DEP-HR-01 | 인사 | 사건 기록 | 종료된 사건의 타임라인·원인·조치를 포스트모템으로 작성해 회사 기억에 저장 | A | 준하 | 필수 |
 | DEP-HR-02 | 인사 | 인수인계 | 에이전트별 사건 기록·변경 이력으로 인수인계 문서 생성 | A | 준하 | 선택 |
-| DEP-FIN-01 | 재무/정산 | 손실 리포트 | data 영향 분석 결과 + 지급된 보상(coupon.issued)으로 손실 리포트 (같은 숫자를 다시 계산하지 않음) | 조회 | 태윤 | 필수 |
-| DEP-FIN-02 | 재무/정산 | 금액 교차검증 | 안전 레이어가 라우팅한 B 액션을 원천 데이터로 재계산해 승인·거절 (verify\_amount) | 조회 | 태윤 | 필수 |
+| DEP-FIN-01 | 재무/정산 | 장부·결산 반영 | 평상시 일. 지급된 쿠폰(coupon.issued)·환불(payment.refunded)을 이벤트로 장부에 기록하고 일·월 결산(closing\_report)·사후 감사(audit\_report)에 반영. 장애 때 나간 보상도 같은 장부로 들어가 결산·감사에서 사건(context\_id)별로 확인. 장애 대응 흐름(SCN-A)의 단계가 아니며 총괄이 사건 중에 호출하지 않음. data 영향 숫자는 다시 계산하지 않음 | 조회 | 태윤 | 필수 |
+| DEP-FIN-02 | 재무/정산 | (폐지) 금액 교차검증 | 2026-10-23 재무 재설계로 폐지(verify\_amount 삭제). 쿠폰·환불 건별 금액 검사는 재무 일이 아니라 안전 레이어 코드 규칙(SAF-02·SAF-11)이 하고, 재무는 장부 기록과 사후 감사(DEP-FIN-01)만 한다. ID는 다시 쓰지 않음 | — | 태윤 | — |
 | DEP-FIN-03 | 재무/정산 | 판매자 심사 | 등록 정보·상품 검증, 데이터분석 위험 점수로 승인/보류 판단 | B\~C | 태윤 | 권장 |
 | DEP-FIN-04 | 재무/정산 | 정산 보류 | 위험 판매자 정산 보류 처리 | B | 태윤 | 권장 |
 | DEP-DATA-01 | 데이터분석 | 이상 탐지 | 주문·결제 실패율·문의량 등 업무 지표 감시, 이상 시 metric.anomaly 발행 | 조회 | 재현 | 필수 |
 | DEP-DATA-02 | 데이터분석 | 영향 분석 | 장애 구간 실패 주문 수, 영향 고객 목록, 피해 금액 산출 (영향 원천 숫자의 유일한 출처) | 조회 | 재현 | 필수 |
 | DEP-DATA-03 | 데이터분석 | 사기 위험 점수 | 신규 판매자를 과거 사기 패턴과 대조해 점수화 | 조회 | 재현 | 권장 |
 | DEP-MKT-04 | 마케팅 | get\_notice | 공지 사실 필드·promises·기간·근거 조회. 고객지원·재무가 공지를 읽는 유일한 경로 | 조회 | 재헌 | 필수 |
-| DEP-CS-04 | 고객지원 | 현금 환불 | refund\_request: 고객지원 관문 경유로 판매 사이트 환불 API 호출, 검증자 재무, 기준 이상 C | B | 병환 | 권장 |
+| DEP-CS-04 | 고객지원 | 현금 환불 | refund\_request: 고객지원 관문 경유로 판매 사이트 환불 API 호출. 검증자 없음: 안전 레이어가 환불 금액(refund\_amount)으로 기준표 건별 기준 이상이면 C(safety 보류 큐 하나), 아니면 바로 실행. 재무는 환불(payment.refunded)을 장부에 기록만 함 | A | 병환 | 권장 |
 | DEP-CS-05 | 고객지원 | 문의 패턴 신호 | 분류·정책 패턴 급증 시 support.inquiry\_surge 발행 (총량 이상은 data) | A | 병환 | 권장 |
 
 공통: 모든 부서 에이전트는 Agent Card 공개, 단독 테스트 시나리오 1개, 자기 skill의 등급 신고를 개발 착수 전에 완료한다.
@@ -163,7 +163,7 @@ Oct 21, 2026 · @재현
 
 **SCN-A: 결제 API 장애 (필수)**
 
-- [ ] 판매 사이트 장애 주입 후 사람 개입 없이 DejaFix 감지 → 데이터분석 영향 분석 → 롤백·점검 공지·보상·손실 집계 → 복구 검증 → 정상화 공지 → 사건 기록까지 완료
+- [ ] 판매 사이트 장애 주입 후 사람 개입 없이 DejaFix 감지 → 데이터분석 영향 분석 → 롤백·점검 공지·보상 → 복구 검증 → 정상화 공지 → 사건 기록까지 완료 (재무/정산은 이 흐름의 단계가 아님. 보상 쿠폰은 coupon.issued로 재무 장부에만 기록)
 - [ ] 모든 Task가 하나의 contextId로 묶여 대시보드에 시간순 표시
 - [ ] 고객지원 보상 요청 → 마케팅 issue\_coupon → 안전 레이어 금액 검사(한도 안 A 바로 지급, 기준 이상·금액 불일치 C 보류) 흐름이 최소 1회 발생하고, 고객지원이 get\_notice로 공지 사실을 읽어 응대
 - [ ] 롤백이 B 등급 교차검증을 거쳐 실행되고, 쿠폰 지급은 교차검증 없이 안전 레이어 코드 규칙으로 판정(한도 안 A 실행, 기준 이상·금액 불일치 C, finance 호출 없음)
@@ -233,12 +233,12 @@ Oct 21, 2026 · @재현
 ```json
 {
   "name": "finance",
-  "description": "재무/정산 — 손실 집계, 보상 승인, 판매자 심사, 정산 보류",
+  "description": "재무/정산 — 장부·결산, 매출·PG 대사, 판매자 심사·정산 보류, 사후 감사",
   "url": "http://finance:8105/a2a",
   "version": "0.1.0",
   "capabilities": { "streaming": true, "push_notifications": true },
   "skills": [
-    { "id": "loss_aggregation", "name": "손실 집계", "description": "...", "tags": ["incident"], "grade": "read" },
+    { "id": "closing_report", "name": "결산 리포트", "description": "...", "tags": ["closing"], "grade": "read" },
     { "id": "settlement_hold", "name": "정산 보류", "description": "...", "tags": ["seller"], "grade": "B" }
   ]
 }
@@ -271,7 +271,7 @@ Oct 21, 2026 · @재현
 }
 ```
 
-응답: `{ "execution_id", "grade": "A|B|C", "status": "executed|verifying|held|rejected|failed", "computed_amount", "threshold_version", "verifier": "finance", "hold_reason", "review_id" } — claimed_grade는 기록만 하고 판정에 쓰지 않는다`
+응답: `{ "execution_id", "grade": "A|B|C", "status": "executed|verifying|held|rejected|failed", "computed_amount", "threshold_version", "verifier": null, "hold_reason", "review_id" } — claimed_grade는 기록만 하고 판정에 쓰지 않는다. 위 예시 issue_coupon은 A라 verifier가 없고 verifying이 오지 않는다. verifier·verifying은 B 액션(예: rollback_deployment → planning)에서만 채워진다`
 
 ## 11. 진행 단계별 작업 체크리스트
 
@@ -313,7 +313,7 @@ Oct 21, 2026 · @재현
 - [ ] input-required 중계·결과 취합·이관·사건 종료 (ORC-06\~09) — 준하
 - [ ] 롤백·사건 연결·복구 검증 (DJF-04, DEP-DEV-02, DJF-03) — 예진
 - [ ] 보상 계산, 실시간 갱신 (DEP-CS-02, DSH-02) — 병환
-- [ ] 손실 리포트·금액 교차검증 (DEP-FIN-01\~02), 쿠폰 지급·get\_notice (DEP-MKT-02, DEP-MKT-04, 재헌) — 태윤
+- [ ] 쿠폰 지급·get\_notice (DEP-MKT-02, DEP-MKT-04) — 재헌
 - [ ] B 등급 교차검증, 사후 검증 (SAF-04, SAF-09) — 태윤
 - [ ] 사건 기록 (DEP-HR-01) — 준하
 - [ ] SCN-A 인수 기준 전체 통과 — 전원
@@ -326,6 +326,7 @@ Oct 21, 2026 · @재현
 **6. 시나리오 B**
 
 - [ ] 판매자 심사·정산 보류, C 등급 보류 (DEP-FIN-03\~04, SAF-05) — 태윤
+- [ ] 장부·결산 반영 (DEP-FIN-01, 시나리오 A 단계 아님) — 태윤
 - [ ] 누적 한도·규칙 기반 검증 (SAF-10\~11) — 태윤
 - [ ] 사기 위험 점수, 유사 사건 검색 API (DEP-DATA-03, MEM-02) — 재현
 - [ ] 판매자 안내, 안전 레이어 표시 (DEP-CS-03, DSH-03) — 병환
@@ -351,4 +352,4 @@ Oct 21, 2026 · @재현
 - [ ] 홉 제한 3, 타임아웃, 요청 예산 값이 적절한지 단독 동작 단계 테스트 후 확정
 - [ ] 알려진 한계(발표에서 설계로 제시): 동시 충돌 → 대상 단위 잠금, 부분 실패 → 보상 트랜잭션(saga). 구현 여부는 학습 효과·KPI 단계 전에 판단
 
-해소된 질문: 기준 금액·누적 한도(재무 기준표 v1), 교차검증 담당(돈은 재무, 롤백은 기획개발), 롤백 대상(데모에서 롤백 = 장애 주입 해제), 부서 간 안건(공통 구성안 13장 결정 1\~16).
+해소된 질문: 기준 금액·누적 한도(재무 기준표 v1), 교차검증 담당(롤백은 기획개발. 쿠폰·환불은 2026-10-23 재무 재설계로 교차검증 없이 안전 레이어 코드 규칙이 금액을 검사하고, 재무는 장부 기록·사후 감사만), 롤백 대상(데모에서 롤백 = 장애 주입 해제), 부서 간 안건(공통 구성안 13장 결정 1\~16).

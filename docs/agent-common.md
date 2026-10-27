@@ -23,7 +23,7 @@ Oct 21, 2026 · @재현
 | `support` | 고객지원 | 병환 | 8102 | 문의 응대, 클레임 판정, 개별 보상 |
 | `marketing` | 마케팅 | 재헌 | 8103 | 공지, 캠페인, 사건 보상 쿠폰 |
 | `hr` | 인사 | 준하 | 8104 | 업무 기록·결정 카드, 인수인계 |
-| `finance` | 재무/정산 | 태윤 | 8105 | 금액 교차검증, 대사·정산, 손실 리포트 |
+| `finance` | 재무/정산 | 태윤 | 8105 | 장부(쿠폰·환불 기록)·결산, 매출·PG 대사, 판매자 심사·정산, 사후 감사, 한도 변경 제안 |
 | `data` | 데이터분석 | 재현 | 8106 | 업무 지표 이상 탐지, 영향 분석 |
 | `infra` | 인프라 (DejaFix 래퍼) | 예진 | 8107 | 장애 진단, 롤백, 복구 확인 |
 
@@ -188,7 +188,7 @@ C 등급 보류는 Task 상태가 아니라 안전 레이어의 실행 결과(`s
 
 ### 액션 등급 신고
 
-각 부서는 개발 착수 전에 레지스트리 신고 양식(재무 구성안 3-6)으로 액션·기본 등급·검증자·금액 필드를 제출한다. Agent Card의 `grade`·`verifier`와 같은 값이어야 하며, 다르면 레지스트리가 우선한다. 기준 금액 등급표는 재무(태윤)가 관리하고 사람만 바꾼다.
+각 부서는 개발 착수 전에 레지스트리 신고 양식(재무 구성안 3-6)으로 액션·기본 등급·검증자·금액 필드를 제출한다. Agent Card의 `grade`·`verifier`와 같은 값이어야 하며, 다르면 레지스트리가 우선한다. 기준 금액 등급표(`thresholds.toml`)는 사람만 기준표 PR로 바꾼다(code owner 승인). 재무 AI는 바꿀 값을 제안만 하고 정하지 않는다.
 
 - **DejaFix 조치 등록** (미등록이면 C 대신 등록한다): `rollback_deployment` B·검증자 planning, `restart_service` B·검증자 data(복구 지표 확인). 서버 재부팅·파일 삭제는 미등록으로 두어 C
 - **금액이 아닌 기준 키** (planning `generate_pr` 검증용, 태윤님께 요청): `pr_changed_lines`, `pr_changed_files`, `pr_allowed_paths`. 기준표·레지스트리가 금액 외 기준도 담을 수 있어야 한다
@@ -205,16 +205,16 @@ C 등급 보류는 Task 상태가 아니라 안전 레이어의 실행 결과(`s
 | 업무 지표 감시 (주문·결제 실패율, 문의 총량) | data | — |  |
 | 문의 접수 이벤트 | support (문의 위젯) `support.inquiry_received` | — | 위젯이 고객지원 소관 |
 | 문의 분류·정책 패턴 감지 | support `support.inquiry_surge` | 공지 여부·문안은 marketing `draft_notice`가 결정 | 양은 data, 내용 패턴은 support |
-| 영향 원천 숫자 (실패 건수·영향 고객·피해 금액) | data | finance는 이 결과로 손실 리포트 작성 | 같은 숫자를 두 곳에서 내지 않기 |
+| 영향 원천 숫자 (실패 건수·영향 고객·피해 금액) | data | finance는 사후 감사에서 이 결과를 그대로 대조(다시 계산하지 않음). 장애 대응 중에는 finance를 부르지 않음 | 같은 숫자를 두 곳에서 내지 않기 |
 | 장애 관련 PR·배포 후보 | planning `find_related_prs` | data·infra가 질의 | 원인 판정은 하지 않음 |
 | 원인 확정 | infra (DejaFix) | data는 업무 지표, planning은 배포·PR 근거를 제공 | 원인 확정과 롤백을 같은 곳에서 (예진 답변) |
 | 롤백 실행 | infra `rollback_deployment` (B) | 검증자 planning. 검증은 "롤백 대상 배포가 장애 시각 직전이고, 그 사이 머지된 PR이 있는가"를 확인하는 읽기 skill (원인 판정은 하지 않음) | DejaFix 쓰기 도구 계약 PR 선행. 데모에서는 롤백이 판매 사이트 장애 주입 해제로 이어짐 (13장 후속 결정) |
-| 쿠폰 지급 (캠페인·보상 모두) | marketing `issue_coupon` (B, 기준 이상 C), `purpose_code`로 구분 | 검증자 finance. 보상 쿠폰은 support 요청을 직렬 처리 + `sequence` | 판매 사이트 쿠폰 API는 마케팅 관문만 호출 |
+| 쿠폰 지급 (캠페인·보상 모두) | marketing `issue_coupon` (A, 기준 이상·금액 불일치 C), `purpose_code`로 구분 | 검증자 없음(안전 레이어가 총액을 코드로 계산해 검사). finance는 `coupon.issued`를 장부에 기록만. 보상 쿠폰은 support 요청을 직렬 처리 + `sequence` | 판매 사이트 쿠폰 API는 마케팅 관문만 호출 |
 | 보상 판정·요청 | support `compensation_request` (A, 요청만) | marketing이 지급 | 보상 대상·단가 판정은 support 한 곳 |
-| 현금 환불 | support `refund_request` (B, 기준 이상 C) | 검증자 finance, 판매 사이트 환불 API는 고객지원 관문만 호출 | 마케팅은 관여하지 않음 |
+| 현금 환불 | support `refund_request` (A, 기준 이상 C) | 검증자 없음(안전 레이어가 환불 금액으로 기준 검사). finance는 `payment.refunded`를 장부에 기록만. 판매 사이트 환불 API는 고객지원 관문만 호출 | 마케팅은 관여하지 않음 |
 | 공지 사실·약속 조회 | marketing `get_notice` (read) | support·finance가 조회 | 마케팅 DB 직접 조회 금지, 유일한 경로 |
-| 금액 교차검증 | finance `verify_amount` | 안전 레이어가 라우팅. 요청 부서는 `execute()`만 부름 | 요청 부서가 재무를 직접 부르지 않음 |
-| 기준 금액 등급표 | finance (사람만 변경) | 모든 부서는 조회. 캠페인·보상·환불 항목 분리 |  |
+| 쿠폰·환불 건별 금액 검사 | safety 코드 규칙 (금액 계산·요청 총액 불일치·기준표 기준) | 요청 부서는 `execute()`만 부름. finance는 건별로 관여하지 않음 | 2026-10-23 재무 재설계로 finance `verify_amount` 폐지 (후속 23) |
+| 기준 금액 등급표 | 사람 (기준표 PR, code owner 승인) | 모든 부서는 조회. 캠페인·보상·환불 항목 분리. 재무 AI는 바꿀 값을 제안만 | 보상 단가·건수 상한은 support 정책표 |
 | 공지 게시 | marketing | support는 문구 점검(`notice_check`, 선택)·급증신호만 |  |
 | 판매자 심사 판단 | finance | data는 사기 위험 점수만 |  |
 | 결정 카드 문장·기각 판정 | hr | 다른 부서는 표시·활용만 |  |
@@ -323,7 +323,7 @@ C 등급 보류는 Task 상태가 아니라 안전 레이어의 실행 결과(`s
 | planning (예진) | `find_related_prs`, `link_incident` | `create_ticket` 등 권장, 기획서→PR 파이프라인 선택 |
 | marketing (재헌) | `draft_notice`, `publish_notice`, `get_notice`, `issue_coupon`(compensation, 직렬) | `draft_campaign`, `campaign_report`, `notice_check` 연동 |
 | support (병환) | `inquiry_draft`, `reply_send`, `compensation_request`, 문의 위젯 이벤트 | `claim_evaluate`·보상 큐(불량·반품 흐름), `refund_request`, `support.inquiry_surge`, `notice_check` |
-| finance (태윤) | `verify_amount`, 손실 리포트(data 결과 기반) | 일일 대사, 판매자 정산 |
+| finance (태윤) | 없음. 재무/정산은 시나리오 A 흐름의 단계가 아니다 (후속 22). 장애 중 나간 보상 쿠폰은 `coupon.issued`로 장부에만 기록 | 장부·결산(`closing_report`), 사후 감사(`audit_report`), 일일 대사, 판매자 정산 |
 | hr (준하) | `record_case` → memory에 사건 카드 저장 | 인수인계, 발령·교대, 온보딩, 계획 비교 |
 | safety (태윤) | `execute()`: A 즉시 실행·C 보류 최소판 → B 교차검증, 보류 큐 | 누적 한도 세부 키 |
 | memory (재현) | 카드 쓰기·검색 | 카드 대체·폐기 연결 |
@@ -350,11 +350,11 @@ C 등급 보류는 Task 상태가 아니라 안전 레이어의 실행 결과(`s
 
 | # | 안건 | 결정 | 관련 |
 | --- | --- | --- | --- |
-| 9 | 보상 지급 경로 | 보상 판정은 support, 지급은 marketing `issue_coupon`(purpose\_code=compensation), support 요청은 직렬 + `sequence`. 현금 환불은 support `refund_request`(B)가 고객지원 관문으로 | 재헌·병환 합의 채택 |
+| 9 | 보상 지급 경로 | 보상 판정은 support, 지급은 marketing `issue_coupon`(purpose\_code=compensation), support 요청은 직렬 + `sequence`. 현금 환불은 support `refund_request`(B)가 고객지원 관문으로 (환불 등급은 후속 23으로 A) | 재헌·병환 합의 채택 |
 | 10 | 공지 정보 전달 | `notice.published`는 사실 ID만, 본문·사실·약속은 `get_notice`로만. 약속은 `promises[{type, amount, condition_code, condition}]` | 재헌·병환 합의 채택 |
 | 11 | 문의 이벤트 | 문의 접수는 support `support.inquiry_received`, 패턴 신호는 `support.inquiry_surge`(분류·정책), 총량 이상은 data `metric.anomaly` | 재헌·병환 합의 + data 경계 |
-| 12 | 교차검증 결과 상태 | 재무 거절 = completed + `outcome: rejected_by_review`, 마감 초과 = canceled, 실행 오류 = failed | 재헌·병환·준하 |
-| 13 | 교차검증 호출 | 마케팅·고객지원은 `execute()`만 부르고, 안전 레이어가 finance `verify_amount`로 라우팅한다. 마케팅 v3의 "마케팅 → 재무 직접 요청" 표현은 이 방식으로 읽는다 | 재헌·태윤 |
+| 12 | 교차검증 결과 상태 | 재무 거절 = completed + `outcome: rejected_by_review`, 마감 초과 = canceled, 실행 오류 = failed (2026-10-23: 쿠폰·환불은 교차검증이 없어져 재무 거절이 없다. 다른 B 검증자에 같은 규칙, 후속 23) | 재헌·병환·준하 |
+| 13 | 교차검증 호출 | (후속 23으로 폐지) 마케팅·고객지원은 `execute()`만 부르고, 안전 레이어가 finance `verify_amount`로 라우팅한다. 마케팅 v3의 "마케팅 → 재무 직접 요청" 표현은 이 방식으로 읽는다 | 재헌·태윤 |
 | 14 | 이벤트 전달 방식 | 이벤트 버스(Redis Streams) 하나로 통일. shop-api는 agent-template `events.publish`로 발행. 마케팅 v3의 `POST /events` 안은 쓰지 않음 | 재헌·준하 |
 | 15 | 데모 장애 복구 | infra `rollback_deployment`가 실행되면 shop-api 장애 주입 해제 API를 관문 경유로 호출해 `shop.recovered`가 나오게 한다. 사람이 해제 버튼을 누르지 않아도 시나리오 A가 무인으로 끝난다 | 예진·재헌 |
 | 16 | 이벤트 단계 | 마케팅 v3의 \[필수\] 12종 중 배송·반품·환불 4종은 2차(고객지원 불량·반품 흐름)로 개발 순서만 뒤로. 스키마 정의는 1차에 함께 | 재헌·병환 |
@@ -369,6 +369,13 @@ C 등급 보류는 Task 상태가 아니라 안전 레이어의 실행 결과(`s
 | 20 | planning 요청·조회 skill 이름 | 요청 등록 `create_ticket`, 진행 중 조회 `list_in_progress` 하나로 유지 (둘 다 시나리오 A 범위 밖) | 예진 → 병환·준하 |
 | 21 | 원인 추적 루프 | 결정하는 쪽은 infra(원인 확정·롤백), 판정·기록은 data(업무 지표)와 planning(배포·PR 근거) (8·9장) | 예진 |
 
+### 후속 결정 (멘토 피드백·재무 재설계 반영, 2026-10-27)
+
+| # | 안건 | 결정 | 관련 |
+| --- | --- | --- | --- |
+| 22 | 서버 장애 흐름의 재무 | 재무/정산은 서버 장애(시나리오 A) 대응 흐름의 노드가 아니다. 총괄은 사건 중에 finance를 부르지 않는다(손실 리포트·사건 후 감사 단계 없음). 장애 중 나간 보상 쿠폰·환불은 이벤트(`coupon.issued`·`payment.refunded`)로 재무 장부에 들어가고, 그 비용은 평상시 결산·사후 감사에서 확인한다 (8·12장, 요구사항 DEP-FIN-01·SCN-A) | 멘토 피드백 2026-10-26, 태윤 |
+| 23 | 쿠폰·환불 등급과 재무 | marketing `issue_coupon`, support `refund_request`는 A, 검증자 없음. 금액은 안전 레이어가 코드로 계산하고 기준표 기준 이상이면 C(쿠폰은 요청 총액이 계산값과 다를 때도 C), 모두 safety 보류 큐 하나로. 재무는 쿠폰·환불을 검증하지 않고 장부에 기록만 한다. finance `verify_amount` 폐지(재무 재설계 2026-10-23, 레지스트리 반영), 결정 13 폐지. 보상 단가·상한은 support 정책표, 금액 기준은 사람만 바꾸는 기준표 (8장, 요구사항 DEP-MKT-02·DEP-CS-04·DEP-FIN-02) | 태윤, 재헌·병환 |
+
 ### 구성안별 수정 목록
 
 | 구성안 | 고칠 것 |
@@ -376,7 +383,7 @@ C 등급 보류는 Task 상태가 아니라 안전 레이어의 실행 결과(`s
 | 공통 (계약 프롬프트, CLAUDE.md) | (반영 완료) snake\_case, 재헌 공통 봉투, 6장 카탈로그(후속 결정 포함), record\_case kind 확장, 18항목 규약 통합 — prompt-junha-contracts.md, CLAUDE.md |
 | 기획개발 (예진) | (답변으로 전부 수용, 구성안에 반영 예정) LLM을 Gemini로(`PLANNING_LLM_*`), tenant\_id 확정, 포트 8101·8107, 우선순위 표시(`find_related_prs`·`link_incident` required, 파이프라인 recommended), `/holds` 제거(C 보류는 safety 큐, Task는 `input-required`·`human_input`), 검수 Agent는 `review_pr`(A). 변경 요청 context\_id는 planning이 `ctx_req_`로 발급, `github_create_pull` 같은 쓰기 도구는 `execute()` 뒤에만 |
 | 고객지원 (병환) | (v3 대조 반영 후 남은 것) LLM을 Gemini로(문서상 아직 Anthropic), 포트 8102, 사례 카드·공지 색인은 memory 사용, 상담원 승인·C 보류는 safety 보류 큐 + 10분 자동 거절(확인 필요 1·2·11 정리), 레포 배치 확정(확인 필요 10), 필수 skill 표시(12장) |
-| 마케팅·판매 사이트 (재헌) | (v3 반영 후 남은 것) 교차검증은 execute()만 부르고 안전 레이어가 라우팅(후속 13), 이벤트 전달은 Redis Streams(후속 14), 롤백 시 장애 주입 해제 API 제공(후속 15), 배송·반품·환불 이벤트는 2차(후속 16), 결정 대기 4번(C 해제 주체)은 결정안 2번으로 닫기, 레포·tenant\_id 확정 반영 |
+| 마케팅·판매 사이트 (재헌) | (v3 반영 후 남은 것) `issue_coupon`은 A·검증자 없음, 기준 이상·금액 불일치만 C(후속 23, 후속 13 폐지), 이벤트 전달은 Redis Streams(후속 14), 롤백 시 장애 주입 해제 API 제공(후속 15), 배송·반품·환불 이벤트는 2차(후속 16), 결정 대기 4번(C 해제 주체)은 결정안 2번으로 닫기, 레포·tenant\_id 확정 반영 |
 | 인사 (준하) | 계약 원본은 `contracts/` 한 곳(복사본 없음), 결정 카드는 memory에 저장, 확신 낮은 카드 승인은 대시보드 큐로, 필수는 `record_case`, 부서 목록에서 마켓 운영 제거 |
 | 재무/정산·안전 레이어 (태윤) | 보류 큐에 자동 거절 추가, `incident_impact_report`는 data 영향 분석 결과 기반으로, memory 카드 쓰기(A) 레지스트리 등록 |
 | 데이터분석 (재현) | (반영 완료) find\_related\_prs, 롤백 주체 infra, 원인 확정도 infra, 루프 ②는 infra `verify_recovery`가 질의, snake\_case, memory MCP 도구 이름, 영향 원천 숫자 경계, 구독 이벤트 정리 |
