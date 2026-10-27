@@ -1,6 +1,7 @@
 """시나리오 A 재무 몫 테스트: 사건별 쿠폰 장부(⑨)·손실 리포트(⑩)·사건 후 감사(⑰), 재설계 문서 12장.
 
-네트워크 없음. 실제 모드는 가짜 안전 관문(httpx MockTransport)과 가짜 data(`call_agent`)로 본다.
+네트워크 없음. 실제 모드는 가짜 안전 관문·가짜 총괄(httpx MockTransport)과
+가짜 data(`call_agent`)로 본다.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from ax_contracts.schemas import (
     TaskStatus,
 )
 from finance_agent import audit, handlers, incidents, sources
+from finance_agent import finance_config as fc
 from finance_agent import ledger as lg
 from finance_agent.main import app
 from finance_agent.sources import LiveSources, MockSources
@@ -238,6 +240,36 @@ def _use_safety(client: httpx.AsyncClient) -> None:
     s.thresholds_loader = thresholds
 
 
+ORC_ROW = {  # 총괄 `GET /api/incidents` 행 (재무가 쓰지 않는 키도 들어 있다)
+    "context_id": CTX,
+    "kind": "payment_outage",
+    "title": "결제 장애",
+    "component": "payment",
+    "status": "resolved",
+    "opened_at": "2026-10-22T05:00:00Z",
+    "closed_at": "2026-10-22T05:30:00Z",
+    "steps": [{"no": "1"}],
+    "events": [],
+    "summary": ["진단 완료"],
+    "metrics": {"mttr_seconds": 1800},
+    "shared": {},
+    "pending_holds": [],
+}
+
+
+def _orchestrator(rows: list[dict[str, Any]] | None) -> httpx.AsyncClient:
+    """가짜 총괄 사건 목록. rows가 None이면 총괄이 꺼져 있다."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if rows is None:
+            raise httpx.ConnectError("orchestrator down")
+        if request.url.path == "/api/incidents":
+            return httpx.Response(200, json={"data": rows, "meta": {"mock": False}})
+        return httpx.Response(404)
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
 @pytest.fixture
 def fake_data(monkeypatch: pytest.MonkeyPatch) -> list[AgentRequest]:
     calls: list[AgentRequest] = []
@@ -349,7 +381,7 @@ def test_load_executions_reads_gate_records(real_mode) -> None:
 
 # ------------------------------------------------------------ 보상 쿠폰 장부 (실제 모드)
 def test_compensation_total_in_real_mode_comes_from_gate_records(real_mode, fake_data) -> None:
-    handlers.reset_state(LiveSources())
+    handlers.reset_state(LiveSources(_orchestrator([])))  # 총괄이 이 사건을 모른다
     records = [_raw_record(_exe(f"exe_{n}", f"buy_000{n}")) for n in range(1, 5)]
     records.append(_raw_record(_exe("exe_9", "buy_0009", ctx="ctx_inc_other")))
     _use_safety(_safety(records))
@@ -359,12 +391,12 @@ def test_compensation_total_in_real_mode_comes_from_gate_records(real_mode, fake
     assert (comp["count_executed"], comp["total_executed"]) == (4, 8000)
     assert data["ledger_source"] == "safety_executions"
     assert [c["execution_id"] for c in comp["coupons"]] == ["exe_1", "exe_2", "exe_3", "exe_4"]
-    # 장애 구간을 알려 주던 loss_aggregation을 없앴다 → data에 묻지 않는다
+    # 총괄이 이 사건을 모르면 구간도 모르고, 구간을 모르면 data에 묻지 않는다
     assert data["impact"] is None and fake_data == []
 
 
 def test_compensation_without_any_ledger_source_is_unknown(real_mode, fake_data) -> None:
-    handlers.reset_state(LiveSources())
+    handlers.reset_state(LiveSources(_orchestrator(None)))  # 총괄도 꺼짐
     _use_safety(_safety(None))  # 안전 관문 꺼짐 + 이벤트 버스 없음
     data, unavailable = asyncio.run(incidents.incident_view(CTX, _feed(None), None))
     comp = data["compensation"]
@@ -551,15 +583,15 @@ def test_no_ledger_source_makes_everything_unknown(real_mode) -> None:
 
 # ---------------------------------------------------------------- 실제 모드 사건 API
 def test_real_mode_incident_uses_gate_records_and_has_no_window(real_mode, fake_data) -> None:
-    handlers.reset_state(LiveSources())
+    handlers.reset_state(LiveSources(_orchestrator(None)))  # 총괄을 못 읽으면 구간도 모른다
     records = [_raw_record(e) for e in GOOD]
     _use_safety(_safety(records))
     client = TestClient(app)
     body = client.get(f"/api/finance/incidents/{CTX}").json()
     data = body["data"]
     assert body["meta"]["mock"] is False and data["ledger_source"] == "safety_executions"
-    # 장애 구간을 알려 주던 loss_aggregation을 없앴다 → 실제 모드에서는 구간·영향이 늘 null이고
-    # data에 묻지도 않는다 (재무는 장애 대응 흐름의 단계가 아니다, 요구사항 DEP-FIN-01)
+    # 총괄 사건 목록을 못 읽으면 구간·영향이 null이고 data에 묻지도 않는다 (fail-closed).
+    # 재무는 장애 대응 흐름의 단계가 아니다 (요구사항 DEP-FIN-01)
     assert data["window"] is None
     assert data["impact"] is None and "impact" in body["meta"]["unavailable"] and fake_data == []
     assert data["limits"]["per_customer"]["limit"] == 50000  # 안전 관문 기준표에서 읽음
@@ -568,6 +600,64 @@ def test_real_mode_incident_uses_gate_records_and_has_no_window(real_mode, fake_
     assert listing["meta"]["ledger_source"] == "safety_executions"
     assert [r["context_id"] for r in listing["data"]] == [CTX]
     assert listing["data"][0]["damage_amount"] is None  # 영향을 모르면 피해 금액도 모른다
+
+
+# ------------------------------------------- 사건 구간을 총괄에서 읽기 (#417 제안 A, #418)
+def test_real_mode_window_comes_from_orchestrator_incidents(real_mode, fake_data) -> None:
+    """총괄 사건 목록의 `opened_at`·`closed_at`이 재무의 장애 구간이 된다 (읽기 전용)."""
+    handlers.reset_state(LiveSources(_orchestrator([{"context_id": "ctx_inc_other"}, ORC_ROW])))
+    _use_safety(_safety([_raw_record(e) for e in GOOD]))
+    body = TestClient(app).get(f"/api/finance/incidents/{CTX}").json()
+    data = body["data"]
+    assert data["window"] == {"from": "2026-10-22T05:00:00Z", "to": "2026-10-22T05:30:00Z"}
+    assert data["component"] == "payment"
+    # 구간을 알게 되니 data `impact_analysis`를 계약대로 부른다 (사건 번호는 meta로)
+    [sent] = fake_data
+    assert sent.skill == "impact_analysis" and sent.meta.context_id == CTX
+    assert sent.input == {
+        "window_from": "2026-10-22T05:00:00Z",
+        "window_to": "2026-10-22T05:30:00Z",
+    }
+    assert (data["impact"]["failed_orders"], data["impact"]["damage_amount"]) == (6, 95000)
+    assert body["meta"]["unavailable"] == []
+    # 목록 행의 피해 금액도 같은 숫자다
+    [row] = TestClient(app).get("/api/finance/incidents").json()["data"]
+    assert (row["context_id"], row["damage_amount"]) == (CTX, 95000)
+
+
+def test_open_incident_has_no_window_yet(real_mode, fake_data) -> None:
+    """아직 열린 사건은 끝 시각이 없어 구간이 되지 않는다. 부품만 안다."""
+    row = {**ORC_ROW, "status": "open", "closed_at": None}
+    handlers.reset_state(LiveSources(_orchestrator([row])))
+    _use_safety(_safety([_raw_record(e) for e in GOOD]))
+    data = _detail()
+    assert data["window"] is None and data["impact"] is None
+    assert data["component"] == "payment" and fake_data == []
+
+
+def test_orchestrator_rows_outside_the_contract_are_unknown(real_mode, fake_data) -> None:
+    """계약(`OrchestratorIncident`)과 다른 행은 "확인할 수 없음"이고 추정하지 않는다."""
+    for bad in (
+        {**ORC_ROW, "opened_at": "2026-10-22T05:00:00"},  # 시간대 없음
+        {**ORC_ROW, "opened_at": None},  # 시작 시각 없음
+        {**ORC_ROW, "status": None},  # 상태 없음
+    ):
+        handlers.reset_state(LiveSources(_orchestrator([bad])))
+        _use_safety(_safety([_raw_record(e) for e in GOOD]))  # reset_state 뒤에 다시 꽂는다
+        data = _detail()
+        assert data["window"] is None and data["impact"] is None
+    assert fake_data == []  # 구간을 모르면 data에 묻지 않는다
+
+
+def test_orchestrator_is_not_read_in_mock_mode(mock_mode, fake_data) -> None:
+    """목 모드는 장부 시드로 구간을 알아서 총괄을 읽지 않는다."""
+    assert asyncio.run(MockSources().incident_window(CTX)) is None
+    handlers.reset_state(MockSources())
+    info = asyncio.run(handlers.incident_info(CTX))
+    assert (fc.iso(info["window_from"]), fc.iso(info["window_to"])) == (
+        "2026-10-22T05:00:00Z",
+        "2026-10-22T05:30:00Z",
+    )
 
 
 # ---------------------------------------------------------------- ⑰ 감사 finding

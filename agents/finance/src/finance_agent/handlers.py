@@ -198,10 +198,11 @@ async def compensation_ledger(
 
 
 def incident_meta(context_id: str) -> dict[str, Any]:
-    """사건의 장애 구간·부품. (목 모드) 시드 → 모름.
+    """사건의 장애 구간·부품 중 재무가 혼자 아는 것. (목 모드) 시드 → 모름.
 
     실제 모드에서는 모름이다. 구간을 알려 주던 총괄의 `loss_aggregation` 요청을 2026-10-27에
-    없앴고(재무는 장애 대응 흐름의 단계가 아니다), 재무가 따로 사건 구간을 묻지는 않는다.
+    없앴다(재무는 장애 대응 흐름의 단계가 아니다). 실제 모드 구간은 `incident_info`가
+    총괄 사건 목록을 읽어서 채운다.
     """
     if is_mock("finance"):
         seeded = bk.seed_incidents().get(context_id)
@@ -210,9 +211,31 @@ def incident_meta(context_id: str) -> dict[str, Any]:
     return {"component": None, "window_from": None, "window_to": None, "category": None}
 
 
-async def incident_impact(context_id: str, meta: RequestMeta | None = None) -> Impact | None:
-    """data `impact_analysis` 결과 그대로(다시 계산하지 않음). 실제 모드에서 구간을 모르면 None."""
+async def incident_info(context_id: str) -> dict[str, Any]:
+    """사건의 장애 구간·부품. 목 모드는 시드, 실제 모드는 총괄 사건 목록(읽기 전용).
+
+    총괄에게 사건 **중**에 묻는 것이 아니다 — 평상시 사후 감사·사건 조회에서만 읽는다
+    ([협업] #417 제안 A, 요청 #418, 계약 `data_access/orchestrator_incidents.py`).
+    못 받으면 모름(None)이고 추정값을 만들지 않는다(fail-closed).
+    """
     info = incident_meta(context_id)
+    if info["window_from"] and info["window_to"]:
+        return info
+    found = await state().sources.incident_window(context_id)
+    if not found:
+        return info
+    return info | {k: v for k, v in found.items() if v is not None}
+
+
+async def incident_impact(
+    context_id: str, meta: RequestMeta | None = None, info: dict[str, Any] | None = None
+) -> Impact | None:
+    """data `impact_analysis` 결과 그대로(다시 계산하지 않음). 구간을 모르면 None.
+
+    `info`를 받으면 사건 구간을 다시 조회하지 않는다 (`incident_view`가 한 번만 읽게).
+    """
+    if info is None:
+        info = await incident_info(context_id)
     window = None
     if info["window_from"] and info["window_to"]:
         window = {

@@ -1,6 +1,11 @@
 import pytest
 from pydantic import ValidationError
 
+from ax_contracts.data_access.orchestrator_incidents import (
+    OrchestratorIncident,
+    OrchestratorIncidentsQuery,
+    OrchestratorIncidentsResult,
+)
 from ax_contracts.data_access.shop_failed_orders import ShopFailedOrdersQuery
 from ax_contracts.data_access.shop_metric_series import (
     ShopMetricSeriesQuery,
@@ -103,3 +108,56 @@ def test_failed_orders_limit_range() -> None:
     assert ShopFailedOrdersQuery.model_validate({**base, "limit": 50}).limit == 50
     with pytest.raises(ValidationError):
         ShopFailedOrdersQuery.model_validate({**base, "limit": 0})
+
+
+# ------------------------------------------------- 총괄 사건 목록 (#417 제안 A, #418)
+INCIDENT = {
+    "context_id": "ctx_inc_0001",
+    "component": "payment",
+    "status": "resolved",
+    "opened_at": "2026-10-22T05:00:00Z",
+    "closed_at": "2026-10-22T05:30:00Z",
+}
+
+
+def test_orchestrator_incidents_query_defaults_and_alias() -> None:
+    query = OrchestratorIncidentsQuery.model_validate({"from": "2026-10-22T05:00:00Z"})
+    assert (query.limit, query.tenant_id) == (1000, "shop-demo")
+    assert (query.to, query.statuses) == (None, None)
+    assert query.from_.utcoffset().total_seconds() == 0
+    assert OrchestratorIncidentsQuery.model_validate({}).from_ is None  # 조건 없이 전부
+    with pytest.raises(ValidationError):
+        OrchestratorIncidentsQuery.model_validate({"limit": 0})
+    with pytest.raises(ValidationError):
+        OrchestratorIncidentsQuery.model_validate({"unknown": 1})
+    with pytest.raises(ValidationError):  # 시간대 없는 시각
+        OrchestratorIncidentsQuery.model_validate({"from": "2026-10-22T05:00:00"})
+
+
+def test_orchestrator_incident_keeps_only_the_agreed_fields() -> None:
+    row = OrchestratorIncident.model_validate(INCIDENT)
+    assert (row.context_id, row.component, row.status) == ("ctx_inc_0001", "payment", "resolved")
+    assert row.closed_at.utcoffset().total_seconds() == 0
+    assert row.tenant_id == "shop-demo"
+    # 아직 열린 사건: 닫힌 시각·부품을 모를 수 있다
+    open_row = OrchestratorIncident.model_validate(
+        {"context_id": "ctx_inc_0002", "status": "open", "opened_at": "2026-10-22T05:00:00Z"}
+    )
+    assert (open_row.closed_at, open_row.component) == (None, None)
+    # 합의 밖의 키는 거부한다 (읽는 쪽이 다섯 키만 골라내고 검증하게 만든다)
+    for extra in ("steps", "events", "summary", "metrics", "pending_holds"):
+        with pytest.raises(ValidationError):
+            OrchestratorIncident.model_validate({**INCIDENT, extra: []})
+    with pytest.raises(ValidationError):  # 시간대 없는 시각
+        OrchestratorIncident.model_validate({**INCIDENT, "opened_at": "2026-10-22T05:00:00"})
+
+
+def test_orchestrator_incidents_result() -> None:
+    empty = OrchestratorIncidentsResult.model_validate({})
+    assert (empty.incidents, empty.collected_at, empty.truncated) == ([], None, False)
+    result = OrchestratorIncidentsResult.model_validate(
+        {"incidents": [INCIDENT], "collected_at": "2026-10-27T06:00:00Z", "truncated": True}
+    )
+    assert result.incidents[0].context_id == "ctx_inc_0001" and result.truncated is True
+    with pytest.raises(ValidationError):
+        OrchestratorIncidentsResult.model_validate({"incidents": [INCIDENT], "unknown": 1})
