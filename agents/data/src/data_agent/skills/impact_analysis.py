@@ -81,12 +81,15 @@ async def analyze_impact(
         f"to={data.window_to.isoformat()} category={data.category or 'all'} "
         f"scope={data.scope or 'all'}"
     )
+    summary = (
+        f"실패 주문 {counts.failed_order_count}건, 영향 고객 {len(customer_ids)}명, "
+        f"피해 금액 {counts.damage_amount}원, 카테고리 {len(by_category)}개"
+    )
+    if result.truncated:
+        summary += f"\n조회 한도 {query.limit}건에 걸려 일부만 반영됨(truncated)"
     evidence = Evidence(
         queries=[condition],
-        data_summary=(
-            f"실패 주문 {counts.failed_order_count}건, 영향 고객 {len(customer_ids)}명, "
-            f"피해 금액 {counts.damage_amount}원, 카테고리 {len(by_category)}개"
-        ),
+        data_summary=summary,
         collected_at=datetime.now(UTC),
     )
     return ImpactResult(output=output, evidence=evidence, fallback=explanation.fallback)

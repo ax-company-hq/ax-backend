@@ -1,11 +1,18 @@
 import asyncio
 from datetime import UTC, datetime
 
+import httpx
 import pytest
 
 from ax_contracts.data_access.shop_failed_orders import ShopFailedOrdersQuery
 from data_agent import seed
-from data_agent.clients.shop_client import MockShopClient, get_shop_client
+from data_agent.clients import shop_client
+from data_agent.clients.shop_client import (
+    HttpShopClient,
+    MockShopClient,
+    ShopUnavailable,
+    get_shop_client,
+)
 from data_agent.impact import aggregate_impact
 
 
@@ -53,5 +60,16 @@ def test_get_shop_client_mock_flag() -> None:
 
 
 def test_get_shop_client_without_mock_raises() -> None:
-    with pytest.raises(NotImplementedError, match="shop-api"):
-        get_shop_client({})
+    """목이 아니면 shop-api 클라이언트다. shop-api가 응답하지 않으면 지어내지 않고 오류를 낸다."""
+    client = get_shop_client({})
+    assert isinstance(client, HttpShopClient)
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    shop_client.use_client(httpx.AsyncClient(transport=httpx.MockTransport(refuse)))
+    try:
+        with pytest.raises(ShopUnavailable, match="shop-api"):
+            asyncio.run(client.list_failed_orders(_query()))
+    finally:
+        shop_client.use_client(None)
