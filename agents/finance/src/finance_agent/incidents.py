@@ -107,8 +107,35 @@ async def _amount_recheck(
     return _check("amount_recheck", not bad, title, detail, bad)
 
 
+def incident_refunds(
+    books: Any, window: dict[str, Any] | None, impact_ids: frozenset[str] | set[str]
+) -> dict[str, Any] | None:
+    """사건으로 빠져나간 환불 **금액**. 사건 구간 안에 영향 고객에게 나간 환불만 더한다.
+
+    건별 환불 처리는 고객지원 일이라 재무는 금액만 적는다(건수는 금액을 읽는 단위로 함께).
+    구간(총괄 사건 목록)이나 영향 고객(data 영향 분석) 중 하나라도 없으면 귀속할 수
+    없으므로 `None`이다(fail-closed). 재무가 숫자를 새로 만들지 않고 장부 금액만 더한다.
+    """
+    if books is None or not window or not impact_ids:
+        return None
+    start, end = window["from"], window["to"]
+    total, count = 0, 0
+    for r in books.refunds:
+        if r.get("buyer_id") not in impact_ids:
+            continue
+        at = fc.iso(r["created_at"]) if r.get("created_at") else None
+        if at is None or not (start <= at <= end):
+            continue
+        total += int(r.get("amount") or 0)
+        count += 1
+    return {"total": total, "count": count}
+
+
 async def incident_view(
-    context_id: str, feed: lg.ExecutionFeed, thresholds: dict[str, Any] | None
+    context_id: str,
+    feed: lg.ExecutionFeed,
+    thresholds: dict[str, Any] | None,
+    books: Any = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """사건 상세 data와 unavailable 목록."""
     unavailable: list[str] = []
@@ -239,12 +266,20 @@ async def incident_view(
             "source": "data.impact_analysis",
             "collected_at": fc.iso(fc.now()),
         }
+    refunds = incident_refunds(books, window, impact_ids)
+    if refunds is None:
+        unavailable.append("refunds")
+    comp_total = (totals or {}).get("total_executed")
+    money_out = None if refunds is None or comp_total is None else comp_total + refunds["total"]
     data = {
         "context_id": context_id,
         "component": info.get("component"),
         "window": window,
         "impact": impact_out,
         "compensation": {"coupons": coupons, **(totals or dict.fromkeys(_TOTAL_KEYS))},
+        "refunds": refunds,
+        # 재무가 보는 숫자: 보상 + 환불로 사건에서 빠져나간 돈 (둘 중 하나라도 없으면 null)
+        "money_out_total": money_out,
         "limits": limits,
         "checks": checks,
         "ledger_source": ledger_source,
@@ -302,6 +337,8 @@ def summary_row(detail: dict[str, Any], feed: lg.ExecutionFeed) -> dict[str, Any
         "compensation_total": comp["total_executed"],
         "coupon_count": comp["count_executed"],
         "held_count": comp["count_held"],
+        "refund_total": (detail["refunds"] or {}).get("total"),
+        "money_out_total": detail["money_out_total"],
         "checks_ok": checks_ok(detail["checks"]),
     }
 
@@ -312,9 +349,10 @@ def add_incident_api(app: FastAPI) -> None:
     async def list_incidents() -> dict:
         feed = await state().executions_loader(None)
         thresholds = await state().thresholds_loader()
+        books = await state().books()  # 환불 장부 (사건 구간·영향 고객으로 귀속)
         rows, used = [], []
         for ctx in known_incidents(feed):
-            detail, _ = await incident_view(ctx, feed, thresholds)
+            detail, _ = await incident_view(ctx, feed, thresholds, books)
             used.append(detail["ledger_source"])
             rows.append(summary_row(detail, feed))
         rows.sort(key=lambda r: r["opened_at"] or "", reverse=True)
@@ -340,7 +378,8 @@ def add_incident_api(app: FastAPI) -> None:
                 },
             )
         thresholds = await state().thresholds_loader()
-        data, unavailable = await incident_view(context_id, feed, thresholds)
+        books = await state().books()
+        data, unavailable = await incident_view(context_id, feed, thresholds, books)
         meta = {
             "mock": is_mock("finance"),
             "collected_at": fc.iso(fc.now()),

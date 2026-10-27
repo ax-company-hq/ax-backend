@@ -57,6 +57,8 @@ LIST_KEYS = {
     "compensation_total",
     "coupon_count",
     "held_count",
+    "refund_total",
+    "money_out_total",
     "checks_ok",
 }
 DETAIL_KEYS = {
@@ -65,6 +67,8 @@ DETAIL_KEYS = {
     "window",
     "impact",
     "compensation",
+    "refunds",
+    "money_out_total",
     "limits",
     "checks",
     "ledger_source",
@@ -433,6 +437,9 @@ def test_incident_list_shape_and_numbers(mock_mode) -> None:
         "compensation_total": 8000,
         "coupon_count": 4,
         "held_count": 0,
+        # 이 사건 구간(05:00~05:30)에 영향 고객에게 나간 환불은 시드에 없다
+        "refund_total": 0,
+        "money_out_total": 8000,
         "checks_ok": True,
     }
     assert rows[OLD]["checks_ok"] is False  # 영향 고객이 아닌 buy_0999
