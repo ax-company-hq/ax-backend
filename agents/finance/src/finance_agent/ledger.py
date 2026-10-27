@@ -1,9 +1,13 @@
-"""사건별 보상 쿠폰 장부 (시나리오 A ⑨, 재설계 문서 12장).
+"""사건별 보상 장부 — 보상으로 빠져나간 돈 (재설계 문서 12장).
+
+쿠폰 업무는 재무가 맡지 않는다 (마케팅·고객지원 합의). 누구에게 얼마를 줄지는 고객지원이
+정하고(`request_compensation`), 지급은 마케팅(`issue_coupon`)이 안전 관문을 거쳐 한다.
+재무는 그렇게 빠져나간 돈을 사건별로 적고, 사후 감사에서 근거로 쓴다.
 
 장부 출처(`ledger_source`)는 셋이다.
 
-- `events`: 이벤트 버스의 `coupon.issued`(보상). 목 모드는 템플릿 목 버스로 받는다. 실제 모드는
-  agent-template `events.subscribe`가 아직 없어(NotImplementedError) 받지 못한다.
+- `events`: 이벤트 버스의 `coupon.issued`(보상). 목 모드는 템플릿 목 버스로 받는다. 실제
+  모드는 `REDIS_URL`이 있어야 받고, 없으면 구독이 꺼진 채로 돈다.
 - `safety_executions`: 안전 관문 실행 기록 `GET /api/safety/executions`(읽기 API, 규칙 4)의
   `issue_coupon`·`purpose_code=compensation`. 실행됨·보류·거절이 모두 남는다.
 - `seed`: 목 모드의 실행 기록 시드(`finance_books_seed.json` `executions`).
