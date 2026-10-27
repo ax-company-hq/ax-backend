@@ -93,3 +93,5 @@ async def test_hr_c_actions_always_held_with_summary(gate: Gate, act, action: st
     assert review is not None
     assert review.report["summary"] == summary
     assert review.report["rules"] == [{"key": "base_grade", "value": "C"}]
+    # 인사 결정은 금액 기준이 없는 C다 (요청 #180에서 물어본 보류 사유)
+    assert decision.hold_reason == HoldReason.HIGH_IMPACT

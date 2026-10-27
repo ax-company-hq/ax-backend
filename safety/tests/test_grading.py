@@ -133,6 +133,24 @@ async def test_invalid_amount_fields_hold(gate: Gate, bad: object, coupon) -> No
 async def test_settlement_confirmation_is_always_held(gate: Gate, act) -> None:
     decision = await gate.execute(act("confirm_settlement", "finance", "k-set", draft="s1"))
     assert (decision.grade, decision.status) == ("C", "held")
+    # 금액 기준이 없는 C다 → "금액 기준을 넘음"이 아니라 "늘 사람이 정함" (요청 #180·#431)
+    assert decision.hold_reason == HoldReason.HIGH_IMPACT
+    review = gate.store.get_review(decision.review_id or "")
+    assert review is not None
+    assert review.report["rules"] == [{"key": "base_grade", "value": "C"}]
+
+
+@pytest.mark.asyncio
+async def test_base_grade_c_and_threshold_c_have_different_reasons(
+    gate: Gate, verifier: Any, act, coupon
+) -> None:
+    """같은 C라도 보류 사유가 갈린다: 기준 초과는 `over_threshold`, 기본 등급 C는 `high_impact`."""
+    over = await gate.execute(coupon(80, 5000, purpose_code="campaign"))  # 400,000원 = 기준 초과
+    always = await gate.execute(act("confirm_settlement", "finance", "k-set2", draft="s2"))
+    assert (over.grade, always.grade) == ("C", "C")
+    assert over.hold_reason == HoldReason.OVER_THRESHOLD
+    assert always.hold_reason == HoldReason.HIGH_IMPACT
+    assert over.computed_amount == 400_000 and always.computed_amount is None
 
 
 @pytest.mark.asyncio
