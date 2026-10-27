@@ -16,7 +16,7 @@
 
 ## 2. 기준표 규칙 (`safety/src/ax_safety/rules/thresholds.toml`)
 
-**기준표에 들어갔다 (사람 PR #PRNUM, 태윤).** 아래 4개 규칙이 실제 기준표에 있고 값은 그대로다.
+**기준표에 들어갔다 (사람 PR #400, 태윤).** 아래 4개 규칙이 실제 기준표에 있고 값은 그대로다.
 infra-dejafix가 `handlers.path_params`로 4개 정수를 계산해 `execute(rollback_deployment)` params에 넣는다
 (#389 머지 후, 데모 기본 경로는 `1, 0, 0, 0` → B).
 테스트(`safety/tests/test_registry_actions.py`)는 이제 테스트 전용 표가 아니라 실제 기준표로 확인한다
