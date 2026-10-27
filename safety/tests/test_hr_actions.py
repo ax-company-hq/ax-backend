@@ -16,8 +16,8 @@ A_ACTIONS = [
 ]
 
 # hr에서 뺀 액션 (#374, #375). 등록하지 않으니 무엇을 보내도 미등록이라 C(사람 승인)다.
-# (`confirm_reassignment`는 thresholds.toml 규칙이 가리켜서 사람 PR이 규칙과 함께 뺄 때까지 남긴다)
 REMOVED_ACTIONS = [
+    "confirm_reassignment",  # thresholds.toml의 reassignment_* 규칙과 함께 뺐다(#375)
     "request_assignment_change",
     "start_onboarding",
     "update_onboarding_step",
@@ -61,27 +61,6 @@ async def test_confirm_handover_below_threshold_or_missing_is_held(
     decision = await gate.execute(act("confirm_handover", "hr", f"ho-{len(params)}", **params))
     assert (decision.grade, decision.status) == ("C", "held")
     assert verifier.tasks == []  # C는 검증자에게 보내지 않는다
-
-
-@pytest.mark.asyncio
-async def test_confirm_reassignment_rules(gate: Gate, verifier: Any, act) -> None:
-    ok = await gate.execute(
-        act("confirm_reassignment", "hr", "re-ok", unassigned_count=0, duplicate_count=0)
-    )
-    assert (ok.grade, ok.status, ok.verifier) == ("B", "executed", "safety")
-    assert verifier.tasks == []
-
-    for key, bad in {
-        "reassignment_gap": {"unassigned_count": 1, "duplicate_count": 0},
-        "reassignment_duplicate": {"unassigned_count": 0, "duplicate_count": 2},
-    }.items():
-        decision = await gate.execute(act("confirm_reassignment", "hr", f"re-{key}", **bad))
-        assert decision.status == "held"
-        review = gate.store.get_review(decision.review_id or "")
-        assert [hit["key"] for hit in review.report["rules"]] == [key]  # type: ignore[union-attr]
-
-    missing = await gate.execute(act("confirm_reassignment", "hr", "re-none"))
-    assert missing.status == "held"
 
 
 @pytest.mark.asyncio
