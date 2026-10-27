@@ -2,10 +2,13 @@
 
 from datetime import UTC, datetime
 
+import httpx
 import pytest
 
 from ax_agent_template.llm import MockLLMClient
 from ax_contracts.schemas.data import AnomalyDetectionInput, ImpactAnalysisInput
+from data_agent.clients import shop_client
+from data_agent.clients.shop_client import HttpMetricSource, ShopUnavailable
 from data_agent.explain import _Summary
 from data_agent.seed import (
     EXPECTED_AFFECTED_CUSTOMER_COUNT,
@@ -96,8 +99,17 @@ async def test_impact_wrong_llm_number_falls_back_keeping_numbers() -> None:
 
 
 async def test_impact_requires_mock_env() -> None:
-    with pytest.raises(NotImplementedError):
-        await analyze_impact(_impact_input(), TENANT, _llm(), {})
+    """목이 아니면 shop-api를 읽는다. 응답이 없으면 0건으로 내지 않고 ShopUnavailable이다."""
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    shop_client.use_client(httpx.AsyncClient(transport=httpx.MockTransport(refuse)))
+    try:
+        with pytest.raises(ShopUnavailable):
+            await analyze_impact(_impact_input(), TENANT, _llm(), {})
+    finally:
+        shop_client.use_client(None)
 
 
 # ---------- anomaly_detection ----------
@@ -183,5 +195,4 @@ async def test_anomaly_is_deterministic() -> None:
 
 async def test_get_metric_source() -> None:
     assert isinstance(get_metric_source(ENV), MockMetricSource)
-    with pytest.raises(NotImplementedError):
-        get_metric_source({})
+    assert isinstance(get_metric_source({}), HttpMetricSource)

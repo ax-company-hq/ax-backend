@@ -33,6 +33,12 @@ DATA_MOCK=1 AGENT_TEMPLATE_MOCK=1 AGENT_NAME=data uv run --package ax-agent-data
 ORCHESTRATOR_REAL_DEPTS=data uv run --package ax-orchestrator python -m ax_orchestrator
 ```
 `/demo`에서 장애를 주입하고 사건의 `impact` 단계를 연다(또는 `GET /api/incidents/<context_id>`의 `steps[impact].output`). 6건·4명·95,000원·`buy_0001~0004`가 나오면 정상이다.
+### 실제 모드 (shop-api, #59)
+- `DATA_MOCK`이 1이 아니면 shop-api 읽기 전용 API를 부른다 (`clients/shop_client.py`). 주소는 `AX_SHOP_API_URL`(없으면 `http://shop-api:8010`), 토큰은 `Authorization: Bearer <DATA_TOKEN>`.
+  - impact_analysis: `GET /api/shop/failed-orders` (from·to·category·limit)
+  - anomaly_detection: `GET /api/shop/metric-series`. 기준선 7일 + 구간을 하루씩 나눠 읽는다(shop-api 한도 2016점). shop-api가 계산하지 않는 `inquiry_count`는 빈 시계열(판정 불가)이다.
+- shop-api 응답 없음·401·403·5xx·형식 오류면 숫자를 0으로 내지 않고 `failed`·`unavailable`과 "확인할 수 없음" 근거로 답한다.
+
 ### kpi_summary (DSH-04, SCN-L)
 - 공통 로그 저장소를 **읽기만** 한다. `DATA_MOCK=1`이면 시드(`seed_logs.py`), 아니면 `AX_COMMON_LOG_DB`(compose는 `infra/common-log/data.yml`이 연결). 비어 있으면 `unavailable`.
 - 사건 = `ctx_inc_` context (입력 `context_ids`를 주면 그 context). 숫자는 `metrics/kpi.py`가 계산한다.

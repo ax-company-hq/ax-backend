@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from ax_agent_template.llm import LLMClient
 from ax_contracts.schemas import Evidence
 from ax_contracts.schemas.data import AnomalyDetectionInput, AnomalyDetectionOutput, MetricVerdict
+from data_agent.clients.shop_client import HttpMetricSource, shop_api
 from data_agent.explain import explain
 from data_agent.metrics.anomaly import BASELINE_DAYS, BucketResult, detect
 from data_agent.monitor import WATCHED_METRICS, MetricSource
@@ -32,10 +33,10 @@ class AnomalyResult:
 
 
 def get_metric_source(env: Mapping[str, str]) -> MetricSource:
-    """`DATA_MOCK=1`이면 목 공급자. 실제 공급자는 shop-api 지표 계약이 머지된 뒤에 붙인다."""
+    """`DATA_MOCK=1`이면 목 공급자, 아니면 shop-api `/api/shop/metric-series` 공급자."""
     if env.get("DATA_MOCK") == "1":
         return MockMetricSource()
-    raise NotImplementedError("실제 지표 공급자는 shop-api 지표 시계열 계약이 머지된 뒤에 구현한다")
+    return HttpMetricSource(shop_api(env))
 
 
 def _floor_5m(ts: datetime) -> datetime:
