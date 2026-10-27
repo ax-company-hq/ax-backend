@@ -14,10 +14,13 @@
 - 필드가 없거나, 정수가 아니거나(문자열·소수·true/false·null), 음수면 **C로 보류**한다 (fail-closed).
 - 넷 다 통과(예: `1, 0, 0, 0`)하면 B로 planning `verify_rollback_target` 교차검증을 받는다.
 
-## 2. 기준표에 사람이 추가할 블록 (`safety/src/ax_safety/rules/thresholds.toml`)
+## 2. 기준표 규칙 (`safety/src/ax_safety/rules/thresholds.toml`)
 
-기준표는 사람만 바꾼다(human_files). 아래 블록을 사람 PR로 추가해야 숫자 기준이 실제로 동작한다.
-테스트(`safety/tests/test_registry_actions.py`)는 같은 규칙을 테스트 전용 표로 확인했다.
+**기준표에 들어갔다 (사람 PR #PRNUM, 태윤).** 아래 4개 규칙이 실제 기준표에 있고 값은 그대로다.
+infra-dejafix가 `handlers.path_params`로 4개 정수를 계산해 `execute(rollback_deployment)` params에 넣는다
+(#389 머지 후, 데모 기본 경로는 `1, 0, 0, 0` → B).
+테스트(`safety/tests/test_registry_actions.py`)는 이제 테스트 전용 표가 아니라 실제 기준표로 확인한다
+(`test_thresholds_toml_has_rollback_rules`, 규칙별 C 승격, 경계값 B 유지, fail-closed).
 
 ```toml
 [[rules]]
@@ -53,7 +56,7 @@ op = ">"
 value = 0
 ```
 
-주의: 이 블록이 들어가면 4개 필드를 안 보내는 롤백 요청은 전부 C가 된다. 인프라 쪽이 필드를 보내기 시작한 뒤 머지한다.
+주의: 4개 필드를 안 보내는 롤백 요청은 전부 C가 된다. 인프라는 #389부터 4개를 모두 보낸다.
 
 ## 3. 검증자 거절 → 사람 보류
 

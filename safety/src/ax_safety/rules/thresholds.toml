@@ -254,3 +254,43 @@ metric = "param"
 field = "irreversible_count"
 op = ">"
 value = 0
+
+# ---- 인프라 롤백 (SCN-A, docs/notes/safety/rollback-paths.md). 값은 인프라 합의값.
+# params는 infra-dejafix가 코드로 계산해 보낸다(handlers.path_params). 하나라도 걸리면 C(사람 승인),
+# 넷 다 통과(1·0·0·0)하면 B로 planning verify_rollback_target 교차검증.
+# 필드가 없거나 0 이상 정수가 아니면 걸린 것으로 본다(fail-closed).
+# 원인 후보 배포 수. 후보가 여러 개면 C
+[[rules]]
+key = "rollback_multiple_suspects"
+action = "rollback_deployment"
+metric = "param"
+field = "suspect_count"
+op = ">"
+value = 1
+
+# 원인 확신도가 high가 아니면 1. 1이면 C
+[[rules]]
+key = "rollback_low_confidence"
+action = "rollback_deployment"
+metric = "param"
+field = "low_confidence"
+op = ">"
+value = 0
+
+# 되돌릴 대상 배포의 되돌릴 수 없는 변경(DB 마이그레이션 등) 수. 0이 아니면 C
+[[rules]]
+key = "rollback_irreversible"
+action = "rollback_deployment"
+metric = "param"
+field = "irreversible_count"
+op = ">"
+value = 0
+
+# 같은 사건에서 이미 실행한 롤백 수. 두 번째 롤백부터 C
+[[rules]]
+key = "rollback_repeat"
+action = "rollback_deployment"
+metric = "param"
+field = "prior_rollbacks"
+op = ">"
+value = 0

@@ -74,8 +74,14 @@ def _rollback(act, key: str = "ctx_inc_0001:rollback_deployment:dep_42") -> Any:
         "rollback_deployment",
         "infra",
         key,
-        deployment_id="dep_42",
-        target_version="v1.4.2",
+        service="shop-api",
+        from_version="v2.4.1",
+        to_version="v2.4.0",
+        # 기준표 롤백 규칙(SCN-A)을 모두 통과하는 값. infra-dejafix가 계산해 보낸다
+        suspect_count=1,
+        low_confidence=0,
+        irreversible_count=0,
+        prior_rollbacks=0,
         summary="결제 오류 급증, 직전 배포 롤백",
     )
 
