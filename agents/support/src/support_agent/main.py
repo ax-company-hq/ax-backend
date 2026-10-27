@@ -15,6 +15,7 @@ from support_agent.handlers import HANDLERS
 from support_agent.incident_handlers import INCIDENT_HANDLERS
 from support_agent.insight_handlers import INSIGHT_HANDLERS
 from support_agent.payment_handlers import PAYMENT_HANDLERS
+from support_agent.privacy_handlers import PRIVACY_HANDLERS
 from support_agent.signal_handlers import SIGNAL_HANDLERS
 from support_agent.suggest_handlers import SUGGEST_HANDLERS
 
@@ -46,6 +47,7 @@ ALL_HANDLERS = {
     **SUGGEST_HANDLERS,
     **INCIDENT_HANDLERS,
     **PAYMENT_HANDLERS,
+    **PRIVACY_HANDLERS,
     **SIGNAL_HANDLERS,
 }
 # 영수증 사진 분석기: 이미지를 읽을 모델이 설정돼 있을 때만 꽂는다(목 모드·미설정이면 꽂지 않는다)
