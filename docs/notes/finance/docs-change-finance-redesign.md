@@ -3,6 +3,7 @@
 담당: 태윤. 상태: **초안** (docs PR 전). 근거 설계: [2026-10-23-finance-redesign.md](2026-10-23-finance-redesign.md)
 
 - 2026-10-26: A-5·A-6(SCN-A 인수 기준)만 먼저 docs PR #393으로 열었다 (A-6의 "한도 초과"는 "기준 이상"으로 맞춤). 나머지 항목은 아직 docs PR 전.
+- 2026-10-27: 멘토 피드백으로 재무를 시나리오 A 흐름에서 뺐다 (docs PR `docs/scn-a-remove-finance`). 그래서 아래 B-7의 "시나리오 A 필수 = 손실 리포트"와 A-x의 "DEP-FIN-01 유지(`loss_aggregation`)", B-10 결정 24의 "`loss_aggregation` 포함"은 더 이상 맞지 않는다. 공통 구성안 결정 22는 이 개정이 썼으므로 B-10의 결정 번호는 하나씩 밀린다.
 
 ## 목적
 
