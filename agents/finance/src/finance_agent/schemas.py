@@ -1,7 +1,9 @@
 """finance skill 입출력 (재무 구성안 4-2, 공통 구성안 12장, 재무 재설계 2026-10-23 7장).
 
-`verify_amount`·`review_hold` skill은 재무 재설계로 없앴다. 금액 다시 계산 규칙은
-`recheck.py`에 남아 있고 형식은 contracts 원본(`VerifyAmountInput`·`VerifyAmountOutput`)을 쓴다.
+`verify_amount`·`review_hold`·`loss_aggregation` skill은 재무 재설계로 없앴다
+(`loss_aggregation`은 2026-10-27, 재무가 장애 대응 흐름의 단계가 아니게 되면서).
+금액 다시 계산 규칙은 `recheck.py`에 남아 있고 형식은
+contracts 원본(`VerifyAmountInput`·`VerifyAmountOutput`)을 쓴다.
 금액은 모두 정수 원, 시각은 UTC ISO8601 문자열이다.
 """
 
@@ -12,35 +14,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from ax_contracts.schemas import AxModel, UtcDatetime
-
-
-# ---------------------------------------------------------------- loss_aggregation (손실 리포트)
-class LossAggregationInput(AxModel):
-    """장애 구간. `context_id`가 없으면 요청 meta의 사건 번호를 쓴다."""
-
-    window_from: UtcDatetime
-    window_to: UtcDatetime
-    context_id: str | None = None
-    category: str | None = None
-
-
-class LossReport(AxModel):
-    """손실 리포트. 영향 숫자는 data `impact_analysis` 결과를 그대로 옮기고 다시 계산하지 않는다.
-
-    받지 못한 값은 None("확인할 수 없음")이고, 그때 `total_loss`도 None이다.
-    """
-
-    context_id: str
-    failed_orders: int | None = None
-    affected_customers: int | None = None
-    lost_amount: int | None = None
-    compensation_coupon_count: int | None = None  # 장부를 못 읽으면 None (0으로 바꾸지 않음)
-    compensation_total: int | None = None
-    total_loss: int | None = None
-    summary: str
-    ledger_source: Literal["events", "safety_executions", "seed"] | None = None
-    unavailable: list[str] = Field(default_factory=list)  # impact, compensation
+from ax_contracts.schemas import AxModel
 
 
 # ---------------------------------------------------- 마켓운영: seller_review, settlement_hold

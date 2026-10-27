@@ -1,13 +1,16 @@
-"""사건별 재무 화면 (시나리오 A ⑨⑩⑰, 재설계 문서 12-1).
+"""사건별 재무 화면 (재설계 문서 12장).
 
 | 메서드·경로 | 하는 일 |
 | --- | --- |
-| `GET /api/finance/incidents` | 재무가 아는 사건 목록 (장부·손실 리포트·관문 기록의 `ctx_inc_`) |
-| `GET /api/finance/incidents/{context_id}` | 영향·보상 쿠폰·한도·손실·점검·단계 |
+| `GET /api/finance/incidents` | 재무가 아는 사건 목록 (장부·관문 기록의 `ctx_inc_`) |
+| `GET /api/finance/incidents/{context_id}` | 영향·보상 쿠폰·한도·점검 |
 
+- 재무는 장애 대응 흐름의 단계가 아니다 (요구사항 DEP-FIN-01, 공통 구성안 결정 22).
+  2026-10-27에 손실 집계(`loss`)와 사건 단계 표시(`steps` 9·10·17)를 뺐다. 장애 비용은
+  평상시 장부로 들어가 결산(`closing_report`)·사후 감사(`audit_report`)에서 드러난다.
+  `steps`(빈 목록)와 목록의 `loss_total`(null)은 대시보드 화면이 아직 읽어서 키만 남겼다.
 - 영향(`impact`)은 data `impact_analysis` 결과 그대로다(실제 모드 A2A, 목 모드 시드).
-  다시 계산하지 않는다.
-  실제 모드에서 장애 구간을 모르면(총괄의 `loss_aggregation` 요청 전) 묻지 않고 null이다.
+  다시 계산하지 않는다. 실제 모드에서는 장애 구간을 모르므로 null이다.
 - 한도는 기준표(`compensation_per_customer`, `compensation_per_context`)를 safety
   `GET /api/safety/thresholds`(목 모드 시드)에서 읽는다. 못 읽으면 null.
 - 점검은 코드 규칙이다. 근거 자료가 없으면 `ok: null`(확인할 수 없음)이고 통과로 치지 않는다.
@@ -35,13 +38,11 @@ INCIDENT_PREFIX = "ctx_inc_"
 PER_CUSTOMER_KEY = "compensation_per_customer"
 PER_INCIDENT_KEY = "compensation_per_context"
 RECHECK_FAILURES = {"amount_mismatch", "invalid_params"}
-# 사람이 읽는 문장(title·detail)에 쓰는 쉬운 말. 코드는 `code`·`ledger_source`·`missing`에만 둔다.
-LEDGER_SOURCE_KO = {
-    lg.LEDGER_EVENTS: "이벤트 알림",
-    lg.LEDGER_SAFETY: "안전 장치 실행 기록",
-    lg.LEDGER_SEED: "예시 데이터",
-}
-MISSING_KO = {"damage_amount": "피해 금액", "compensation_total": "보상 합계"}
+# 재무 단계는 없어졌지만 `steps`·`loss_total` 키는 한 번 더 남긴다. dashboard-web이 아직
+# `d.steps.length`·`s.loss_total`을 바로 읽어서 키가 사라지면 재무 사건 화면이 멈춘다
+# (ax-frontend `dashboard-web/src/components/finance/Incident.tsx`). 화면을 고치는 프론트 PR
+# 뒤에 이 두 키를 지운다 (CLAUDE.md 12번의 추가 → 이전 → 삭제).
+STEPS_GONE: list[dict[str, Any]] = []
 
 
 # ---------------------------------------------------------------- 한도
@@ -158,19 +159,6 @@ async def incident_view(
         },
     }
 
-    # 손실 (피해는 data 숫자 그대로)
-    damage = impact.lost_amount if impact else None
-    loss_missing = [
-        k for k, v in (("damage_amount", damage), ("compensation_total", used)) if v is None
-    ]
-    loss = {
-        "damage_amount": damage,
-        "compensation_total": used,
-        "total": damage + used if damage is not None and used is not None else None,
-        "status": "partial" if loss_missing else "complete",
-        "missing": loss_missing,
-    }
-
     # 점검
     checks = []
     exe_refs = [str(r["execution_id"]) for r in executed if r.get("execution_id")]
@@ -239,46 +227,6 @@ async def incident_view(
         by_id = {str(e.get("execution_id")): e for e in feed.rows or []}
         checks.append(await _amount_recheck(context_id, executed, by_id))
 
-    # 단계
-    report = state().ledger.loss_reports.get(context_id)
-    if rows is None:
-        step9 = ("unavailable", "이벤트 알림·안전 장치 실행 기록을 모두 읽을 수 없음")
-    elif executed or (totals and totals["count_held"]):
-        assert totals is not None
-        step9 = (
-            "done",
-            f"보상 쿠폰 {totals['count_executed']}장 {fc.won(totals['total_executed'])} 기록"
-            + (f", 보류 {totals['count_held']}장" if totals["count_held"] else "")
-            + f" (출처: {LEDGER_SOURCE_KO.get(str(ledger_source), '확인할 수 없음')})",
-        )
-    else:
-        step9 = ("waiting", "아직 보상 쿠폰 지급 기록 없음")
-    if loss["status"] == "complete":
-        step10 = ("done", f"총 손실 {fc.won(loss['total'])} = 피해 + 보상")
-    elif report is None:
-        step10 = ("waiting", "총괄의 손실 리포트 요청(장애 구간) 대기")
-    else:
-        step10 = (
-            "unavailable",
-            "확인할 수 없음: " + ", ".join(MISSING_KO.get(k, k) for k in loss_missing),
-        )
-    check_values = [c["ok"] for c in checks]
-    if not executed and rows is not None:
-        step17 = ("waiting", "보상 쿠폰 지급 후 점검")
-    elif None in check_values:
-        step17 = ("unavailable", "근거 자료가 없어 확인할 수 없는 점검이 있음")
-    else:
-        failed = [c["title"] for c in checks if c["ok"] is False]
-        step17 = ("done", "모든 점검 통과" if not failed else f"의심: {', '.join(failed)}")
-    steps = [
-        {"no": no, "title": title, "status": st[0], "detail": st[1]}
-        for no, title, st in (
-            ("9", "쿠폰 장부 기록", step9),
-            ("10", "손실 리포트", step10),
-            ("17", "사건 후 감사", step17),
-        )
-    ]
-
     window = None
     if info["window_from"] and info["window_to"]:
         window = {"from": fc.iso(info["window_from"]), "to": fc.iso(info["window_to"])}
@@ -302,9 +250,9 @@ async def incident_view(
         "impact": impact_out,
         "compensation": {"coupons": coupons, **(totals or dict.fromkeys(_TOTAL_KEYS))},
         "limits": limits,
-        "loss": loss,
         "checks": checks,
-        "steps": steps,
+        # 화면 호환: dashboard-web이 아직 `steps`를 바로 읽는다 (아래 STEPS_GONE)
+        "steps": STEPS_GONE,
         "ledger_source": ledger_source,
     }
     return data, unavailable
@@ -321,9 +269,9 @@ def checks_ok(checks: list[dict[str, Any]]) -> bool | None:
 
 
 def known_incidents(feed: lg.ExecutionFeed) -> list[str]:
-    """장부(이벤트)·손실 리포트·안전 관문 실행 기록에 나온 사건 번호."""
+    """장부(이벤트)·안전 관문 실행 기록에 나온 사건 번호."""
     ledger = state().ledger
-    ids = set(ledger.coupon_events) | set(ledger.coupons) | set(ledger.loss_reports)
+    ids = set(ledger.coupon_events) | set(ledger.coupons)
     ids |= {str(e.get("context_id")) for e in feed.rows or [] if e.get("context_id")}
     return sorted(i for i in ids if i.startswith(INCIDENT_PREFIX))
 
@@ -346,9 +294,6 @@ def _opened_at(detail: dict[str, Any], feed: lg.ExecutionFeed) -> str | None:
         for e in feed.rows or []
         if e.get("context_id") == detail["context_id"] and e.get("created_at")
     ]
-    report = state().ledger.loss_reports.get(detail["context_id"])
-    if report and report.get("at"):
-        times.append(fc.iso(fc.parse_dt(report["at"])))
     times = [t for t in times if t]
     return min(times) if times else None
 
@@ -359,11 +304,12 @@ def summary_row(detail: dict[str, Any], feed: lg.ExecutionFeed) -> dict[str, Any
         "context_id": detail["context_id"],
         "component": detail["component"],
         "opened_at": _opened_at(detail, feed),
-        "damage_amount": detail["loss"]["damage_amount"],
+        "damage_amount": (detail["impact"] or {}).get("damage_amount"),
         "compensation_total": comp["total_executed"],
         "coupon_count": comp["count_executed"],
         "held_count": comp["count_held"],
-        "loss_total": detail["loss"]["total"],
+        # 화면 호환: dashboard-web 요약 줄이 아직 `loss_total`을 읽는다 (아래 STEPS_GONE)
+        "loss_total": None,
         "checks_ok": checks_ok(detail["checks"]),
     }
 

@@ -2,13 +2,14 @@
 
 | skill | 등급 | 요청자 | 하는 일 |
 | --- | --- | --- | --- |
-| `loss_aggregation` | read | orchestrator | data 영향 분석 + 지급 보상 = 손실 리포트 (DEP-FIN-01) |
 | `seller_review` | B | orchestrator | 마켓운영: 서류·위험 점수로 판매자 승인 요청 (DEP-FIN-03) |
 | `settlement_hold` | B | orchestrator | 마켓운영: 위험 판매자 정산 보류 요청 (DEP-FIN-04) |
 | `closing_report` | read | orchestrator, data | ① 기간 손익 요약 (`closing.py`) |
 | `audit_report` | read | orchestrator, data | ⑦ 사후 감사 결과 (`audit.py`) |
 
-`verify_amount`·`review_hold`는 재무 재설계(2026-10-23)로 없앴다. 금액 다시 계산 규칙은
+`verify_amount`·`review_hold`는 재무 재설계(2026-10-23)로, `loss_aggregation`은 2026-10-27에
+없앴다 (재무는 장애 대응 흐름의 단계가 아니다 — 요구사항 DEP-FIN-01, 공통 구성안 결정 22).
+장애 비용은 평상시 장부로 들어가 `closing_report`·`audit_report`에서 드러난다. 금액 다시 계산 규칙은
 `recheck.py`에 남아 사후 감사가 쓴다. 캣북스 클레임 건별 확인과 `review_threshold_change`(AI가 기준
 변경을 판단)도 재무 일이 아니라 없앴다. 한도는 제안만 하고(`policy.py`) 사람이 기준표 PR로 바꾼다.
 
@@ -50,8 +51,6 @@ from finance_agent.schemas import (
     AuditReportOutput,
     ClosingReportInput,
     ClosingReportOutput,
-    LossAggregationInput,
-    LossReport,
     SellerReviewInput,
     SellerReviewOutput,
     SettlementHoldInput,
@@ -71,7 +70,6 @@ class Ledger:
         self.seen_events: set[str] = set()
         self.done: dict[str, AgentResult] = {}  # 멱등성 키 → 끝난 상태 변경 결과
         self.market_ops: list[dict[str, Any]] = []  # 판매자 심사·정산 보류 결과 기록
-        self.loss_reports: dict[str, dict[str, Any]] = {}  # context_id → 마지막 손실 리포트
         self.coupon_events: dict[str, list[dict[str, Any]]] = {}  # context_id → 보상 쿠폰 이벤트
 
     def compensation(self, context_id: str) -> dict[str, int]:
@@ -188,80 +186,7 @@ async def on_event(envelope: EventEnvelope) -> None:
 SUBSCRIBED_EVENTS = [EventType.COUPON_ISSUED, EventType.PAYMENT_REFUNDED]
 
 
-# ---------------------------------------------------------------- loss_aggregation
-def _won(value: int) -> str:
-    return f"{value:,}원"
-
-
-async def loss_aggregation(request: AgentRequest) -> AgentResult:
-    data = _parse(request, LossAggregationInput)
-    if isinstance(data, AgentResult):
-        return data
-    context_id = data.context_id or request.meta.context_id
-    window = {
-        "window_from": data.window_from.isoformat(),
-        "window_to": data.window_to.isoformat(),
-        **({"category": data.category} if data.category else {}),
-    }
-    impact = await state().sources.impact(request.meta, context_id, window)
-    rows, ledger_source = await compensation_ledger(context_id)
-    comp = lg.totals(rows) if rows is not None else None
-    count = comp["count_executed"] if comp else None
-    paid = comp["total_executed"] if comp else None
-
-    unavailable = (["impact"] if impact is None else []) + (
-        ["compensation"] if comp is None else []
-    )
-    if comp is None:
-        coupon_line = "보상 쿠폰: 확인할 수 없음(이벤트 알림·안전 장치 실행 기록 모두 없음)"
-    else:
-        coupon_line = f"보상 쿠폰 {count}장 {_won(paid or 0)}"
-    if impact is None:
-        impact_line = "영향 수치: 확인할 수 없음(데이터 AI 영향 분석 응답 없음)"
-    else:
-        impact_line = (
-            f"실패 주문 {impact.failed_orders}건, 영향 고객 {impact.affected_customers}명, "
-            f"피해 금액 {_won(impact.lost_amount)}"
-        )
-    # 계산은 코드로. 둘 중 하나라도 모르면 총 손실도 모른다
-    total = impact.lost_amount + paid if impact is not None and paid is not None else None
-    summary = f"{impact_line}. {coupon_line}."
-    if total is not None:
-        summary += f" 총 손실 {_won(total)}."
-    report = LossReport(
-        context_id=context_id,
-        failed_orders=impact.failed_orders if impact else None,
-        affected_customers=impact.affected_customers if impact else None,
-        lost_amount=impact.lost_amount if impact else None,
-        compensation_coupon_count=count,
-        compensation_total=paid,
-        total_loss=total,
-        summary=summary,
-        ledger_source=ledger_source,
-        unavailable=unavailable,
-    )
-    refs = ([impact.ref] if impact else []) + [
-        str(r["execution_id"]) for r in rows or [] if r.get("execution_id")
-    ][:20]
-    state().ledger.loss_reports[context_id] = report.model_dump(mode="json") | {
-        "at": _now().isoformat(),
-        "window": window,
-    }
-    source_query = {
-        lg.LEDGER_EVENTS: f"ledger:coupon.issued:{context_id}",
-        lg.LEDGER_SAFETY: f"safety:/api/safety/executions?context_id={context_id}",
-        lg.LEDGER_SEED: f"seed:executions:{context_id}",
-    }.get(ledger_source or "", f"ledger:unavailable:{context_id}")
-    return _result(
-        request,
-        TaskStatus.COMPLETED,
-        outcome="partial" if unavailable else "reported",
-        output=report.model_dump(mode="json"),
-        evidence=_evidence(["data:impact_analysis", source_query], summary, refs),
-    )
-
-
-# ---------------------------------------------------------------- 사건(⑨⑩⑰) 공용
+# ---------------------------------------------------------------- 사건 보상 쿠폰 공용
 async def compensation_ledger(
     context_id: str, feed: lg.ExecutionFeed | None = None
 ) -> tuple[list[dict[str, Any]] | None, str | None]:
@@ -273,16 +198,11 @@ async def compensation_ledger(
 
 
 def incident_meta(context_id: str) -> dict[str, Any]:
-    """사건의 장애 구간·부품. 손실 리포트 요청에 온 구간 → (목 모드) 시드 → 모름."""
-    report = state().ledger.loss_reports.get(context_id) or {}
-    window = report.get("window") or {}
-    if window.get("window_from") and window.get("window_to"):
-        return {
-            "component": None,
-            "window_from": fc.parse_dt(window["window_from"]),
-            "window_to": fc.parse_dt(window["window_to"]),
-            "category": window.get("category"),
-        }
+    """사건의 장애 구간·부품. (목 모드) 시드 → 모름.
+
+    실제 모드에서는 모름이다. 구간을 알려 주던 총괄의 `loss_aggregation` 요청을 2026-10-27에
+    없앴고(재무는 장애 대응 흐름의 단계가 아니다), 재무가 따로 사건 구간을 묻지는 않는다.
+    """
     if is_mock("finance"):
         seeded = bk.seed_incidents().get(context_id)
         if seeded:
@@ -511,7 +431,6 @@ async def audit_report(request: AgentRequest) -> AgentResult:
 
 
 HANDLERS = {
-    "loss_aggregation": loss_aggregation,
     "seller_review": seller_review,
     "settlement_hold": settlement_hold,
     "closing_report": closing_report,
