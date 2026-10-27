@@ -22,7 +22,12 @@ def called(harness, skill: str) -> list:
 
 # ---------------------------------------------------------------- 영향 고객 일괄 보상
 @pytest.mark.asyncio
-async def test_all_affected_customers_are_sent_to_support_in_one_request(harness) -> None:
+async def test_all_affected_customers_are_sent_to_support_in_one_request(
+    harness, monkeypatch
+) -> None:
+    _many_customers(
+        monkeypatch, 4
+    )  # 50명 이하면 한 번에 보낸다. 50명을 넘는 경우는 아래 분할 테스트가 본다
     inc = await run(harness)
     requests = called(harness, "request_incident_compensation")
     assert len(requests) == 1
@@ -64,6 +69,53 @@ async def test_compensation_failure_does_not_break_the_incident(harness) -> None
     assert inc.steps["compensation"].status == "failed"
     assert inc.status == "resolved"  # 일괄 보상은 필수 단계가 아니다
     assert inc.steps["loss"].status == "completed"  # 재무 손실 리포트는 끝나면 계속 진행
+
+
+def _many_customers(monkeypatch, count: int) -> list[str]:
+    ids = [f"buy_{n:04d}" for n in range(1, count + 1)]
+    impact = {
+        "failed_order_count": count,
+        "affected_customer_count": count,
+        "affected_customer_ids": ids,
+        "damage_amount": count * 10_000,
+    }
+    monkeypatch.setitem(fake_departments.DEFAULT_OUTPUTS, "impact_analysis", lambda r: impact)
+    return ids
+
+
+@pytest.mark.asyncio
+async def test_more_than_fifty_customers_are_sent_in_batches_of_fifty(harness, monkeypatch) -> None:
+    ids = _many_customers(monkeypatch, 87)
+    inc = await run(harness)
+    requests = called(harness, "request_incident_compensation")
+    assert [len(r.input["buyer_ids"]) for r in requests] == [50, 37]
+    assert [b for r in requests for b in r.input["buyer_ids"]] == ids  # 빠짐·겹침 없음
+    keys = {r.meta.idempotency_key for r in requests}
+    assert len(keys) == 2  # 묶음마다 키가 달라 다시 보내도 한 번씩만 처리된다
+    out = inc.outputs["compensation"]
+    assert out["requested"] == 87 and len(out["results"]) == 87 and out["batches"] == 2
+    assert inc.steps["compensation"].status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_fifty_customers_still_go_in_one_request(harness, monkeypatch) -> None:
+    _many_customers(monkeypatch, 50)
+    inc = await run(harness)
+    assert len(called(harness, "request_incident_compensation")) == 1
+    assert "batches" not in inc.outputs["compensation"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_batch_stops_the_rest_and_keeps_the_incident_going(
+    harness, monkeypatch
+) -> None:
+    _many_customers(monkeypatch, 120)
+    harness.fakes.script("support", "request_incident_compensation", "ok", "fail", "fail", "fail")
+    inc = await run(harness)
+    step = inc.steps["compensation"]
+    assert step.status == "failed" and "2/3번째 묶음" in step.note
+    assert inc.outputs["compensation"]["requested"] == 50  # 보낸 만큼만 남긴다
+    assert inc.steps["loss"].status == "completed"  # 일괄 보상은 필수 단계가 아니다
 
 
 # ---------------------------------------------------------------- 사건 후 단계
