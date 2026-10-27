@@ -17,6 +17,9 @@
 | --- | --- |
 | `GET /api/shop/sellers`, `GET /api/shop/products[?seller_id&category_code]`, `GET /api/shop/products/{id}` | 판매자·상품 조회 |
 | `POST /api/shop/products`, `PATCH /api/shop/products/{id}` | 상품 등록·수정(판매 중지는 `active=false`) |
+| `GET /api/shop/users`, `GET /api/shop/users/{buyer_id}`, `POST /api/shop/sessions` | 쇼핑몰 화면용 데모 사용자. 가명 ID(`buyer_id`)와 표시 이름(`display_name`)뿐이고 비밀번호·토큰은 없다. `sessions`는 `{buyer_id}`를 받아 `{user}`를 돌려주는 "선택"이며 서버는 세션을 저장하지 않는다 |
+| `GET /api/shop/categories` | 판매 중 상품의 카테고리(`category_code`·`name`·`product_count`). 표시 이름을 모르는 코드는 `name`이 null |
+| `POST /api/shop/cart/price` | 장바구니 가격 미리보기(저장·재고 차감 없음). `items`, 선택 `points_used`. 상품 합계 → 배송비(5만 원 미만 3,000원) → 쿠폰 → 적립금 순서. 쿠폰은 주문에 입력 경로가 없어 `coupon_discount`가 null이고 `coupon_unknown_reason`을 준다(확인 필요). `payable_amount`는 `POST /orders`의 `total_amount`와 같다 |
 | `POST /api/shop/orders` | 주문. 가격·총액은 DB 값으로 계산하고 재고를 차감한다. 선택 `points_used`(원, 품목 합계 이하)를 받는다. `total_amount` = 품목 합계 − 포인트 + `shipping_fee`(품목 합계 5만 원 미만 3,000원, 이상 0원)로 **실제 결제(현금) 금액**이고 결제 `amount`와 같다 |
 | `GET /api/shop/orders[?buyer_id]`, `GET /api/shop/orders/{id}` | 주문 조회. 주문 필드 `shipping_fee`·`points_used`·`delivered_at`(배송 전 null), 품목 필드 `order_item_id`(`oit_`)·`title`(주문 당시 이름)·`points_share`(포인트를 품목 금액 비율로 나눈 몫, 남는 1원 단위는 뒤 품목부터)·`paid_amount`(= 단가×수량 − `points_share`), 결제 필드 `created_at`. 항상 `total_amount` = Σ`paid_amount` + `shipping_fee` |
 | `POST /api/shop/orders/{id}/payments` | 가짜 결제. `simulate`: `success`·`failure` |

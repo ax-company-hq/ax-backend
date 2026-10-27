@@ -31,6 +31,7 @@ from ax_shop_api.promotions import Promotions
 from ax_shop_api.refunds import Refunds
 from ax_shop_api.seed import seed
 from ax_shop_api.service import Shop, ShopError
+from ax_shop_api.storefront import Storefront
 
 
 class ProductIn(BaseModel):
@@ -57,6 +58,15 @@ class OrderIn(BaseModel):
     buyer_id: str
     items: list[OrderLine]
     points_used: int = Field(default=0, ge=0)  # 포인트 사용분(원). 품목 금액 비율로 나눠 기록한다
+
+
+class CartPriceIn(BaseModel):
+    items: list[OrderLine]
+    points_used: int = Field(default=0, ge=0)
+
+
+class SessionIn(BaseModel):
+    buyer_id: str  # 데모 사용자 선택. 비밀번호·토큰은 없다
 
 
 class ShippedIn(BaseModel):
@@ -194,6 +204,7 @@ def create_app(db: Db | None = None, seed_data: bool = True) -> FastAPI:
     promotions = Promotions(database)
     lookups = Lookups(database)
     refunds = Refunds(database)
+    storefront = Storefront(database)
     interval = float(os.getenv("SHOP_MONITOR_INTERVAL_S") or 5)  # 0이면 주기 판정을 끈다
 
     async def _monitor_loop() -> None:
@@ -236,6 +247,28 @@ def create_app(db: Db | None = None, seed_data: bool = True) -> FastAPI:
     @app.get("/health")
     def health() -> dict:
         return {"data": {"status": "ok"}, "meta": {}}
+
+    @app.get("/api/shop/users")
+    async def list_users() -> dict:
+        return _ok(storefront.list_users())
+
+    @app.get("/api/shop/users/{buyer_id}")
+    async def get_user(buyer_id: str) -> dict:
+        return _ok(storefront.get_user(buyer_id))
+
+    @app.post("/api/shop/sessions")
+    async def select_user(body: SessionIn) -> dict:
+        # 로그인은 "선택"일 뿐이다. 서버는 세션을 저장하지 않고 화면이 buyer_id를 들고 있는다
+        return _ok({"user": storefront.get_user(body.buyer_id)})
+
+    @app.get("/api/shop/categories")
+    async def list_categories() -> dict:
+        return _ok(storefront.list_categories())
+
+    @app.post("/api/shop/cart/price")
+    async def price_cart(body: CartPriceIn) -> dict:
+        lines = [(i.product_id, i.qty) for i in body.items]
+        return _ok(storefront.price_cart(lines, body.points_used))
 
     @app.get("/api/shop/sellers")
     async def list_sellers() -> dict:
