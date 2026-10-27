@@ -1,9 +1,10 @@
 # 기준 문서 개정안: 재무 AI 재설계 (2026-10-23)
 
-담당: 태윤. 상태: **초안** (docs PR 전). 근거 설계: [2026-10-23-finance-redesign.md](2026-10-23-finance-redesign.md)
+담당: 태윤. 상태: **대부분 반영** (#393, #401, `docs/coupon-finance-ledger-only` PR). 남은 것은 아래 2026-10-27 두 번째 줄. 근거 설계: [2026-10-23-finance-redesign.md](2026-10-23-finance-redesign.md)
 
 - 2026-10-26: A-5·A-6(SCN-A 인수 기준)만 먼저 docs PR #393으로 열었다 (A-6의 "한도 초과"는 "기준 이상"으로 맞춤). 나머지 항목은 아직 docs PR 전.
-- 2026-10-27: 멘토 피드백으로 재무를 시나리오 A 흐름에서 뺐다 (docs PR `docs/scn-a-remove-finance`). 그래서 아래 B-7의 "시나리오 A 필수 = 손실 리포트"와 A-x의 "DEP-FIN-01 유지(`loss_aggregation`)", B-10 결정 24의 "`loss_aggregation` 포함"은 더 이상 맞지 않는다. 공통 구성안 결정 22는 이 개정이 썼으므로 B-10의 결정 번호는 하나씩 밀린다.
+- 2026-10-27: 멘토 피드백으로 재무를 시나리오 A 흐름에서 뺐다 (docs PR #401). 그래서 아래 B-7의 "시나리오 A 필수 = 손실 리포트"와 A-x의 "DEP-FIN-01 유지(`loss_aggregation`)", B-10 결정 24의 "`loss_aggregation` 포함"은 더 이상 맞지 않는다. 공통 구성안 결정 22는 이 개정이 썼으므로 B-10의 결정 번호는 하나씩 밀린다.
+- 2026-10-27: 쿠폰·환불 docs PR(`docs/coupon-finance-ledger-only`, #401 위에 쌓음)로 반영: A-1(쿠폰 A), A-2(안 2, 폐지 표시), A-4(환불 A. 단 `refund_request`에는 `claimed_fields`가 없어 "금액 불일치 C"는 빼고 "기준 이상 C"만), A-7(카드 예시 설명·skill), A-8(`verifier: null`), A-9, A-11, B-1, B-2, B-3, B-4, B-5(주인을 "사람"으로), B-8(주석), B-9, B-10 중 결정 22(→ 공통 구성안 **후속 23**), B-11, 그리고 C의 `team-rules.md` 125·129·결정 기록, `agent-card-guide.md` 24·72, `planning.md` 30·92·107·128. 재무는 쿠폰·환불을 검증하지 않고 장부에 기록만 한다는 문구로 통일. **아직 안 한 것:** A-3(DEP-FIN-05~09 추가), A-10, A-12, A-13, B-6, B-10의 23·24(review\_hold 삭제·재무 범위), B-12, C의 orchestrator·planning·safety 부서 노트.
 
 ## 목적
 
