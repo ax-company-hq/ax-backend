@@ -12,6 +12,7 @@ from support_agent.change_handlers import CHANGE_HANDLERS
 from support_agent.claim_analysis import ANALYSIS_HANDLERS
 from support_agent.claim_handlers import CLAIM_HANDLERS
 from support_agent.handlers import HANDLERS
+from support_agent.handoff_handlers import HANDOFF_HANDLERS
 from support_agent.incident_handlers import INCIDENT_HANDLERS
 from support_agent.insight_handlers import INSIGHT_HANDLERS
 from support_agent.payment_handlers import PAYMENT_HANDLERS
@@ -47,6 +48,7 @@ ALL_HANDLERS = {
     **SUGGEST_HANDLERS,
     **INCIDENT_HANDLERS,
     **PAYMENT_HANDLERS,
+    **HANDOFF_HANDLERS,
     **PRIVACY_HANDLERS,
     **SIGNAL_HANDLERS,
 }
