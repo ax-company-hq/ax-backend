@@ -37,11 +37,18 @@ REASONS: dict[str, tuple[str, str]] = {
     "no_evidence": ("review", "cs_lead"),
 }
 
-# 사람을 찾는 말과 요청 표현. 한쪽만 있으면(예: "사람이 많아요") 요청으로 보지 않는다.
+# 사람을 찾는 말과 연결하는 행동. 한쪽만 있으면(예: "사람이 많아요") 요청으로 보지 않는다.
+# 행동 단어는 쇼핑몰 문의에 흔한 말(직접, 보내)을 넣지 않는다: "사람이 직접 만든 수제품",
+# "직원분이 보내주신 상품"을 요청으로 읽으면 가장 높은 심각도가 잘못 켜진다.
 _KO = re.compile(
-    r"(상담원|담당자|사람|직원|매니저|책임자).{0,8}(연결|바꿔|불러|통화|직접|만나|말하고|상담하고|보내)"
-    r"|(연결|바꿔|불러|통화|직접).{0,8}(상담원|담당자|사람|직원|매니저|책임자)"
+    r"(상담원|담당자|사람|직원|매니저|책임자).{0,8}(연결|바꿔|불러|통화|만나|말하고|상담하고)"
+    r"|(연결|바꿔|불러|통화).{0,8}(상담원|담당자|사람|직원|매니저|책임자)"
 )
+# 행동 단어 뒤에 요청하는 말이 와야 한다. ("사람이 통화한 내용이 달라요"는 요청이 아니다.)
+_KO_ASK = re.compile(r"주세요|주실|해\s?줘|해\s?주|하고\s?싶|싶어|부탁|원해|바랍|좀|바꿔|불러")
+# 요청한 직후 취소하는 말이면 요청이 아니다. ("상담원 연결 안 해주셔도 돼요")
+_KO_NEGATION = re.compile(r"안\s?해|안\s?하|하지\s?마|필요\s?없|괜찮|됐어|말고|않아도|아니")
+_TAIL = 14  # 행동 단어 뒤에서 요청·취소 표현을 찾는 글자 수
 _EN = re.compile(
     r"(talk|speak|connect|transfer|escalate|get).{0,20}(human|real person|person|agent|"
     r"representative|operator|manager|supervisor)"
@@ -53,9 +60,20 @@ _JA_ZH = re.compile(
 )
 
 
+def _korean_request(text: str) -> bool:
+    """한국어: 사람과 행동 단어가 함께 있고, 뒤에 요청하는 말이 오며, 바로 취소하지 않는가."""
+    for match in _KO.finditer(text):
+        tail = text[match.end() : match.end() + _TAIL]
+        if _KO_NEGATION.search(tail):
+            continue
+        if _KO_ASK.search(tail) or _KO_ASK.search(match.group(0)):
+            return True
+    return False
+
+
 def is_explicit_human_request(text: str) -> bool:
     """사람과 이야기하고 싶다는 요청처럼 보이는가 (ko·en·ja·zh 단어 규칙)."""
-    return bool(_KO.search(text) or _EN.search(text) or _JA_ZH.search(text))
+    return _korean_request(text) or bool(_EN.search(text) or _JA_ZH.search(text))
 
 
 def severity_rank(severity: str) -> int:

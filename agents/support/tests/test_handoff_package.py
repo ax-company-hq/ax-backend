@@ -171,6 +171,8 @@ def test_card_declares_a_read_skill_for_orchestrator_and_dashboard_only() -> Non
         "Please transfer me to a manager",
         "担当者と話したいです",
         "请转人工",
+        "환불이 안 돼서 그런데 상담원 연결 부탁드립니다",
+        "아까 안 된다고 했는데 담당자 바꿔 주세요",
     ],
 )
 def test_requests_for_a_person_are_detected_in_four_languages(text: str) -> None:
@@ -184,6 +186,13 @@ def test_requests_for_a_person_are_detected_in_four_languages(text: str) -> None
         "상담원이 친절했어요",
         "환불해 주세요",
         "this agent was helpful",
+        # 예진 님 리뷰: 쇼핑몰 문의에 흔한 문장이 가장 높은 심각도를 켜면 안 된다
+        "사람이 직접 만든 수제품인가요?",
+        "직원분이 보내주신 상품이 파손됐어요",
+        "상담원 연결 안 해주셔도 돼요",
+        "담당자 연결은 필요 없어요 환불만 해 주세요",
+        "사람이 통화한 내용이 달라요",
+        "상담원 연결 말고 그냥 환불해 주세요",
     ],
 )
 def test_other_sentences_are_not_requests_for_a_person(text: str) -> None:
@@ -457,3 +466,18 @@ def test_the_result_carries_evidence_without_percentages() -> None:
 
 def test_an_unknown_inquiry_is_not_found() -> None:
     assert call(999)["outcome"] == "not_found"
+
+
+# ------------------------------------------------- 구매자를 알 수 없는 문의 (예진 님 참고 사항)
+@pytest.mark.asyncio
+async def test_an_unknown_buyer_never_matches_an_order_with_a_missing_buyer() -> None:
+    use_shop(duplicate_paid_order(buyer=None))  # type: ignore[arg-type]
+    inquiry_id = add_inquiry()
+    conversation = handlers.STORE.get(inquiry_id)
+    conversation.user_id = None  # 문의를 낸 구매자를 모른다
+    package = await handoff_handlers.build_package(
+        conversation, datetime.now(UTC), include_payment=True
+    )
+    assert "payment_review" not in [r.code for r in package.reasons]
+    assert package.buyer_id is None
+    assert any("확인할 수 없어" in note for note in package.notes)

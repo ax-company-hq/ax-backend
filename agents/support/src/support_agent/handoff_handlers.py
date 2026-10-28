@@ -110,8 +110,12 @@ async def _payment_reason(
     except shop_client.ShopError:
         notes.append("결제 기록을 읽지 못해 결제 검토 여부는 판단하지 않았다")
         return None, None
-    buyer = buyer_ids.from_number(conversation.user_id) if conversation.user_id else None
-    if data is None or data.get("buyer_id") != buyer:  # 남의 주문 기록은 쓰지 않는다
+    buyer = (
+        buyer_ids.from_number(conversation.user_id) if conversation.user_id is not None else None
+    )
+    # 문의를 낸 구매자를 모르면 어느 주문도 그 사람 것이라고 볼 수 없다.
+    # 남의 주문 기록도 쓰지 않는다.
+    if buyer is None or data is None or data.get("buyer_id") != buyer:
         notes.append("문의의 주문을 확인할 수 없어 결제 검토 여부는 판단하지 않았다")
         return None, None
     diagnosis = payment_handlers.diagnose(data)
