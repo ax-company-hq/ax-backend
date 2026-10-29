@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import os
+import uuid
 from collections import deque
 from dataclasses import dataclass
 
@@ -82,7 +83,10 @@ class Monitor:
         )
         with self.db.tx() as conn:
             if event_type == EventType.SHOP_DEGRADED:
-                self._incident_key = self.db.next_id(conn, "degraded", "dgd_")
+                # DB를 새로 만들면 순번이 dgd_0001부터 다시 시작해 이벤트 ID(키의 해시)가
+                # 지난 장애와 겹치고, 받는 쪽이 중복으로 버린다. 무작위 접미사로 겹치지 않게 한다.
+                number = self.db.next_id(conn, "degraded", "dgd_")
+                self._incident_key = f"{number}-{uuid.uuid4().hex[:8]}"
             outbox.enqueue(
                 conn,
                 event_type,

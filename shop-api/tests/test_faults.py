@@ -158,6 +158,26 @@ def test_recovery_once_traffic_is_normal_again() -> None:
     assert _outbox_types(db) == ["shop.degraded", "shop.recovered"]
 
 
+def _trip_degraded(monitor: Monitor) -> None:
+    for second in range(0, 61, 5):
+        monitor.record(float(second), 1500.0, False)
+        monitor.evaluate(float(second))
+
+
+def test_event_ids_do_not_repeat_after_the_db_is_recreated() -> None:
+    """DB를 새로 만들면 순번이 dgd_0001로 돌아가도 이벤트 ID는 지난 장애와 달라야 한다."""
+    first, first_db = _monitor()
+    second, second_db = _monitor()  # DB 초기화·재배포와 같은 상황
+    _trip_degraded(first)
+    _trip_degraded(second)
+    first_event, second_event = _outbox(first_db)[0], _outbox(second_db)[0]
+    assert first_event["type"] == second_event["type"] == "shop.degraded"
+    assert first_event["event_id"] != second_event["event_id"]
+    assert first_event["idempotency_key"] != second_event["idempotency_key"]
+    assert first_event["idempotency_key"].startswith("shop.degraded:dgd_0001-")  # 순번 규칙은 유지
+    assert second_event["idempotency_key"].startswith("shop.degraded:dgd_0001-")
+
+
 def test_reset_publishes_recovered_only_if_degraded() -> None:
     monitor, db = _monitor()
     monitor.reset()
