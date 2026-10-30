@@ -5,6 +5,9 @@
 - 실제 모드: shop-api `GET /api/shop/orders`·`/products`·`/sellers`·`/coupons`(재무 토큰),
   safety `GET /api/safety/thresholds`·`/api/safety/executions`. 판매 사이트 DB에는 붙지 않는다.
 - 못 받은 자료는 비워 두고 `unavailable`에 이름을 적는다. 추정값을 만들지 않는다(fail-closed).
+- 실제 모드 장부는 `LIVE_CACHE_SECONDS`초 동안 다시 쓴다. 주문 전체를 매번 읽으면 동시에 여러 번
+  부를 때 줄을 서서, 같은 때 들어온 요청은 한 번 모은 결과를 같이 쓴다. 못 받은 자료가 있는
+  장부는 캐시에 두지 않는다(다음 요청이 바로 다시 받아 본다). 언제 모은 자료인지는 `collected_at`.
 - PG 정산은 실제 PG가 없어서 두 모드 모두 결제에서 **토스 정산 형식 목**을 만든다
   (`amount`, `fee`, `pay_out_amount`, `sold_date`, `paid_out_date`). 데모용 불일치를 일부러 넣는다.
 
@@ -13,7 +16,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from importlib import resources
@@ -25,6 +30,7 @@ from ax_agent_template.config import agent_token, agent_url, is_mock
 from finance_agent import finance_config as fc
 
 CALL_SECONDS = 5.0
+LIVE_CACHE_SECONDS = 30.0
 SEED_FILE = "finance_books_seed.json"
 
 
@@ -72,6 +78,10 @@ class Books:
             oid = p["order"]["order_id"]
             out[oid] = out.get(oid, 0) + p["amount"]
         return out
+
+    def unavailable_core(self) -> bool:
+        """주문·쿠폰처럼 숫자를 내는 데 꼭 필요한 자료를 못 받았는가."""
+        return any(name in self.unavailable for name in ("orders", "coupons"))
 
     def meta(self, extra_unavailable: list[str] | None = None) -> dict[str, Any]:
         missing = list(dict.fromkeys([*self.unavailable, *(extra_unavailable or [])]))
@@ -424,11 +434,37 @@ def _norm_exec(raw: Any) -> dict[str, Any] | None:
     return normalize_execution(raw) if isinstance(raw, dict) else None
 
 
+_live_cache: tuple[float, Books] | None = None  # (모은 시각 monotonic, 장부)
+_live_inflight: asyncio.Task[Books] | None = None
+
+
+def clear_live_cache() -> None:
+    global _live_cache, _live_inflight
+    _live_cache, _live_inflight = None, None
+
+
+async def _collect_live() -> Books:
+    global _live_cache
+    books = await live_books()
+    _live_cache = None if books.unavailable_core() else (time.monotonic(), books)
+    return books
+
+
+async def cached_live_books() -> Books:
+    """실제 모드 장부. 캐시가 살아 있으면 그대로, 모으는 중이면 같은 결과를 기다린다."""
+    global _live_inflight
+    if _live_cache and time.monotonic() - _live_cache[0] < LIVE_CACHE_SECONDS:
+        return _live_cache[1]
+    if _live_inflight is None or _live_inflight.done():
+        _live_inflight = asyncio.create_task(_collect_live())
+    return await asyncio.shield(_live_inflight)
+
+
 async def load_books() -> Books:
     """모드에 맞게 장부를 모은다."""
     if is_mock("finance"):
         return seed_books()
-    return await live_books()
+    return await cached_live_books()
 
 
 # ---------------------------------------------------------------- 목 PG 정산 (토스 정산 형식)

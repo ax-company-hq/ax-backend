@@ -8,8 +8,8 @@
 
 | 모듈 | 파일 | 하는 일 |
 | --- | --- | --- |
-| 장부 자료 | `books.py` | 실제: shop-api 주문·상품·판매자·쿠폰 + safety 기준표·실행 기록. 목: `finance_books_seed.json`(오늘 기준 2주치). 토스 정산 형식 목 PG 정산(데모 불일치 포함) |
-| ① 결산·리포트 | `closing.py` | 일·월 손익, 분개 미리보기, 설명 문장 |
+| 장부 자료 | `books.py` | 실제: shop-api 주문·상품·판매자·쿠폰 + safety 기준표·실행 기록. 목: `finance_books_seed.json`(오늘 기준 2주치). 토스 정산 형식 목 PG 정산(데모 불일치 포함). 실제 모드 장부는 30초 동안 다시 쓰고(동시 요청은 한 번 모은 결과를 같이 씀), 주문·쿠폰을 못 받은 장부는 캐시하지 않는다 |
+| ① 결산·리포트 | `closing.py` | 일·주·월 손익, 분개 미리보기, 설명 문장. 주문·쿠폰 자료를 못 받으면 그 숫자로 계산하는 줄은 0이 아니라 `null` |
 | ② 매출·PG 대사 | `reconciliation.py` | `matched`·`mismatch`·`missing_in_pg`·`pending`·`fee_anomaly` |
 | ③ 판매자 정산 | `settlement.py` | 정산금 = 판매액 − 수수료 − 판매자 부담 쿠폰 − 환불, 보류 사유. 묶음 지급은 `execute("confirm_settlement")`(항상 C) |
 | ⑤ 예산·한도 | `policy.py` | 정책표·소진율·경보, 한도 *제안*(적용은 기준표 PR) |
@@ -56,7 +56,7 @@ safety·finance를 목 모드로 띄운 뒤 `uv run python agents/finance/demo/s
 ## 3. 입출력 계약
 - 입출력 모델: `src/finance_agent/schemas.py` (Agent Card의 `input_schema`·`output_schema`). 금액 다시 계산 형식(`VerifyAmountInput`·`VerifyAmountOutput`)은 contracts 원본
 - 재무 대시보드 API (`{data, meta}`, `meta.mock`·`collected_at`·`source`·`unavailable`, 형식은 재설계 문서 11장, 구현 `finance_api.py`):
-  `GET /api/finance/overview`, `GET /api/finance/closing?period=day|month&date=`, `POST /api/finance/closing/confirm`(사람 토큰),
+  `GET /api/finance/overview`, `GET /api/finance/closing?period=day|week|month&date=`, `POST /api/finance/closing/confirm`(사람 토큰, 확인할 수 없는 숫자가 있으면 409 `books_unavailable`),
   `GET /api/finance/reconciliation?date=`, `POST /api/finance/reconciliation/{payment_id}/note`(사람 토큰),
   `GET /api/finance/settlements?period=YYYY-Www`, `POST /api/finance/settlements/batch`(토큰 선택, safety 없으면 503 `safety_unavailable`),
   `GET /api/finance/policy`, `GET /api/finance/audit?days=7&context_id=`(사건 선택)

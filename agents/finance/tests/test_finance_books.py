@@ -269,6 +269,49 @@ def test_normalizers_refuse_bad_shapes() -> None:
     )
 
 
+def test_live_books_are_cached_and_shared(monkeypatch: pytest.MonkeyPatch) -> None:
+    """동시에 여러 번 불러도 주문 전체는 한 번만 읽고, 짧은 시간 안에는 다시 쓴다."""
+    monkeypatch.delenv("AGENT_TEMPLATE_MOCK", raising=False)
+    monkeypatch.delenv("FINANCE_MOCK", raising=False)
+    bk.clear_live_cache()
+    calls: list[int] = []
+
+    async def fake_live() -> bk.Books:
+        calls.append(1)
+        await asyncio.sleep(0.01)
+        return bk.Books(source="shop-api", mock=False)
+
+    monkeypatch.setattr(bk, "live_books", fake_live)
+
+    async def run() -> list[bk.Books]:
+        first = await asyncio.gather(*(bk.load_books() for _ in range(5)))
+        return [*first, await bk.load_books()]
+
+    got = asyncio.run(run())
+    assert len(calls) == 1 and all(b is got[0] for b in got)
+    monkeypatch.setattr(bk, "LIVE_CACHE_SECONDS", 0.0)
+    asyncio.run(bk.load_books())
+    assert len(calls) == 2  # 캐시가 지나면 다시 모은다
+    bk.clear_live_cache()
+
+
+def test_live_books_missing_orders_are_not_cached(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AGENT_TEMPLATE_MOCK", raising=False)
+    monkeypatch.delenv("FINANCE_MOCK", raising=False)
+    bk.clear_live_cache()
+    calls: list[int] = []
+
+    async def fake_live() -> bk.Books:
+        calls.append(1)
+        return bk.Books(source="shop-api", mock=False, unavailable=["orders"])
+
+    monkeypatch.setattr(bk, "live_books", fake_live)
+    asyncio.run(bk.load_books())
+    asyncio.run(bk.load_books())
+    assert len(calls) == 2  # 실패한 장부는 다음 요청이 바로 다시 받아 본다
+    bk.clear_live_cache()
+
+
 def test_load_books_uses_seed_in_mock_mode(fixed_now) -> None:
     books = asyncio.run(bk.load_books())
     assert books.source == "seed" and len(books.orders) > 100

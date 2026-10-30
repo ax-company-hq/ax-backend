@@ -389,9 +389,9 @@ BOOK_QUERIES = [
 
 
 def closing_key(period: str, d: Any) -> tuple[str, str]:
-    """결산 확정 기록의 키. 월은 그 달 1일로 맞춘다."""
+    """결산 확정 기록의 키. 주는 그 주 월요일, 월은 그 달 1일로 맞춘다."""
     start, _ = closing.period_range(period, d)  # type: ignore[arg-type]
-    return period, (start if period == "month" else d).isoformat()
+    return period, (d if period == "day" else start).isoformat()
 
 
 async def closing_report(request: AgentRequest) -> AgentResult:

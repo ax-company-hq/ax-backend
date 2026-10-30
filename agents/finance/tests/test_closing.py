@@ -143,6 +143,51 @@ def test_empty_day_says_no_orders(kit) -> None:
     assert all(ln["amount"] == 0 for ln in report["lines"]) and report["journal"] == []
 
 
+def test_week_period(kit) -> None:
+    books = _day_books(kit)
+    report = asyncio.run(closing.closing_report(books, "week", date(2026, 10, 22), None))
+    assert (report["date"], report["from"], report["to"]) == (
+        "2026-10-19",
+        "2026-10-19T00:00:00Z",
+        "2026-10-26T00:00:00Z",
+    )
+    gmv = next(ln["amount"] for ln in report["lines"] if ln["code"] == "gmv")
+    assert gmv == 20000 + 12345 + 50000
+    assert "10월 19일부터 한 주" in report["commentary"]
+
+
+def test_missing_orders_make_lines_unknown_not_zero(kit, monkeypatch: pytest.MonkeyPatch) -> None:
+    books = _day_books(kit)
+    books.orders, books.refunds, books.unavailable = [], [], ["orders"]
+    books.mock = False
+    fake = _FakeLLM("m")
+    monkeypatch.setattr(closing, "LLMClient", lambda dept: fake)
+    report = asyncio.run(closing.closing_report(books, "day", date(2026, 10, 20), None))
+    amounts = {ln["code"]: ln["amount"] for ln in report["lines"]}
+    assert amounts["gmv"] is None and amounts["net_result"] is None
+    assert amounts["coupon_cost"] == -3000  # 쿠폰 자료는 받았으니 숫자가 있다
+    assert [j["account"] for j in report["journal"]] == ["판매촉진비(쿠폰)", "미지급금(쿠폰)"]
+    assert report["commentary_source"] == "template" and fake.prompts == []
+    assert "주문 자료를 받지 못해" in report["commentary"]
+    assert "총거래액은" not in report["commentary"]  # 0원 매출 문장을 쓰지 않는다
+
+
+def test_missing_coupons_make_net_result_unknown(kit) -> None:
+    books = _day_books(kit)
+    books.coupons, books.unavailable = [], ["coupons"]
+    report = asyncio.run(closing.closing_report(books, "day", date(2026, 10, 20), None))
+    amounts = {ln["code"]: ln["amount"] for ln in report["lines"]}
+    assert amounts["gmv"] == 32345
+    assert amounts["coupon_cost"] is None and amounts["net_result"] is None
+    assert "쿠폰 자료를 받지 못해" in report["commentary"]
+
+
+def test_partial_orders_keep_numbers(kit) -> None:
+    books = _day_books(kit)
+    books.unavailable = ["orders_partial"]
+    assert closing.unknown_codes(books) == frozenset()
+
+
 class _FakeLLM:
     def __init__(self, model: str | None, fail: bool = False) -> None:
         self.settings = type("S", (), {"model": model})()
