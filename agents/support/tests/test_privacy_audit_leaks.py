@@ -4,12 +4,17 @@ import asyncio
 import hashlib
 import json
 import logging
+import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
+from ax_agent_template import common_log
+from ax_contracts.data_access.common_log import CommonLogQuery
 from ax_contracts.schemas import AgentRequest
 from support_agent import guard, handlers, secure_transfer
 from support_agent.main import app
@@ -224,3 +229,20 @@ def test_leak_check_catches_a_planted_value(caplog: pytest.LogCaptureFixture) ->
         logging.getLogger("x").warning("메일", extra={"who": "kim.secret@example.com"})
     leaked = _leaks("\n".join(_record_text(r) for r in caplog.records))
     assert "010-1234-5678" in leaked and "kim.secret@example.com" in leaked
+
+
+def test_common_log_rows_never_carry_the_values(client: TestClient, tmp_path: Path) -> None:
+    """대시보드가 읽는 공통 로그 저장소의 모든 줄(모든 열)을 파일에서 직접 읽어 본다."""
+    db = tmp_path / "common.db"
+    common_log.set_store(common_log.SqliteLogStore(str(db)))
+    try:
+        _drive(client)
+        store = common_log.get_store()
+        assert store is not None
+        assert store.query(CommonLogQuery(kinds=["event_published"])).records  # 줄이 실제로 있다
+    finally:
+        common_log.reset_store()
+    with closing(sqlite3.connect(db)) as conn:
+        rows = conn.execute("SELECT * FROM common_logs").fetchall()
+    assert len(rows) >= 2
+    assert _leaks(json.dumps(rows, ensure_ascii=False, default=str)) == []
