@@ -49,7 +49,9 @@ from support_agent.schemas import (
     SetInquiryStatusInput,
     Source,
     SummarizeInquiryInput,
+    Validation,
 )
+from support_agent.store import now_iso
 
 logger = logging.getLogger("ax.support.handlers")
 
@@ -291,6 +293,41 @@ async def add_customer_message(request: AgentRequest) -> AgentResult:
     )
 
 
+def _draft_event_context(
+    conversation: Conversation | None,
+    style: str,
+    validation: Validation | None = None,
+) -> dict[str, Any]:
+    """초안 결정 기록에 붙이는 분류·근거 정보 (지식 공백 집계용). 고객 원문은 담지 않는다.
+
+    결정은 문의의 마지막 고객 메시지 분석에 대한 것으로 본다. 분석이 없으면 값은 None이다.
+    """
+    last = (
+        next(
+            (m for m in reversed(conversation.messages) if m.role == "customer" and m.analysis),
+            None,
+        )
+        if conversation
+        else None
+    )
+    analysis = last.analysis if last else None
+    sources = (analysis.sources or []) if analysis else []
+    if validation is None and analysis:
+        draft = next((d for d in analysis.drafts or [] if d.style == style), None)
+        validation = draft.validation if draft else None
+    return {
+        "occurred_at": now_iso(),
+        "category": analysis.classification.category
+        if analysis and analysis.classification
+        else None,
+        "message_id": last.id if last else None,
+        "doc_id": sources[0].doc_id if sources else None,
+        "source_count": len(sources) if analysis else None,
+        "top_score": max((s.score for s in sources), default=None) if analysis else None,
+        "guard_codes": [f.code for f in validation.findings] if validation else [],
+    }
+
+
 @_caller_meta
 async def send_reply(request: AgentRequest) -> AgentResult:
     """상담원이 확정한 답변을 고객에게 보낸다. 가드를 통과하지 못하면 보내지 않는다."""
@@ -306,6 +343,17 @@ async def send_reply(request: AgentRequest) -> AgentResult:
     request = incident_context.follow_inquiry(request, conversation.context_id)
     validation = guard.check_reply(text)
     if not validation.passed:
+        if parsed.draft_style:  # 가드가 자주 걸리는 주제를 세려고 차단도 남긴다 (고객 원문 없음)
+            STORE.draft_events.append(
+                {
+                    "context_id": request.meta.context_id,
+                    "inquiry_id": parsed.inquiry_id,
+                    "style": parsed.draft_style,
+                    "result": "blocked",
+                    "edit_ratio": None,
+                    **_draft_event_context(conversation, parsed.draft_style, validation),
+                }
+            )
         return _done(
             request,
             {"validation": validation.model_dump(mode="json")},
@@ -327,6 +375,7 @@ async def send_reply(request: AgentRequest) -> AgentResult:
                     "edit_ratio": round(1 - SequenceMatcher(None, draft, text).ratio(), 3)
                     if edited
                     else None,
+                    **_draft_event_context(conversation, parsed.draft_style),
                 }
             )
         return conversation.model_dump(mode="json"), False
@@ -354,6 +403,8 @@ async def reject_draft(request: AgentRequest) -> AgentResult:
                 "inquiry_id": parsed.inquiry_id,
                 "style": parsed.draft_style,
                 "result": "rejected",
+                "reason_code": parsed.reason_code,
+                **_draft_event_context(STORE.get(parsed.inquiry_id), parsed.draft_style),
             }
         )
         return {"inquiry_id": parsed.inquiry_id, "draft_style": parsed.draft_style}, False

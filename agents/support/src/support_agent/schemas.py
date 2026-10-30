@@ -182,9 +182,14 @@ class SendReplyInput(AxModel):
     draft_text: str | None = None
 
 
+RejectReason = Literal["wrong_info", "missing_policy", "tone", "too_long", "other"]
+
+
 class RejectDraftInput(AxModel):
     inquiry_id: int
     draft_style: DraftStyle
+    # 거절한 이유. 문서가 없어서(missing_policy)인지 말투 때문인지 가르는 지식 공백 신호다 (선택)
+    reason_code: RejectReason | None = None
 
 
 class SummarizeInquiryInput(AxModel):
