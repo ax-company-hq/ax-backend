@@ -202,6 +202,14 @@ SendFn = Callable[[str, AgentRequest], Awaitable[AgentResult]]
 _raw_send: SendFn = call_agent  # 테스트에서 바꿀 수 있다
 
 
+def _record_block(request: AgentRequest, exc: SecureTransferError) -> None:
+    """막은 사실을 개인정보 감사 기록에 남긴다 (종류별 건수와 이유 코드만, 값은 없다)."""
+    from support_agent import handlers, privacy_audit  # 순환 import를 피하려고 늦게 가져온다
+
+    strings = [*_strings(request.input), *_strings(request.untrusted)]
+    privacy_audit.record_transfer_block(handlers.STORE, request, strings, exc.code)
+
+
 async def send(target: str, request: AgentRequest) -> AgentResult:
     """에이전트에 요청을 보낸다. DejaFix면 개인정보를 암호화하고, 그럴 수 없으면 보내지 않는다."""
     if target not in DEJAFIX_TARGETS:
@@ -209,5 +217,6 @@ async def send(target: str, request: AgentRequest) -> AgentResult:
     try:
         protected = protect_request(request)
     except SecureTransferError as exc:
+        _record_block(request, exc)
         return error_result(request.meta, TaskStatus.FAILED, exc.code, str(exc))
     return await _raw_send(target, protected)

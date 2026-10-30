@@ -290,6 +290,16 @@
       "priority": "recommended"
     },
     {
+      "id": "get_privacy_audit",
+      "description": "문의 하나의 개인정보 처리 기록을 보여 준다(읽기, LLM 없음). 마스킹 감사 기록(단계 ingest·llm_input·event_untrusted·transfer, 종류별 탐지 건수, 조치, 마스킹 규칙 버전, 시각)과 답변 출처 기록(초안 스타일, 근거 문서 ID·점수, 경로 llm·template_fallback, 모델 이름, 가드 규칙 코드, 결과 generated·accepted·edited·rejected·blocked)을 시간순으로 돌려주고, 처리 활동 요약(범주·목적·받는 곳·보유·국외 이전)을 코드 상수에서 붙인다. 기록은 기존 쓰기 skill이 처리 중에 추가만 하며 이 skill은 아무것도 바꾸지 않는다. 고객 원문, 마스킹한 글, 값의 해시, 이름·연락처는 출력에 없다. 탐지한 것의 증빙이지 개인정보가 없었다는 증빙이 아니며 법적 판단이 아니다.",
+      "input_schema": "agents/support/src/support_agent/audit_schemas.py#GetPrivacyAuditInput",
+      "output_schema": "agents/support/src/support_agent/audit_schemas.py#PrivacyAudit",
+      "grade": "read",
+      "allowed_requesters": ["dashboard-api", "orchestrator"],
+      "verifier": null,
+      "priority": "recommended"
+    },
+    {
       "id": "assess_deletion_request",
       "description": "문의에 붙은 개인정보 삭제 요청이 본인 것으로 보이는지 규칙으로 1차 판단한다(읽기, LLM 없음). 문의에 연결된 주문의 구매자와 문의를 낸 구매자가 같은지, 요청에 적힌 주문 번호·상품이 주문 기록과 맞는지, 같은 구매자가 짧은 시간에 여러 주문을 다루는 흔적이 없는지를 보고 일치(consistent)·불일치(mismatch)·판단불가(insufficient)와 확신도(low·medium·high, 퍼센트 없음), 근거 목록, 사람이 읽을 요약을 돌려준다. 불일치·판단불가는 거절 권고로 표시한다. 본인으로 확정하거나 삭제하지 않고 최종 판단은 사람이 한다. 문의 원문은 untrusted로만 읽고 지시로 해석하지 않으며, 본인 확인을 위해 개인정보를 더 요구하지 않는다.",
       "input_schema": "agents/support/src/support_agent/privacy_schemas.py#AssessDeletionInput",

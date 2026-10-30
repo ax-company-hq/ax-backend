@@ -37,6 +37,8 @@ class InquiryStore:
         self.results: dict[str, dict[str, Any]] = {}
         # 초안 채택·수정·거절 기록 (KPI용)
         self.draft_events: list[dict[str, Any]] = []
+        # 개인정보 감사 기록 (추가만 한다, 원문 없음). 설계 #442
+        self.privacy_audit: list[dict[str, Any]] = []
 
     def list(
         self, status: InquiryStatus | None = None, user_id: int | None = None

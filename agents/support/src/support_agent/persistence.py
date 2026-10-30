@@ -46,6 +46,7 @@ TABLES: tuple[Table, ...] = (
     Table("inquiries", ("inquiry_id",), ("tenant_id", "context_id", "status", "updated_at")),
     Table("inquiry_results", ("tenant_id", "idempotency_key"), ("context_id",)),
     Table("draft_events", ("event_id",), ("tenant_id", "context_id", "inquiry_id")),
+    Table("privacy_audits", ("audit_id",), ("tenant_id", "context_id", "inquiry_id")),
     Table("claims", ("claim_id",), ("tenant_id", "context_id", "order_id", "buyer_id", "status")),
     Table("change_requests", ("tenant_id", "context_id", "inquiry_id"), ("status",)),
     Table("compensation_sequences", ("tenant_id", "context_id")),
@@ -56,6 +57,7 @@ BY_NAME = {t.name: t for t in TABLES}
 COLUMN_TYPES = {
     "inquiry_id": "bigint",
     "event_id": "bigint",
+    "audit_id": "bigint",
     "claim_id": "bigint",
     "updated_at": "timestamptz",
 }
@@ -222,6 +224,27 @@ class PersistentList(list):
         super().append(event)
 
 
+class PersistentAuditList(list):
+    """`audit.append(record)`가 DB에도 저장되는 list (개인정보 감사 기록, 추가만 한다)."""
+
+    def __init__(self, repo: Repo, initial: list[dict] | None = None) -> None:
+        super().__init__(initial or [])
+        self._repo = repo
+
+    def append(self, record: dict) -> None:
+        self._repo.upsert(
+            "privacy_audits",
+            {
+                "audit_id": int(record["audit_id"]),
+                "tenant_id": str(record.get("tenant_id") or TENANT_ID_DEFAULT),
+                "context_id": str(record.get("context_id") or ""),
+                "inquiry_id": int(record.get("inquiry_id") or 0),  # 문의와 무관한 기록은 0
+            },
+            record,
+        )
+        super().append(record)
+
+
 # ---------------------------------------------------------------- 영속 저장소
 class PersistentInquiryStore(InquiryStore):
     def __init__(self, repo: Repo) -> None:
@@ -237,6 +260,7 @@ class PersistentInquiryStore(InquiryStore):
         self._message_ids = itertools.count(last_message + 1)
         self.results = PersistentDict(repo, "inquiry_results")
         self.draft_events = PersistentList(repo, repo.load("draft_events"))
+        self.privacy_audit = PersistentAuditList(repo, repo.load("privacy_audits"))
 
     def _save(self, conversation: Conversation) -> Conversation:
         self._repo.upsert(

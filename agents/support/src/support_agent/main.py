@@ -8,6 +8,7 @@ from pathlib import Path
 from ax_agent_template.server import create_agent_app
 from ax_contracts.schemas import AgentCard
 from support_agent import receipt_vision
+from support_agent.audit_handlers import AUDIT_HANDLERS
 from support_agent.change_handlers import CHANGE_HANDLERS
 from support_agent.claim_analysis import ANALYSIS_HANDLERS
 from support_agent.claim_handlers import CLAIM_HANDLERS
@@ -49,6 +50,7 @@ ALL_HANDLERS = {
     **INCIDENT_HANDLERS,
     **PAYMENT_HANDLERS,
     **HANDOFF_HANDLERS,
+    **AUDIT_HANDLERS,
     **PRIVACY_HANDLERS,
     **SIGNAL_HANDLERS,
 }
