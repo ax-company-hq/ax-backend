@@ -193,12 +193,34 @@ def test_transfer_block_record_has_counts_but_not_the_request_values(
     assert _leaks(json.dumps(record, ensure_ascii=False)) == []
 
 
-def test_logs_emitted_while_auditing_do_not_carry_the_values(
-    client: TestClient, caplog: pytest.LogCaptureFixture
+def _record_text(record: logging.LogRecord) -> str:
+    """로그 한 줄이 사람에게 보여 줄 모든 글: 완성한 메시지, 인자, 예외, 덧붙인 필드."""
+    standard = set(logging.makeLogRecord({}).__dict__) | {"message", "asctime"}
+    extra = {k: v for k, v in record.__dict__.items() if k not in standard}
+    parts = [record.getMessage(), repr(record.msg), repr(record.args), record.exc_text or ""]
+    if record.exc_info:
+        parts.append("".join(logging.Formatter().formatException(record.exc_info)))
+    parts.append(repr(extra))
+    return "\n".join(parts)
+
+
+def test_no_log_line_or_console_output_carries_the_values(
+    client: TestClient, caplog: pytest.LogCaptureFixture, capfd: pytest.CaptureFixture[str]
 ) -> None:
+    # 필터 없이 모든 로거의 모든 줄을 본다. 감사 기록 때문에만 생기는 줄로 좁히면 놓친다
     with caplog.at_level(logging.DEBUG):
         _drive(client)
-    audit_logs = "\n".join(
-        r.getMessage() for r in caplog.records if "audit" in r.name or "audit" in r.getMessage()
-    )
-    assert _leaks(audit_logs) == []
+    assert any(r.name == "ax.event" for r in caplog.records)  # 검사할 줄이 실제로 있었다
+    everything = "\n".join(_record_text(r) for r in caplog.records)
+    assert _leaks(everything) == []
+    console = capfd.readouterr()
+    assert _leaks(console.out + console.err) == []
+
+
+def test_leak_check_catches_a_planted_value(caplog: pytest.LogCaptureFixture) -> None:
+    """위 검사가 항상 통과하는 빈 검사가 아님을 보인다: 일부러 새게 하면 잡아야 한다."""
+    with caplog.at_level(logging.DEBUG):
+        logging.getLogger("ax.event").info("연락처 %s", "010-1234-5678")
+        logging.getLogger("x").warning("메일", extra={"who": "kim.secret@example.com"})
+    leaked = _leaks("\n".join(_record_text(r) for r in caplog.records))
+    assert "010-1234-5678" in leaked and "kim.secret@example.com" in leaked
