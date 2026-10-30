@@ -261,6 +261,9 @@ class PersistentInquiryStore(InquiryStore):
         self.results = PersistentDict(repo, "inquiry_results")
         self.draft_events = PersistentList(repo, repo.load("draft_events"))
         self.privacy_audit = PersistentAuditList(repo, repo.load("privacy_audits"))
+        self._audit_ids = itertools.count(
+            max((r["audit_id"] for r in self.privacy_audit), default=0) + 1
+        )
 
     def _save(self, conversation: Conversation) -> Conversation:
         self._repo.upsert(

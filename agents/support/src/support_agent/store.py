@@ -39,6 +39,11 @@ class InquiryStore:
         self.draft_events: list[dict[str, Any]] = []
         # 개인정보 감사 기록 (추가만 한다, 원문 없음). 설계 #442
         self.privacy_audit: list[dict[str, Any]] = []
+        self._audit_ids = itertools.count(1)
+
+    def next_audit_id(self) -> int:
+        """감사 기록 ID. 카운터라 동시 요청이 겹쳐도 같은 ID가 나오지 않는다."""
+        return next(self._audit_ids)
 
     def list(
         self, status: InquiryStatus | None = None, user_id: int | None = None

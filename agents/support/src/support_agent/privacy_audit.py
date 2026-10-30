@@ -80,7 +80,7 @@ def _merge(counts: list[dict[str, int]]) -> dict[str, int]:
 
 
 def _append(store: InquiryStore, record: dict[str, Any]) -> None:
-    store.privacy_audit.append({"audit_id": len(store.privacy_audit) + 1, **record})
+    store.privacy_audit.append({"audit_id": store.next_audit_id(), **record})
 
 
 def _masking(

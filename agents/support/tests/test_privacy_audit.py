@@ -259,3 +259,62 @@ def test_audit_survives_a_restart_with_a_persistent_store(memory_repo: Any) -> N
     store.privacy_audit.append({"audit_id": 2, "record_type": "provenance", "inquiry_id": None})
     reloaded = persistence.PersistentInquiryStore(repo)
     assert [r["audit_id"] for r in reloaded.privacy_audit] == [1, 2]
+
+
+def _blocked_request() -> AgentRequest:
+    return AgentRequest.model_validate(
+        {
+            "meta": {
+                "context_id": "ctx_inq_0001",
+                "token": "mock:support",
+                "path": [],
+                "deadline": (datetime.now(UTC) + timedelta(seconds=30)).isoformat(),
+            },
+            "skill": "diagnose",
+            "input": {"inquiry_id": 7, "note": "연락처 010-1234-5678"},
+            "untrusted": {},
+        }
+    )
+
+
+def test_a_failing_audit_write_does_not_change_the_blocked_result(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.delenv(secure_transfer.KEY_ENV, raising=False)
+    sent: list[Any] = []
+
+    async def raw(target: str, request: AgentRequest) -> Any:
+        sent.append(request)
+
+    def broken(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(secure_transfer, "_raw_send", raw)
+    monkeypatch.setattr(privacy_audit, "record_transfer_block", broken)
+    with caplog.at_level("WARNING"):
+        result = asyncio.run(secure_transfer.send("infra", _blocked_request()))
+    assert sent == []  # 기록이 실패해도 fail-closed다
+    assert result.status.value == "failed"
+    assert any("감사 기록 실패" in r.getMessage() for r in caplog.records)
+    assert "010-1234-5678" not in caplog.text
+
+
+def test_audit_ids_stay_unique_when_requests_overlap() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    store = InquiryStore()
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        list(pool.map(lambda i: privacy_audit._append(store, {"n": i}), range(400)))
+    ids = [r["audit_id"] for r in store.privacy_audit]
+    assert len(ids) == 400 and len(set(ids)) == 400
+
+
+def test_audit_ids_continue_after_a_restart_with_a_persistent_store(memory_repo: Any) -> None:
+    repo = memory_repo()
+    store = persistence.PersistentInquiryStore(repo)
+    for _ in range(3):
+        privacy_audit._append(store, {"record_type": "masking", "inquiry_id": 3})
+    reloaded = persistence.PersistentInquiryStore(repo)
+    privacy_audit._append(reloaded, {"record_type": "masking", "inquiry_id": 3})
+    assert [r["audit_id"] for r in reloaded.privacy_audit] == [1, 2, 3, 4]
+    assert [r["audit_id"] for r in repo.load("privacy_audits")] == [1, 2, 3, 4]

@@ -23,6 +23,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import logging
 import os
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -34,6 +35,8 @@ from ax_agent_template.client import call_agent
 from ax_agent_template.server import error_result
 from ax_contracts.schemas import AgentRequest, AgentResult, TaskStatus
 from support_agent import guard
+
+logger = logging.getLogger("ax.support.secure_transfer")
 
 KEY_ENV = "SUPPORT_DEJAFIX_KEY"
 KEY_ID_ENV = "SUPPORT_DEJAFIX_KEY_ID"
@@ -217,6 +220,9 @@ async def send(target: str, request: AgentRequest) -> AgentResult:
     try:
         protected = protect_request(request)
     except SecureTransferError as exc:
-        _record_block(request, exc)
+        try:
+            _record_block(request, exc)
+        except Exception:  # 감사 기록이 실패해도 막은 결과(fail-closed)는 그대로 돌려준다
+            logger.warning("전송 차단 감사 기록 실패", exc_info=True)
         return error_result(request.meta, TaskStatus.FAILED, exc.code, str(exc))
     return await _raw_send(target, protected)
