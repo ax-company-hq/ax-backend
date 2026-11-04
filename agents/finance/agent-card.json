@@ -35,7 +35,7 @@
     },
     {
       "id": "closing_report",
-      "description": "기간(day|month) 손익 요약: 총거래액, 판매 수수료 매출, 쿠폰 비용, 환불, PG 수수료, 영업 결과와 자동 분개 미리보기, 쉬운 말 설명. 숫자는 코드가 계산하고 못 받은 자료는 unavailable에 적는다. 상태를 바꾸지 않는다.",
+      "description": "기간(day|week|month) 손익 요약: 총거래액, 판매 수수료 매출, 쿠폰 비용, 환불, PG 수수료, 영업 결과와 자동 분개 미리보기, 쉬운 말 설명. 숫자는 코드가 계산하고 못 받은 자료는 unavailable에 적는다. 못 받은 자료로 계산하는 줄의 amount는 0이 아니라 null(확인할 수 없음)이다. 상태를 바꾸지 않는다.",
       "input_schema": "agents/finance/src/finance_agent/schemas.py#ClosingReportInput",
       "output_schema": "agents/finance/src/finance_agent/schemas.py#ClosingReportOutput",
       "grade": "read",
