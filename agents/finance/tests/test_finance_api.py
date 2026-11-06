@@ -105,7 +105,13 @@ def test_closing_shape_and_params(client: TestClient) -> None:
     assert [ln["code"] for ln in day["lines"]][-1] == "net_result"
     month = _get(client, "/api/finance/closing", period="month", date="2026-10-05")["data"]
     assert (month["date"], month["from"]) == ("2026-10-01", "2026-10-01T00:00:00Z")
-    for bad in ({"period": "week"}, {"date": "어제"}):
+    week = _get(client, "/api/finance/closing", period="week", date="2026-10-22")["data"]
+    assert (week["date"], week["from"], week["to"]) == (
+        "2026-10-19",
+        "2026-10-19T00:00:00Z",
+        "2026-10-26T00:00:00Z",
+    )
+    for bad in ({"period": "year"}, {"date": "어제"}):
         response = client.get("/api/finance/closing", params=bad)
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "invalid_request"
@@ -160,6 +166,40 @@ def test_missing_sources_are_reported_in_meta(client: TestClient, kit) -> None:
     assert (body["meta"]["mock"], body["meta"]["source"]) == (False, "shop-api")
     sett = client.get("/api/finance/settlements").json()
     assert "hold_reasons.open_claim" in sett["meta"]["unavailable"]
+
+
+def test_closing_without_orders_is_unknown_not_zero(client: TestClient, kit) -> None:
+    """주문 조회가 실패하면 매출을 0원으로 보이지 않는다 (data closing_report 확인 사항)."""
+    when = kit.at("2026-10-23", "09:00")
+    coupons = [
+        {"coupon_id": "cpn_1", "total_value": 3000, "funded_by": "company", "created_at": when}
+    ]
+
+    async def orders_down():
+        return kit.books(mock=False, source="shop-api", unavailable=["orders"], coupons=coupons)
+
+    handlers.state().books_loader = orders_down
+    body = client.get("/api/finance/closing").json()
+    amounts = {ln["code"]: ln["amount"] for ln in body["data"]["lines"]}
+    assert amounts == {
+        "gmv": None,
+        "commission_revenue": None,
+        "coupon_cost": -3000,
+        "refund_total": None,
+        "pg_fee": None,
+        "net_result": None,
+    }
+    assert "orders" in body["meta"]["unavailable"]
+    assert "확인할 수 없습니다" in body["data"]["commentary"]
+    overview = client.get("/api/finance/overview").json()["data"]
+    assert overview["kpis"]["gmv"] is None and overview["kpis"]["coupon_cost"] == 3000
+    todo = next(t for t in overview["todo"] if t["kind"] == "closing_confirm")
+    assert todo["amount"] is None
+    # 확인할 수 없는 숫자로는 결산을 확정하지 않는다
+    response = client.post("/api/finance/closing/confirm", json={"period": "day"}, headers=HUMAN)
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "books_unavailable"
+    assert handlers.state().records.closings == {}
 
 
 # ---------------------------------------------------------------- 사람 결정

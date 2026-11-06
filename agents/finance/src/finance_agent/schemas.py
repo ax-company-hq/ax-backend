@@ -51,16 +51,16 @@ class SettlementHoldOutput(AxModel):
 
 # ---------------------------------------------- closing_report (orchestrator·data → finance, 읽기)
 class ClosingReportInput(AxModel):
-    """기간 손익 요약. `date`가 없으면 오늘(UTC), `month`면 그 달."""
+    """기간 손익 요약. `date`가 없으면 오늘(UTC), `week`면 그 주(월~일), `month`면 그 달."""
 
-    period: Literal["day", "month"] = "day"
+    period: Literal["day", "week", "month"] = "day"
     date: dt.date | None = None
 
 
 class ClosingLine(AxModel):
     code: str
     label: str
-    amount: int
+    amount: int | None  # None = 받지 못한 자료(`unavailable`) 때문에 확인할 수 없음. 0원과 다르다
 
 
 class JournalLine(AxModel):
@@ -73,7 +73,7 @@ class JournalLine(AxModel):
 class ClosingReportOutput(AxModel):
     """숫자는 코드가 계산한다. `commentary`만 LLM이 쓸 수 있다(`commentary_source`)."""
 
-    period: Literal["day", "month"]
+    period: Literal["day", "week", "month"]
     date: str
     window_from: str
     window_to: str
