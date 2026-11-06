@@ -106,6 +106,17 @@ class ConversationListItem(AxModel):
     awaiting_reply: bool
 
 
+class ReceiptCheckRecord(AxModel):
+    """접수 때 붙은 영수증 사진을 읽어 본 결과 요약. 사진과 영수증 값은 담지 않는다."""
+
+    image_count: int
+    images_status: Literal["read", "unavailable", "failed", "skipped"]
+    verdict: Literal["consistent", "mismatch", "insufficient"] | None = None
+    mismatches: list[str] = Field(default_factory=list)  # RECEIPT_… 코드
+    note: str | None = None
+    checked_at: str
+
+
 class Conversation(ConversationListItem):
     tenant_id: str = TENANT_ID_DEFAULT
     context_id: str
@@ -114,6 +125,7 @@ class Conversation(ConversationListItem):
     summary: Summary | None = None
     order_no: str | None = None
     claims: list[dict[str, Any]] = Field(default_factory=list)  # 5단계에서 채운다
+    receipt_check: ReceiptCheckRecord | None = None  # 접수 때 영수증 사진을 붙였을 때만
 
 
 # ---------------------------------------------------------------- LLM 응답 스키마

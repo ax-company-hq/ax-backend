@@ -51,7 +51,7 @@
     },
     {
       "id": "create_inquiry",
-      "description": "새 문의를 접수하고 첫 메시지를 분석한다. 제목과 본문은 untrusted.subject, untrusted.message로 받는다. 상태 변경이라 execute()를 거친다.",
+      "description": "새 문의를 접수하고 첫 메시지를 분석한다. 제목과 본문은 untrusted.subject, untrusted.message로 받는다. 영수증 사진은 untrusted.images(최대 4장)로 선택해서 받으며, 읽어 주문과 대조한 요약만 문의의 receipt_check에 남기고 사진은 저장하지 않는다(읽기 실패가 접수를 막지 않는다). 상태 변경이라 execute()를 거친다.",
       "input_schema": "agents/support/src/support_agent/schemas.py#CreateInquiryInput",
       "output_schema": "agents/support/src/support_agent/schemas.py#Conversation",
       "grade": "A",

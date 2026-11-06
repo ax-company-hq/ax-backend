@@ -16,15 +16,20 @@ from datetime import UTC, datetime
 from difflib import SequenceMatcher
 from typing import Any
 
-from pydantic import ValidationError
-
 from ax_agent_template.server import error_result
 from ax_contracts.schemas import AgentRequest, AgentResult, Evidence, TaskStatus
-from support_agent import claim_handlers, claim_rules, drafting, guard, kb, receipts, shop_client
+from support_agent import (
+    claim_handlers,
+    claim_rules,
+    drafting,
+    guard,
+    kb,
+    receipt_check,
+    receipts,
+    shop_client,
+)
 from support_agent import handlers as h
 from support_agent.analysis_schemas import (
-    MAX_IMAGE_BASE64,
-    MAX_IMAGES,
     AnalyzeClaimRequestInput,
     AnalyzeClaimRequestOutput,
     AnalyzeReceiptInput,
@@ -89,31 +94,10 @@ def _contains(text: str, words: tuple[str, ...]) -> bool:
 
 # ---------------------------------------------------------------- 영수증
 def _images(request: AgentRequest) -> tuple[list[EvidenceImageIn], str | None]:
-    """`untrusted.images`를 검사한다. 개수·크기를 넘거나 형식이 다르면 `(빈 목록, 이유)`다."""
-    raw = request.untrusted.get("images")
-    if not raw:
-        return [], None
-    if not isinstance(raw, list) or len(raw) > MAX_IMAGES:
-        return [], f"사진은 최대 {MAX_IMAGES}장까지만 읽는다"
-    try:
-        images = [EvidenceImageIn.model_validate(item) for item in raw]
-    except ValidationError:
-        return [], "사진 형식이 맞지 않아 읽지 않았다 (jpeg·png·webp, 한 장 약 4.5MB 이하)"
-    if sum(len(i.data_base64 or "") for i in images) > MAX_IMAGE_BASE64 * 2:
-        return [], "사진 크기가 커서 읽지 않았다"
-    return images, None
+    return receipt_check.read_images(request.untrusted.get("images"))
 
 
-def _merge(base: receipts.ReceiptFacts, extra: receipts.ReceiptFacts, notes: list[str]) -> None:
-    """글에서 못 찾은 값만 사진에서 채운다. 둘이 다르면 글을 따르고 알린다."""
-    for name in ("total", "paid_on", "order_no", "shipping_fee"):
-        mine, other = getattr(base, name), getattr(extra, name)
-        if mine is None and other is not None:
-            setattr(base, name, other)
-        elif mine is not None and other is not None and mine != other:
-            notes.append(f"글과 사진의 {name} 값이 달라 글 값을 썼다")
-    if not base.items and extra.items:
-        base.items = extra.items
+_merge = receipt_check.merge_facts
 
 
 def _facts_out(facts: receipts.ReceiptFacts) -> ReceiptFactsOut:

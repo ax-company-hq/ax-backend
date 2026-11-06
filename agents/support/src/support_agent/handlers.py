@@ -33,6 +33,7 @@ from support_agent import (
     notices,
     payment_handlers,
     persistence,
+    receipt_check,
     secure_transfer,
     shop_client,
 )
@@ -242,6 +243,10 @@ async def create_inquiry(request: AgentRequest) -> AgentResult:
 
     async def apply() -> tuple[dict[str, Any], bool]:
         analysis, fallback = await drafting.analyze(message, subject, extra)
+        # 영수증 사진이 있으면 읽어 대조 요약만 남긴다 (사진은 저장 안 함, 실패해도 접수한다)
+        check = await receipt_check.check_attached_images(
+            request.untrusted.get("images"), parsed.order_id
+        )
         conversation = STORE.create(
             context_id=request.meta.context_id,
             tenant_id=request.meta.tenant_id,
@@ -252,6 +257,7 @@ async def create_inquiry(request: AgentRequest) -> AgentResult:
             order_no=parsed.order_no,
             first_message=message,
             analysis=analysis,
+            receipt_check=check,
         )
         await events.emit_inquiry_received(request, conversation)
         return conversation.model_dump(mode="json"), fallback

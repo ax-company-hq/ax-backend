@@ -64,6 +64,14 @@
 - 가드는 영어·일본어·중국어 약속 표현(`We will definitely refund…`, `返金を必ずお約束…`, `我们保证退款` 등)을 한국어와 같이 막는다. 가드가 검사하지 못하는 문자(키릴·아랍·태국어 등)는 `unsupported_language` 오류로 막는다. 악센트가 있는 라틴 글자(스페인어 등)는 영어와 구분되지 않아 `language_not_verified` 경고만 하고 통과시키니 직접 확인해야 한다.
 - 예전에 저장된 분석·초안 기록에는 새 필드가 없어도 읽힌다 (`language`는 `ko`, `keywords`는 빈 목록).
 
+## 접수 때 영수증 사진 첨부 (`receipt_check.py`)
+
+- `create_inquiry`는 선택 입력 `untrusted.images`(`analyze_receipt`와 같은 형식·한도: 최대 4장, jpeg·png·webp, 한 장 약 4.5MB)를 받는다. 있으면 `execute()`가 허용한 뒤 이미지 분석기로 읽어 문의에 붙은 주문과 코드로 대조하고, 요약(`receipt_check`: 읽기 상태 `read`·`unavailable`·`failed`·`skipped`, 판정 `consistent`·`mismatch`·`insufficient`, 불일치 코드, 장수, 안내 문구)만 문의에 저장한다.
+- **사진 바이트와 영수증 값(금액·품목)은 저장하지 않고 로그·이벤트에도 남기지 않는다.** 사진을 읽지 못하면 상담원이 직접 확인하고, 필요하면 고객에게 다시 요청한다.
+- 읽기 실패·분석기 미연결·한도 초과는 접수를 막지 않고 상태로만 남는다. 환불 판정은 하지 않는다.
+- `receipt_check`는 상담원용 `get_inquiry`(대시보드·총괄)에만 나온다. 고객 화면 대리 호출(shop-api)의 응답은 기존대로 고객용으로 줄어 싣지 않는다.
+- 사진을 읽으려면 서버에 `SUPPORT_VISION=on`과 이미지를 읽는 모델 설정이 있어야 한다. 사진은 외부 LLM으로 나가므로 고객에게 알리는 동의 문구는 화면(shop-web) 몫이다.
+
 ## 영수증·환불·교환 요청 분석 (`receipts.py`, `claim_analysis.py`)
 둘 다 **읽기 skill**(요청 가능: dashboard-api, orchestrator)이라 상태를 바꾸지 않고, 접수·지급은 하지 않는다.
 - `analyze_receipt`: 영수증 글(`untrusted.receipt_text`)과 사진(`untrusted.images`, 최대 4장)에서 금액·날짜·주문번호·배송비·품목을 **코드(정규식)가 뽑아** 문의에 붙은 주문(shop-api)과 대조한다. 총 결제금액은 "총 결제·결제금액" 줄을 우선하고, 후보가 서로 다르면 고르지 않는다(`ambiguous_total`). 금액은 실결제 현금 또는 포인트 전 총액과 같으면 맞다고 본다. 날짜는 하루 차이까지 허용한다. 결과는 `consistent`·`mismatch`·`insufficient`와 불일치 코드(`RECEIPT_AMOUNT_MISMATCH`·`RECEIPT_DATE_MISMATCH`·`RECEIPT_ORDER_NO_MISMATCH`·`RECEIPT_SHIPPING_MISMATCH`·`RECEIPT_ITEM_UNKNOWN`·`RECEIPT_ITEM_AMOUNT_MISMATCH`)뿐이다. **환불 판정은 하지 않는다.**

@@ -16,6 +16,7 @@ from support_agent.schemas import (
     ConversationListItem,
     InquiryStatus,
     Message,
+    ReceiptCheckRecord,
     Urgency,
 )
 
@@ -69,6 +70,7 @@ class InquiryStore:
         order_no: str | None,
         first_message: str,
         analysis: Analysis,
+        receipt_check: ReceiptCheckRecord | None = None,
     ) -> Conversation:
         stamp = now_iso()
         conversation = Conversation(
@@ -84,6 +86,7 @@ class InquiryStore:
             updated_at=stamp,
             preview=_preview(first_message),
             awaiting_reply=True,
+            receipt_check=receipt_check,
         )
         self._conversations[conversation.id] = conversation
         self._apply_analysis(conversation, analysis)
