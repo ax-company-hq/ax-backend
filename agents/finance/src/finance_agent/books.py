@@ -353,13 +353,14 @@ async def live_books(http_client: httpx.AsyncClient | None = None) -> Books:
     unavailable: list[str] = []
     try:
         shop, safety = agent_url("shop-api"), agent_url("safety")
-        orders_raw = await _get(client, f"{shop}/api/shop/orders")
-        products = await _get(client, f"{shop}/api/shop/products")
-        sellers = await _get(client, f"{shop}/api/shop/sellers")
         try:
             headers = {"Authorization": f"Bearer {agent_token('finance')}"}
         except RuntimeError:
             headers = {}
+        # 주문 조회에도 재무 토큰을 붙인다(shop-api `SHOP_ORDERS_PUBLIC_READ=off` 대비)
+        orders_raw = await _get(client, f"{shop}/api/shop/orders", headers)
+        products = await _get(client, f"{shop}/api/shop/products")
+        sellers = await _get(client, f"{shop}/api/shop/sellers")
         coupons_raw = await _get(client, f"{shop}/api/shop/coupons", headers) if headers else None
         thresholds = await _get(client, f"{safety}/api/safety/thresholds")
         executions_raw = await _get(client, f"{safety}/api/safety/executions")

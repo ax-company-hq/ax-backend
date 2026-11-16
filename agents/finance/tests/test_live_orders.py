@@ -70,14 +70,16 @@ def test_paid_total_counts_only_succeeded_payments() -> None:
 
 @pytest.mark.asyncio
 async def test_live_paid_amount_reads_shop_api() -> None:
-    seen: list[str] = []
+    seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(str(request.url))
+        seen.append(request)
         return httpx.Response(200, json={"data": ORDER, "meta": {}})
 
     assert await _shop(handler).paid_amount(META, "ord_7") == 30000
-    assert seen == ["http://shop.test/api/shop/orders/ord_7"]
+    assert [str(r.url) for r in seen] == ["http://shop.test/api/shop/orders/ord_7"]
+    # 주문 조회에도 재무 토큰을 붙인다 (shop-api `SHOP_ORDERS_PUBLIC_READ=off` 대비)
+    assert seen[0].headers["authorization"] == "Bearer mock:finance"
 
 
 @pytest.mark.asyncio

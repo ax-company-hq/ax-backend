@@ -1,8 +1,9 @@
 """shop-api 연결: 클레임 판정에 쓰는 주문 조회와 현금 환불 (REST).
 
-- 주문 조회 `GET /api/shop/orders/{id}`는 토큰이 필요 없다.
-  환불 `POST /api/shop/payments/{id}/refund`는 `support` 토큰만 받는다
-  (`Authorization: Bearer`, 요청자는 토큰에서 꺼낸다).
+- 모든 요청에 `support` 토큰을 붙인다(`Authorization: Bearer`, 요청자는 토큰에서 꺼낸다).
+  주문 조회 `GET /api/shop/orders/{id}`도 토큰을 붙이므로 shop-api가
+  `SHOP_ORDERS_PUBLIC_READ=off`여도 읽힌다. 환불 `POST /api/shop/payments/{id}/refund`는
+  `support` 토큰만 받는다.
 - 주소는 `AX_SHOP_API_URL`(없으면 `http://shop-api:8010`, 템플릿 `agent_url`)이다.
 - 주문 출처는 `SUPPORT_ORDER_SOURCE`(`seed` | `shop-api`)로 정한다. 비우면 목 모드는 시드 주문,
   그 밖에는 shop-api다. 목 모드에서 실제 shop-api와 맞춰 볼 때만 `shop-api`로 둔다.

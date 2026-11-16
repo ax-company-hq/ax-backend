@@ -237,6 +237,8 @@ def test_live_books_read_shop_api_and_safety(monkeypatch: pytest.MonkeyPatch) ->
     assert [i["category_code"] for i in books.orders[0]["items"]] == ["book", "stationery"]
     coupon_call = next(r for r in seen if r.url.path == "/api/shop/coupons")
     assert coupon_call.headers["authorization"] == "Bearer mock:finance"
+    orders_call = next(r for r in seen if r.url.path == "/api/shop/orders")
+    assert orders_call.headers["authorization"] == "Bearer mock:finance"
     assert books.coupons[0]["funded_by"] == "company"
     assert books.executions and books.executions[0]["action"] == "refund_request"
     assert books.notes == {"refund_basis": "order_created_at"}

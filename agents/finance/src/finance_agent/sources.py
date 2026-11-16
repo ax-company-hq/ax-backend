@@ -27,7 +27,7 @@ import httpx
 from pydantic import ValidationError
 
 from ax_agent_template import call_agent
-from ax_agent_template.config import agent_url
+from ax_agent_template.config import agent_token, agent_url
 from ax_contracts.data_access.orchestrator_incidents import OrchestratorIncident
 from ax_contracts.schemas import (
     AgentRequest,
@@ -199,11 +199,13 @@ class LiveSources:
     def __init__(self, http_client: httpx.AsyncClient | None = None) -> None:
         self._http = http_client  # 테스트용
 
-    async def _read_json(self, url: str, timeout: float) -> Any | None:
+    async def _read_json(
+        self, url: str, timeout: float, headers: dict[str, str] | None = None
+    ) -> Any | None:
         """읽기 전용 GET. 응답이 없거나 200이 아니거나 JSON이 아니면 None (fail-closed)."""
         client = self._http or httpx.AsyncClient()
         try:
-            response = await client.get(url, timeout=timeout)
+            response = await client.get(url, headers=headers or {}, timeout=timeout)
         except httpx.HTTPError:
             return None
         finally:
@@ -249,8 +251,12 @@ class LiveSources:
 
     async def paid_amount(self, meta: RequestMeta, order_id: str) -> int | None:
         """shop-api 주문 조회. 주문이 없거나(404) 응답이 없으면 None(승인 근거로 쓰지 않음)."""
+        try:  # 재무 토큰을 붙인다(shop-api `SHOP_ORDERS_PUBLIC_READ=off` 대비). 없으면 토큰 없이
+            headers = {"Authorization": f"Bearer {agent_token('finance')}"}
+        except RuntimeError:
+            headers = {}
         body = await self._read_json(
-            f"{agent_url('shop-api')}/api/shop/orders/{order_id}", SHOP_CALL_SECONDS
+            f"{agent_url('shop-api')}/api/shop/orders/{order_id}", SHOP_CALL_SECONDS, headers
         )
         order = body.get("data") if isinstance(body, dict) else None
         return paid_total(order) if isinstance(order, dict) else None
